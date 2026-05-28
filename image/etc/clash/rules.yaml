@@ -1,0 +1,17 @@
+# Custom routing rules (user-editable)
+# Format: TYPE,VALUE,POLICY
+# Policies: DIRECT, PROXY, REJECT
+#
+# Direct — public package registries (fast, no need for proxy)
+# DOMAIN-SUFFIX,npmjs.org,DIRECT
+# DOMAIN-SUFFIX,registry.npmmirror.com,DIRECT
+# DOMAIN-SUFFIX,pypi.org,DIRECT
+# DOMAIN-SUFFIX,repo1.maven.org,DIRECT
+#
+# Proxy — sensitive services
+# DOMAIN-SUFFIX,github.com,PROXY
+# DOMAIN-SUFFIX,githubusercontent.com,PROXY
+# DOMAIN-SUFFIX,cloudflare.com,PROXY
+#
+# Reject — telemetry
+# DOMAIN-SUFFIX,telemetry.example.com,REJECT

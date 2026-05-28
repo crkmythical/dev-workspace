@@ -1,0 +1,2 @@
+# Clean stale upload temp files older than 1 hour (every 6 hours)
+0 */6 * * * root find /workspace/shared/.uploads -name '.uploading-*' -mmin +60 -delete 2>/dev/null

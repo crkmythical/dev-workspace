@@ -1,0 +1,52 @@
+// Shared constants across all packages
+
+// Ports
+export const CLASH_HTTP_PORT = 7890;
+export const CLASH_SOCKS_PORT = 7891;
+export const CLASH_CONTROLLER_PORT = 9090;
+export const CADDY_PORT = 8080;
+export const SYNC_SERVICE_PORT = 8081;
+export const CODE_SERVER_PORT = 8082;
+
+// Paths
+export const VAULT_CIPHER_DIR = "/vault/cipher";
+export const WORKSPACE_MOUNT = "/workspace";
+export const SHARED_DIR = "/workspace/shared";
+export const CREDENTIALS_DIR = "/workspace/.credentials";
+export const SYNC_PASSPHRASE_PATH = "/workspace/.credentials/sync-passphrase";
+export const STATE_SOCKET_PATH = "/var/run/vault-state.sock";
+export const VAULT_SYNC_STATE_DIR = "/var/run/vault-sync";
+export const UPLOAD_TRACKING_DIR = "/workspace/shared/.uploads";
+
+// Crypto
+export const HKDF_SALT = "sync-key-v1";
+export const HKDF_INFO = "aead-key";
+export const NONCE_LENGTH = 12;
+export const TAG_LENGTH = 16;
+export const AES_KEY_LENGTH = 32;
+
+// PNG camouflage (33 bytes)
+export const PNG_HEADER = new Uint8Array([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, // PNG signature (8)
+  0x00, 0x00, 0x00, 0x0d, // IHDR length (4)
+  0x49, 0x48, 0x44, 0x52, // "IHDR" (4)
+  0x00, 0x00, 0x00, 0x01, // width=1 (4)
+  0x00, 0x00, 0x00, 0x01, // height=1 (4)
+  0x08, 0x02, 0x00, 0x00, 0x00, // bitDepth=8, colorType=2, comp=0, filter=0, interlace=0 (5)
+  0x90, 0x77, 0x53, 0xde, // CRC (4)
+]);
+export const PNG_HEADER_SIZE = 33;
+
+// Sync
+export const CHUNK_SIZE = 4 * 1024 * 1024; // 4 MiB
+export const SIZE_LIMIT = 500 * 1024 * 1024; // 500 MB
+export const REPLAY_WINDOW_SIZE = 10000;
+export const REPLAY_TOLERANCE_MS = 300_000; // 5 min
+export const POLL_INTERVAL_FOCUSED_MS = 2000;
+export const POLL_INTERVAL_BACKGROUND_MS = 10000;
+export const STALE_UPLOAD_THRESHOLD_MS = 60 * 60 * 1000; // 1h
+export const GRACEFUL_RESTART_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24h
+
+// Vault sync
+export const DEFAULT_VAULT_SYNC_INTERVAL = 1800; // 30 min
+export const SYNC_FAILURE_THRESHOLD = 3;

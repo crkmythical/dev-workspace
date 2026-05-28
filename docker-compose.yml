@@ -1,0 +1,32 @@
+services:
+  workspace:
+    build:
+      context: .
+      dockerfile: image/Dockerfile
+    container_name: dev-workspace
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - "/dev/fuse"
+    volumes:
+      - vault-data:/vault/cipher
+      - clash-config:/etc/clash
+    ports:
+      - "127.0.0.1:${TUNNEL_HOST_PORT:-18080}:8080"
+    restart: unless-stopped
+    mem_reservation: ${MEMORY_RESERVATION:-8g}
+    env_file: .env
+    ulimits:
+      core: 0
+      nofile:
+        soft: 65536
+        hard: 65536
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  vault-data:
+  clash-config:

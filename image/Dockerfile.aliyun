@@ -1,0 +1,87 @@
+# Dockerfile.aliyun
+# Mirror of the primary Dockerfile for restricted networks (China mainland).
+# Substitutes apt package sources with mirrors.aliyun.com to ensure builds
+# succeed behind the Great Firewall where default Debian mirrors are unreachable.
+
+FROM debian:bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV LANG=en_US.UTF-8
+ENV TZ=Asia/Shanghai
+
+# Replace default apt sources with Aliyun mirrors (China-accessible)
+RUN echo "deb https://mirrors.aliyun.com/debian/ bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list && \
+    echo "deb https://mirrors.aliyun.com/debian/ bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
+    echo "deb https://mirrors.aliyun.com/debian-security/ bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list
+
+# Core layer: system packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tini \
+    supervisor \
+    gocryptfs \
+    fuse3 \
+    procps \
+    git \
+    git-lfs \
+    openssh-client \
+    ca-certificates \
+    cron \
+    curl \
+    jq \
+    tmux \
+    bash \
+    locales \
+    && sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen \
+    && locale-gen \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Caddy (GitHub release — usually accessible from China)
+RUN curl -fsSL "https://caddyserver.com/api/download?os=linux&arch=$(dpkg --print-architecture)" -o /usr/bin/caddy \
+    && chmod +x /usr/bin/caddy
+
+# Install mise (runtime version manager)
+RUN curl -fsSL https://mise.jdx.dev/install.sh | bash
+ENV PATH="/root/.local/bin:${PATH}"
+
+# Pre-install default tool versions via mise
+COPY .mise.toml /root/.mise.toml
+RUN mise install && mise reshim
+ENV PATH="/root/.local/share/mise/shims:${PATH}"
+
+# Install Clash (mihomo) — pinned version (GitHub release, usually accessible)
+ARG CLASH_VERSION=1.18.0
+RUN ARCH=$(dpkg --print-architecture) && \
+    curl -fsSL "https://github.com/MetaCubeX/mihomo/releases/download/v${CLASH_VERSION}/mihomo-linux-${ARCH}-v${CLASH_VERSION}.gz" \
+    | gunzip > /usr/bin/clash && chmod +x /usr/bin/clash
+
+# Install code-server — pinned version
+ARG CODE_SERVER_VERSION=4.96.4
+RUN curl -fsSL "https://code-server.dev/install.sh" | sh -s -- --version=${CODE_SERVER_VERSION}
+
+# Filesystem prep
+RUN mkdir -p /workspace /vault/cipher /etc/supervisor/conf.d /var/run/vault-sync /etc/caddy /etc/clash
+
+# Copy baked configs
+COPY supervisord.conf /etc/supervisor/supervisord.conf
+COPY etc/clash/config.yaml /etc/clash/config.yaml
+COPY etc/clash/rules.yaml /etc/clash/rules.yaml
+COPY etc/caddy/Caddyfile /etc/caddy/Caddyfile
+COPY etc/README-UNLOCK.md /workspace/README-UNLOCK.md
+
+# Copy scripts and symlink user-facing commands onto PATH
+RUN mkdir -p /usr/local/lib/workspace && \
+    for cmd in unlock-vault lock-vault init-vault change-vault-password vault-prune doctor; do \
+      ln -sf /usr/local/lib/workspace/${cmd}.sh /usr/local/bin/${cmd}; \
+    done
+
+# Environment defaults (proxy points to Clash)
+ENV http_proxy=http://127.0.0.1:7890 \
+    https_proxy=http://127.0.0.1:7890 \
+    all_proxy=socks5://127.0.0.1:7891 \
+    no_proxy=localhost,127.0.0.0/8,172.16.0.0/12,10.0.0.0/8,169.254.0.0/16
+
+# Entrypoint
+COPY entrypoint.sh /usr/local/lib/workspace/entrypoint.sh
+RUN chmod +x /usr/local/lib/workspace/entrypoint.sh
+
+ENTRYPOINT ["tini", "--", "/usr/local/lib/workspace/entrypoint.sh"]

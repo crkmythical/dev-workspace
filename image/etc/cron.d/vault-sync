@@ -1,0 +1,1 @@
+*/30 * * * * root /root/.bun/bin/bun run /opt/workspace/packages/cli/src/vault-sync.ts >> /var/log/vault-sync.log 2>&1

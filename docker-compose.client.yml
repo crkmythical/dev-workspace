@@ -1,0 +1,26 @@
+# Standalone Clash proxy client — independent of the main workspace stack.
+# Usage: docker compose -f docker-compose.client.yml up -d
+version: "3.8"
+
+services:
+  clash-client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: clash-client
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:7890:7890"   # HTTP proxy
+      - "127.0.0.1:7891:7891"   # SOCKS5 proxy
+    environment:
+      - CLASH_SUBSCRIPTION_URL=${CLASH_SUBSCRIPTION_URL}
+    volumes:
+      - clash-client-config:/etc/clash
+    logging:
+      driver: local
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+volumes:
+  clash-client-config:

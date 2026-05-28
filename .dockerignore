@@ -1,0 +1,14 @@
+.env
+vault-cipher/
+node_modules/
+packages/*/node_modules/
+dist/
+out/
+*.tar
+*.log
+.DS_Store
+.git
+docs/
+parallels/
+client/
+poc/

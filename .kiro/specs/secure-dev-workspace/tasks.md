@@ -1,0 +1,343 @@
+# Implementation Plan: secure-dev-workspace
+
+## Overview
+
+Convert the feature design into a series of prompts for a code-generation LLM that will implement each step with incremental progress. Make sure that each prompt builds on the previous prompts, and ends with wiring things together. There should be no hanging or orphaned code that isn't integrated into a previous step. Focus ONLY on tasks that involve writing, modifying, or testing code.
+
+The build flows in dependency order: project skeleton → container image → in-container scripts → sync service (server then SPA) → host orchestration (bootstrap/destroy/setup) → diagnostics and hygiene → optional clients → docs and integration smokes. Each phase ends in a runnable artifact; property tests sit next to the code they validate.
+
+Implementation languages (locked by design):
+- Shell scripts: `bash` (POSIX-compatible where practical).
+- Sync service (server + SPA): TypeScript.
+- Property tests: `fast-check` for TypeScript code; `bats-core` plus a small `hypothesis` (Python) harness for shell-driven properties.
+
+## Tasks
+
+- [x] 1. Repository foundation and orchestration skeleton
+  - [x] 1.1 Create top-level repo layout and ignore rules
+    - Create directories: `image/etc/clash`, `scripts`, `sync-service/src`, `sync-service/public/app`, `client`, `parallels`, `docs`, `tests/{unit,property,integration}`.
+    - Write `.gitignore` excluding `.env`, `vault-cipher/`, `node_modules/`, `dist/`, build artifacts, OS junk.
+    - Write `README.md` stub pointing at `docs/`.
+    - _Requirements: 12.3_
+  - [x] 1.2 Author `.env.example` documenting every required and optional variable
+    - Variables: `CLASH_SUBSCRIPTION_URL`, `CLOUDFLARE_TUNNEL_TOKEN`, `TUNNEL_HOST_PORT`, `VAULT_GIT_REPO`, `VAULT_SYNC_INTERVAL`, `GIT_USER_NAME`, `GIT_USER_EMAIL`, `TZ`, `MEMORY_RESERVATION`.
+    - Each variable annotated with required/optional, default, and one-line description.
+    - _Requirements: 12.1, 12.2_
+  - [x] 1.3 Write `docker-compose.yml` for the server stack
+    - Single `workspace` service built from `image/Dockerfile`, `cap_add: [SYS_ADMIN]`, `devices: [/dev/fuse]`, named volumes `vault-data` (→ `/vault/cipher`) and `clash-config` (→ `/etc/clash`), `restart: unless-stopped`, `mem_reservation: ${MEMORY_RESERVATION:-8g}`, single port `127.0.0.1:${TUNNEL_HOST_PORT}:8080` (Caddy fronting code-server and sync-service), log driver `local` with 10MB cap, `env_file: .env`.
+    - Memory hygiene: `ulimits: { core: 0 }` to disable core dumps (key material in sync-service memory must never be persisted to a core file).
+    - _Requirements: 5.4, 6.5, 7.1, 7.2, 7.3, 7.4, 7.5, 8.8, 13.3_
+  - [x] 1.4 Write `Makefile` build targets
+    - Targets: `build`, `image-export` (→ `workspace.tar` via `docker save`), `image-import` (← `docker load`), `lint` (shellcheck + prettier + eslint), `test-unit`, `test-property`, `test-integration`.
+    - _Requirements: 24.3, 24.4_
+
+- [x] 2. Container image build
+  - [x] 2.1 Author baked image assets
+    - `image/.mise.toml` with default tool versions (python 3.12, java 17, node 20, pnpm latest).
+    - `image/supervisord.conf` defining programs `caddy`, `code-server`, `sync-service`, `vault-sync-cron`, and a small `clash-watcher` script (clash itself runs from `entrypoint.sh` to allow readiness gating before supervisord starts; clash-watcher restarts it if it dies later) with restart policies, stdout/stderr redirection to supervisord-managed pipes (no plaintext path leakage).
+    - `image/etc/clash/config.yaml` base template: HTTP `:7890`, SOCKS5 `:7891`, controller `:9090` on loopback, `dns.enable: true`, `enhanced-mode: fake-ip`, DoH nameservers, bypass list (localhost, 127.0.0.0/8, 172.16.0.0/12, 10.0.0.0/8, 169.254.0.0/16, `*.local`).
+    - `image/etc/clash/rules.yaml` user-editable routing rules with sane defaults (Direct: package mirrors; Proxy: GitHub, Cloudflare API; Reject: known telemetry).
+    - `image/etc/caddy/Caddyfile` reverse proxy on `:8080`: `/sync/*` → `127.0.0.1:8081` (sync-service, which serves both the SPA at `/sync/` and the API at `/sync/api/*`); `/` → `127.0.0.1:8082` (code-server).
+    - `image/etc/README-UNLOCK.md` instructing the user to run `unlock-vault` in the terminal when `/workspace` is empty.
+    - _Requirements: 1.2, 1.5, 2.1, 2.4, 2.5, 2.6, 2.7, 5.8, 8.7_
+  - [x] 2.2 Write `image/Dockerfile` (primary)
+    - FROM `debian:bookworm-slim`.
+    - Core layer: install `tini`, `supervisor`, `gocryptfs`, `fuse3`, `procps` (for `pkill`/`ps` in scripts), `git`, `git-lfs`, `openssh-client`, `ca-certificates`, `cron`, `curl`, `jq`, `tmux`, `bash`, `caddy`, `locales` (set `en_US.UTF-8`).
+    - Install `mise` (pinned version), pre-install tools from baked `.mise.toml`, install `clash` (mihomo, pinned), install `code-server` (pinned).
+    - Create `/workspace`, `/vault/cipher`, `/etc/supervisor/conf.d/`, copy supervisord conf, copy baked clash configs and Caddyfile, copy `README-UNLOCK.md` into `/workspace/`.
+    - Configure code-server to listen on `127.0.0.1:8082`, sync-service on `127.0.0.1:8081`, Caddy on `0.0.0.0:8080` (the only externally-mapped port).
+    - Copy `scripts/` into `/usr/local/lib/workspace/` and symlink the user-facing ones onto `PATH` (`unlock-vault`, `lock-vault`, `init-vault`, `change-vault-password`, `vault-prune`, `doctor`).
+    - Set `TZ`, `LANG`, `http_proxy`/`https_proxy`/`all_proxy` env defaults pointing at `127.0.0.1:7890` / `socks5://127.0.0.1:7891`.
+    - Set `ENTRYPOINT ["/usr/local/lib/workspace/entrypoint.sh"]` with `tini` as PID 1.
+    - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 2.8, 8.7, 16.1, 16.2, 16.3, 24.1_
+  - [x] 2.3 Write `image/Dockerfile.aliyun`
+    - Mirror of 2.2 substituting registry/package mirrors usable behind restricted networks.
+    - _Requirements: 24.1, 24.2_
+
+- [x] 3. Container entrypoint and vault lifecycle scripts
+  - [x] 3.1 Implement `scripts/entrypoint.sh`
+    - Validate required env vars; on missing, print named variable and exit non-zero.
+    - Cleanup stale FUSE mount at `/workspace` (`fusermount -uz` if stale, otherwise no-op); idempotent.
+    - Fetch subscription from `CLASH_SUBSCRIPTION_URL` to `/etc/clash/config.yaml`; on failure, retain cached file and warn.
+    - Configure git globals (`user.name`, `user.email`, `http.proxy`, `https.proxy`).
+    - Configure `fs.inotify.max_user_watches` (best-effort).
+    - Start clash directly (background process) and wait for `:7890` listening plus a HEAD probe through the proxy. If the probe fails after N retries, log a warning and continue (R8.4).
+    - `exec supervisord` so it inherits PID handling from `tini`. Supervisord manages caddy, code-server, sync-service, and the vault-sync cron in parallel; clash is NOT in supervisord's program list (it is the entrypoint's child). If clash dies later, the entrypoint re-spawns it (or, equivalently, supervisord supervises a small `clash-watcher` program that does the same).
+    - _Requirements: 2.1, 2.2, 2.3, 2.9, 8.1, 8.2, 8.3, 8.4, 8.5, 8.7, 12.4, 15.1, 15.2, 16.4, 19.22_
+  - [x] 3.2 Implement `scripts/init-vault.sh`
+    - Detect existing `/vault/cipher/gocryptfs.conf`; if present, print info and exit 0 (idempotent).
+    - Otherwise prompt for passphrase (TTY), run `gocryptfs -init`.
+    - Initialize git repo inside `/vault/cipher/` with explicit `git init -b main` (avoids the `master`/`main` default-branch ambiguity across git versions), write default `.gitignore` (R25.1 list) and `.gitattributes` (LFS rules for `*.bin`, large patterns).
+    - If `VAULT_GIT_REPO` is set in env, run `git remote add origin <VAULT_GIT_REPO>`, make an initial empty commit (`git commit --allow-empty -m "init"`), and `git push -u origin main` so the first vault-sync cycle has an upstream to push to.
+    - On first unlock following init, the post-unlock hook seeds `/workspace/.credentials/sync-passphrase` (mode 0600) with the passphrase so sync-service can derive the AEAD key without re-prompting on every container restart.
+    - _Requirements: 3.1, 3.2, 3.4, 3.5, 9.1, 9.7, 9.8, 25.1_
+  - [x] 3.3 Implement `scripts/unlock-vault.sh`
+    - Detect already-mounted state; if mounted, print info and exit 0.
+    - Read passphrase via TTY; mount `/vault/cipher` at `/workspace`.
+    - On failure: exit non-zero, do not create mount, do not retain key in environment.
+    - Post-unlock hooks:
+      - Symlink `/workspace/.credentials/ssh/` → `~/.ssh` (skip with notice if absent).
+      - Configure git credential helper from `/workspace/.credentials/github-token`.
+      - Always overwrite `/workspace/.credentials/sync-passphrase` (mode 0600) with the entered passphrase on every successful unlock. This ensures correctness across init, migration, and password rotation: whatever passphrase just unlocked the vault is by definition the current one, so writing it unconditionally keeps the sync-service key derivation in sync.
+      - Best-effort broadcast `{"state":"unlocked"}` to sync-service via UNIX socket `/var/run/vault-state.sock`. If the socket does not exist (sync-service not yet running), print an informational message and continue — sync-service will detect the unlocked state via its own 5s mount poll on next cycle.
+    - _Requirements: 4.1, 4.2, 4.3, 15.5_
+  - [x] 3.4 Implement `scripts/lock-vault.sh`
+    - `fusermount -u /workspace`; on EBUSY, prompt user and offer `fusermount -uz`.
+    - Best-effort broadcast `{"state":"locked"}` to sync-service socket; missing-socket is non-fatal (sync-service detects state via mount poll).
+    - _Requirements: 4.4, 4.5, 4.6_
+  - [ ] 3.5 Property/bats tests for vault lifecycle
+    - **Property 3: Vault Lifecycle Round-Trip and Idempotence** (Validates: 4.1, 4.3, 4.4, 4.6).
+    - **Property 4: Wrong-Password Rejection** (Validates: 4.2).
+    - **Property 6: Init-Vault Idempotence** (Validates: 3.4).
+    - **Property 7: Stale-Mount Cleanup Idempotence** (Validates: 8.1).
+    - **Property 18: Env Validation Completeness** (Validates: 12.4).
+    - Implement under `tests/property/vault-lifecycle.bats` with a Hypothesis-driven harness that generates random env-var subsets, mount states, and passphrases.
+
+- [x] 4. Vault sync to GitHub
+  - [x] 4.1 Implement `scripts/vault-sync.sh`
+    - Skip silently if `/workspace` not mounted.
+    - In `/vault/cipher`: `git add -A`; if `git diff --cached --quiet`, exit 0.
+    - Commit `auto-sync $(date -Iseconds)`; push via Clash (`https.proxy=socks5://127.0.0.1:7891`).
+    - On non-fast-forward push rejection (concurrent push from another machine): `git pull --rebase`, then re-push. If rebase produces conflicts (rare — gocryptfs ciphertext blocks rarely overlap byte-identically), abort with `MERGE_CONFLICT` error class and surface in sync-failure banner; user manually resolves.
+    - On success: write `/var/run/vault-sync/last-success` ISO timestamp, reset failure counter.
+    - On failure: increment `/var/run/vault-sync/consecutive-failures`; at threshold (default 3), write `/workspace/.notifications/sync-failure.md`.
+    - Log only error class; never path/content.
+    - _Requirements: 9.2, 9.3, 9.4, 9.5, 9.6, 9.9, 13.2_
+  - [x] 4.2 Wire vault-sync into supervisord and cron
+    - Cron entry honors `VAULT_SYNC_INTERVAL` (default 1800s).
+    - Supervisord supervises the cron daemon and restarts on crash.
+    - _Requirements: 9.2, 8.7_
+  - [ ] 4.3 Property/bats tests for vault-sync
+    - **Property 5: Vault State Invariants on Locked Boundary** (Validates: 5.8, 8.6, 9.6, 13.5) — locked state never produces a commit.
+    - **Property 15: Vault-Sync Exclusion Correctness** (Validates: 9.9, 25.1) — generated paths against `.gitignore` patterns vs `git check-ignore`.
+    - **Property 16: Vault-Sync No-Op on Quiet Cycle** (Validates: 9.3, 9.4).
+    - Implemented in `tests/property/vault-sync.bats` and (for exclusion logic) a TS module `tests/property/exclusion.test.ts` using `fast-check`.
+
+- [x] 5. Checkpoint — image and container scripts integrate
+  - Build the image, `docker compose up`, exec into the container, run `init-vault` → `unlock-vault` → write a file → `lock-vault`. Run all property tests for vault lifecycle and vault-sync. Ensure all tests pass, ask the user if questions arise.
+
+- [x] 6. Sync service backend (TypeScript, in `sync-service/`)
+  - [x] 6.1 Bootstrap the TS package
+    - `package.json` with scripts `dev`, `build`, `start`, `test`, `test:property`; deps: `fastify` (or `koa`) for HTTP+WS, `chokidar` for fs events, `zod` for envelope validation; devDeps: `vitest`, `fast-check`, `typescript`, `eslint`, `prettier`.
+    - `tsconfig.json` strict mode; ESM target.
+    - _Requirements: 19.1_
+  - [x] 6.2 Implement `src/crypto.ts`
+    - HKDF-SHA256 wrapper (passphrase, salt `"sync-key-v1"` → 32-byte key).
+    - AEAD wrapper (AES-256-GCM, 12-byte nonce, AAD bound per-op as defined in design.md "Wire protocol" — includes file_id and chunk_idx for chunk envelopes to prevent reorder attacks).
+    - Replay window: maintain a small sliding window of recent `(nonce, ts)` and reject duplicates; clock-skew compensation via handshake-supplied `unix_ms`.
+    - Key zeroization: when state transitions to `VaultLocked`, overwrite the in-memory `CryptoKey`-backing buffer with zeros where the runtime allows; sync-service should also call `process.setrlimit("RLIMIT_CORE", 0)` at startup as a defense-in-depth so core dumps cannot leak the key.
+    - _Requirements: 20.1, 20.2, 20.3, 20.4, 20.7_
+  - [x] 6.3 Property tests for `crypto.ts`
+    - **Property 8: HKDF Key Derivation — Determinism and Context Separation** (Validates: 20.2, 20.3).
+    - **Property 9: AEAD Round-Trip and Tamper Detection** (Validates: 20.1, 20.7, 20.8).
+    - In `tests/property/crypto.test.ts` using `fast-check`, ≥100 runs.
+  - [x] 6.4 Implement `src/camouflage.ts`
+    - Wrap ciphertext with a 33-byte PNG header (8-byte signature `89 50 4E 47 0D 0A 1A 0A` + 25-byte minimal IHDR chunk: 4-byte length `00 00 00 0D`, 4-byte type `IHDR`, 13-byte payload encoding 1×1 dimensions and color type, 4-byte CRC); strip the same fixed prefix on receive before AEAD decryption.
+    - Filename emitter pattern `asset-{uuid}.png` with `Content-Type: image/png`.
+    - _Requirements: 20.5, 20.6, 20.9_
+  - [x] 6.5 Property tests for camouflage and on-wire confidentiality
+    - **Property 10: On-Wire Confidentiality of Paths and Content** (Validates: 20.1, 20.5, 20.9). Generate arbitrary file paths and contents, capture the on-wire bytes produced by encrypt+camouflage, assert no plaintext substrings, only PNG magic + HTTP framing.
+    - In `tests/property/wire.test.ts`.
+  - [x] 6.6 Implement `src/state.ts`
+    - State machine: `VaultLocked → KeyMissing → Idle → Syncing → Idle/Error → AuthExpired`.
+    - Authoritative source: presence of `/workspace` mount (stat polled at 5s interval) plus events from `/var/run/vault-state.sock`.
+    - On vault-unlocked event: read passphrase from `/workspace/.credentials/sync-passphrase`, derive sync key via HKDF, transition to `Idle`. On vault-locked: zero key in memory.
+    - On sync-service restart while vault already mounted: detect mount on startup, perform the same key-recovery flow without user intervention.
+    - Public API: `currentState()`, `onChange(cb)`, `requireUnlocked()` (throws if not).
+    - _Requirements: 19.21, 20.10_
+  - [x] 6.7 Property test for state machine
+    - **Property 14: Sync Locked-State Refusal** (Validates: 20.10, 19.21). Generate arbitrary event sequences, assert that any sync op invoked while state is `VaultLocked` returns a `vault-locked` error and performs zero filesystem side effects.
+    - In `tests/property/state.test.ts`.
+  - [x] 6.8 Implement `src/watcher.ts`
+    - `chokidar` watcher on `/workspace/shared/`, debounce 200ms, dedupe events.
+    - Emits typed events `{op, path, mtime}`; ignores files matching `.uploading-*`.
+    - _Requirements: 19.5, 19.16_
+  - [x] 6.9 Implement `src/reconcile.ts`
+    - Pure function `(localState, remoteState, baseline) → actionSet`.
+    - Conflict policy: when both sides changed, preserve both, rename loser to `<name>.conflict-<ts>`.
+    - Deterministic and idempotent.
+    - _Requirements: 19.6, 19.9, 19.12_
+  - [x] 6.10 Property test for reconciliation
+    - **Property 12: Sync Reconciliation Convergence** (Validates: 19.6, 19.9, 19.12). Generate arbitrary state pairs, assert post-application equality and conflict preservation; assert idempotence on already-converged states.
+    - In `tests/property/reconcile.test.ts`.
+  - [x] 6.11 Implement `src/lock.ts` (cross-tab session lock helper used by both server and SPA)
+    - Server-side advisory lease keyed by folder hash with TTL; rejects second active session.
+    - _Requirements: 19.18_
+  - [x] 6.12 Implement `src/server.ts`
+    - Routing namespace: every endpoint sits under `/sync/` (Caddy strips no prefix; sync-service binds the full path).
+      - `GET /sync/` and `/sync/app/*` → serve the SPA static bundle from `public/dist/`.
+      - `POST /sync/api/upload` (chunk envelope: `put-chunk` and `put-finalize`), `GET /sync/api/download`, `POST /sync/api/list`, `POST /sync/api/handshake` → AEAD-camouflaged endpoints.
+      - `WS /sync/api/events` → encrypted change envelopes from `watcher.ts`.
+      - `GET /sync/api/doctor` → diagnostics passthrough.
+    - All `/sync/api/*` payloads are PNG-camouflaged AEAD envelopes (R20).
+    - Chunked upload: server accumulates chunks under `.uploading-<file_id>` (file_id is a UUID supplied by the SPA), validates monotonic contiguous `chunk_idx`, on `put-finalize` verifies SHA-256 then atomic-renames to final path. Stale temp files (> 1h since last chunk) are GC'd by a periodic sweep.
+    - On entrypoint startup, sync-service sweeps `/workspace/shared/.uploading-*` left from a previous container instance and deletes them.
+    - Server-side handshake also returns `unix_ms` for clock-skew compensation and a key-rotation marker that the SPA uses to detect "your cached key is stale" → SPA clears its IndexedDB key cache and prompts re-entry.
+    - On AEAD failure: 400, no fs side effect.
+    - On 401 from upstream / locked vault: explicit error code.
+    - Bind `127.0.0.1:8081`; trust only `state.ts` for vault gate.
+    - _Requirements: 19.1, 19.4, 19.6, 19.10, 19.14, 19.15, 19.16, 19.20, 19.21, 20.4, 20.7, 20.8, 20.10_
+  - [x] 6.13 Unit tests for server endpoint behaviors
+    - **Property 11: Sync Atomic Visibility** (Validates: 19.4) — concurrent reader never observes partial content.
+    - Edge cases: empty file, zero-byte payload, non-ASCII paths, AEAD failure on each endpoint.
+    - In `tests/unit/server.test.ts`.
+
+- [x] 7. Sync service frontend SPA (in `sync-service/public/`)
+  - [x] 7.1 SPA scaffolding
+    - `index.html`, Vite-based TS build wired into `Makefile`/`pnpm` build, output to `sync-service/public/dist/`.
+    - _Requirements: 19.1_
+  - [x] 7.2 Implement `app/idb.ts`
+    - Persist directory handle, sync-key (non-extractable `CryptoKey`), salt, last-baseline.
+    - _Requirements: 19.2, 20.3_
+  - [x] 7.3 Implement `app/crypto.ts` (browser counterpart)
+    - WebCrypto AES-256-GCM + HKDF-SHA256 mirroring `src/crypto.ts` exactly.
+    - Import key as non-extractable.
+    - _Requirements: 20.1, 20.2, 20.3_
+  - [x] 7.4 Cross-implementation property tests
+    - Run `tests/property/crypto.test.ts` against both server and browser implementations sharing inputs to ensure byte-for-byte agreement on AEAD output and HKDF output (Properties 8 and 9 cross-checked).
+  - [x] 7.5 Implement `app/ws.ts`
+    - WebSocket client with reconnect, exponential backoff, message-id dedupe.
+    - _Requirements: 19.5, 19.16_
+  - [x] 7.6 Implement `app/main.ts` (FS Access driver)
+    - `showDirectoryPicker`, persist handle (R19.2).
+    - Foreground polling 2s, background polling 10s (`document.visibilitychange`).
+    - Detect home/system root selection, warn user.
+    - On change: stream-encrypt the file in 4 MiB chunks via `File.slice` to keep memory bounded; send each as a `put-chunk` envelope (PNG-camouflaged AEAD), then a `put-finalize` envelope with SHA-256 of the assembled content. Respect 500MB pre-flight size cap.
+    - On WS event: download/decrypt/apply via FS Access API.
+    - On tab reopen: full reconciliation pass against server.
+    - Single-session check via `BroadcastChannel("sync-lock-<folder-hash>")`.
+    - Handshake: send encrypted test vector once when key first set, surface result. Read server's `unix_ms` from response and compute clock-skew offset for subsequent envelope timestamps. On `key-rotated` response (or any handshake failure after vault password rotation), clear IndexedDB-cached key and prompt user to re-enter passphrase.
+    - "Reset key" button always visible in UI to manually clear cached key.
+    - _Requirements: 19.2, 19.3, 19.4, 19.5, 19.6, 19.8, 19.12, 19.17, 19.18, 19.19, 19.20_
+  - [x] 7.7 Implement `app/ui.tsx`
+    - Status indicator with explicit states: `vault-not-initialized`, `vault-locked`, `sync-key-not-set`, `syncing`, `idle`, `error`, `auth-expired`.
+    - Conflict view with `<name>.conflict-<ts>` listing and resolve actions.
+    - Recent activity log (path-free; only op + timestamp + status).
+    - Non-Chromium fallback: drag-drop upload + click-to-download.
+    - "Re-authenticate" button on 401.
+    - "Run Diagnostics" button calling a `/sync/doctor` proxy endpoint.
+    - _Requirements: 19.7, 19.9, 19.13, 19.14, 19.21, 21.4_
+  - [x] 7.8 Unit tests for SPA
+    - **Property 13: Sync Size-Limit Enforcement** (Validates: 19.8) — generated file sizes assert client-side rejection above limit, acceptance below.
+    - Snapshot tests for each UI state.
+    - Non-Chromium UA fallback render.
+    - In `tests/unit/spa.test.ts`.
+  - [x] 7.9 Embed Sync Page inside code-server
+    - Provide a code-server iframe wrapper page so users get a unified surface.
+    - _Requirements: 19.11_
+
+- [x] 8. Checkpoint — sync service end-to-end
+  - Build sync-service, exercise upload/download/reconcile via the SPA against a running container with vault unlocked. Run all sync-service property and unit tests. Ensure all tests pass, ask the user if questions arise.
+
+- [x] 9. Bootstrap and destroy
+  - [x] 9.1 Implement `bootstrap.sh`
+    - Verify Docker, git, curl present; otherwise print install hints and exit non-zero.
+    - Clone config repo (the repo containing this `bootstrap.sh`).
+    - Mode detection:
+      - **Migration mode** (default): user provides `--vault-repo URL`; clone vault repo into `./vault-cipher/`; mount as the `vault-data` volume target on first compose-up.
+      - **Fresh mode** (`--init`): create empty `./vault-cipher/`; remind user that the GitHub vault repo at `VAULT_GIT_REPO` MUST be created (empty, private) before init-vault runs. After init-vault completes, the post-init hook runs `git remote add origin <VAULT_GIT_REPO>` and `git push -u origin main` to seed the remote and establish the upstream tracking branch — so the first vault-sync cycle has somewhere to push.
+    - Prompt for `.env` values (token, tunnel host port, vault repo URL, identity); render `.env` from `.env.example`.
+    - Image acquisition strategy: try `docker compose build` first; on failure (network-restricted), fall back to `make image-import` from a pre-supplied `workspace.tar` if present in the project directory.
+    - Invoke `setup-cloudflared.sh` and `setup-docker.sh` interactively.
+    - `docker compose up -d`, verify container health, then instruct the user to `docker exec -it ... unlock-vault` (migration mode) or `init-vault` (fresh mode).
+    - Verify post-conditions: container running, tunnel reachable, vault repo present.
+    - _Requirements: 17.1, 17.2, 17.3, 17.4, 17.5, 24.3, 24.4_
+  - [x] 9.2 Implement `destroy.sh`
+    - Confirmation prompt unless `--force`.
+    - `docker compose down -v`; `docker volume rm vault-data clash-config`; `docker image rm` for the workspace image.
+    - `cloudflared tunnel delete <name>` (best effort); revoke Access application via API (best effort, soft-fail).
+    - Optional `--remote`: `gh repo delete <vault-repo>` with confirmation.
+    - Remove project directory, `.env`, scripts.
+    - Print summary report listing every removed resource.
+    - _Requirements: 18.1, 18.2, 18.3, 18.4, 18.5, 18.6, 18.7_
+  - [x] 9.3 Property/integration tests for bootstrap and destroy
+    - **Property 20: Destroy Completeness** (Validates: 18.1, 18.2, 18.3, 18.5). Bats test runs `destroy.sh --force` after a fixture deploy and asserts no Docker artifacts, no project dir, no tunnel registration remain.
+    - Bootstrap end-to-end smoke against a CI Linux runner with a fixture vault repo.
+    - In `tests/integration/bootstrap-destroy.bats`.
+
+- [x] 10. Host setup scripts
+  - [x] 10.1 Implement `scripts/setup-docker.sh`
+    - Verify Docker Desktop installed and running.
+    - Recommend memory ≥ 12GB and disk ≥ 100GB; advise if insufficient.
+    - Recommend disabling Docker Desktop auto-update.
+    - Configure `pmset` (no system sleep on AC, wake-on-network, auto-restart on power loss); print rationale.
+    - Idempotent.
+    - _Requirements: 14.1, 14.2, 14.3, 14.4, 14.5, 14.6, 23.1, 23.2, 23.3_
+  - [x] 10.2 Implement `scripts/setup-cloudflared.sh`
+    - `cloudflared tunnel login → create → service install → route dns`.
+    - Configure single ingress rule: `workspace.example.com` → `http://localhost:${TUNNEL_HOST_PORT}` (container Caddy demuxes by path).
+    - Set up Access application requiring OAuth + email match.
+    - Idempotent (detect existing tunnel/route and skip).
+    - _Requirements: 6.1, 6.2, 6.3, 6.4_
+  - [x] 10.3 Unit tests for setup scripts
+    - Idempotence checks (running twice yields no error and no extra resources).
+    - In `tests/unit/setup-scripts.bats`.
+
+- [x] 11. Checkpoint — full host orchestration
+  - On a clean macOS test fixture (or Linux CI proxy), run `bootstrap.sh` end-to-end, then `destroy.sh --force`, asserting cleanliness. Ensure all tests pass, ask the user if questions arise.
+
+- [x] 12. Diagnostics and hygiene
+  - [x] 12.1 Implement `scripts/doctor.sh`
+    - Pure classifier: collect a state vector (Clash up, vault mounted, code-server up, tunnel reachable, last sync timestamp, vault disk usage, sync-service up, sync-service handshake-OK, vault git remote reachable) and map to per-component `✓/⚠/✗` plus suggestions.
+    - Non-zero exit iff any `✗`.
+    - Sanitised output (no paths, no content).
+    - Runnable from container terminal and via `docker exec`.
+    - Expose pure classifier logic as a small TS module under `sync-service/src/doctor.ts` so the Sync Page "Run Diagnostics" button reuses identical classification.
+    - _Requirements: 21.1, 21.2, 21.3, 21.4, 25.2_
+  - [x] 12.2 Property test for doctor classification
+    - **Property 19: Doctor State Classification** (Validates: 21.1, 21.2). Generate arbitrary state vectors, assert classifier output matches the fixed table and overall exit-code rule.
+    - In `tests/property/doctor.test.ts`.
+  - [x] 12.3 Implement `scripts/change-vault-password.sh`
+    - Refuse if `/workspace` mounted; instruct user to lock first.
+    - Prompt current and new passphrase (with confirmation).
+    - Invoke `gocryptfs -passwd`.
+    - On success: print rotation guidance:
+      - "Run unlock-vault with the new passphrase — the sync-passphrase file inside the vault will be automatically refreshed by the post-unlock hook."
+      - "Open the Sync Page on every browser/device, click 'Reset key', and re-enter the new passphrase. Old IndexedDB-cached keys will fail handshake and be cleared automatically on the next sync attempt."
+      - "Update the password manager entry."
+    - _Requirements: 22.1, 22.2, 22.3, 22.4_
+  - [x] 12.4 Property test for password rotation
+    - **Property 17: Password Rotation Preserves Data** (Validates: 22.1, 22.4). Bats test: write fixture file with old passphrase, lock, rotate, unlock with new succeeds and recovers file unchanged, unlock with old fails.
+    - In `tests/property/rotate.bats`.
+  - [x] 12.5 Implement `scripts/vault-prune.sh`
+    - Identify large blobs in vault history; prompt for confirmation; invoke `git filter-repo` to remove.
+    - Refuse to run while vault is mounted.
+    - _Requirements: 25.3_
+
+- [x] 13. Optional client and Parallels variants
+  - [x] 13.1 Client container (R10)
+    - `client/Dockerfile`: `debian:bookworm-slim` + clash only.
+    - `docker-compose.client.yml` independent stack exposing `127.0.0.1:7890/7891`.
+    - `client/clash-config-template.yaml`.
+    - _Requirements: 10.1, 10.2, 10.3, 10.4_
+  - [x] 13.2 Parallels VM provision (R11)
+    - `parallels/provision.sh` cloud-init script for Ubuntu 22.04 guest installing clash and exposing host-side proxy port via shared networking.
+    - `parallels/README.md` documenting trade-offs vs the client container.
+    - _Requirements: 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 11.7_
+
+- [x] 14. Documentation
+  - [x] 14.1 `docs/architecture.md` mirroring the design overview and layered security model.
+  - [x] 14.2 `docs/runbook.md` covering daily ops: unlock/lock, status check via doctor, password rotation, prune, recovery from sync failure banner.
+  - [x] 14.3 `docs/threat-model.md` expanded from the design's adversary table.
+  - [x] 14.4 `docs/migration.md` walking through bootstrap on a fresh Mac Mini.
+    - _Requirements: 17.2, 17.3, 17.5_
+
+- [x] 15. Integration smokes for release-gating properties
+  - [x] 15.1 No-plaintext-on-disk audit
+    - **Property 1: No Plaintext on Disk** (Validates: 13.1, 13.3, 13.5). Write a known plaintext magic via the FUSE mount; scan `/vault/cipher`, container logs, and host project dir for the magic; fail on any hit.
+    - In `tests/integration/no-plaintext.bats`.
+  - [x] 15.2 Egress fail-closed audit
+    - **Property 2: All Egress Traverses Clash** (Validates: 2.5, 2.6, 13.2, 15.4). Stop Clash inside the container; attempt `git push`, `curl https://github.com`, `npm install`; assert each fails with no fallback.
+    - In `tests/integration/fail-closed.bats`.
+  - [x] 15.3 Tunnel reachability smoke
+    - With a sandbox Cloudflare account, GET `https://workspace.example.com/` through the tunnel and confirm it lands at code-server (one example, not PBT).
+
+- [x] 16. Final checkpoint
+  - Run the full test pyramid: `make test-unit`, `make test-property`, `make test-integration`. Confirm every numbered property has at least one implementing test (CI gate). Ensure all tests pass, ask the user if questions arise.
+
+## Notes
+
+- Tasks marked with `*` are optional and may be skipped to reach a faster MVP, but property tests for crypto (6.3, 6.5, 6.7, 7.4) and integration smokes (15.1, 15.2) are strongly recommended before any release.
+- Each task references its requirements clauses for traceability; property test sub-tasks additionally reference the property number from `design.md`.
+- The single-container, single-passphrase model means there is exactly one trust root (the user's vault passphrase). Every key, credential, and authenticator either derives from it (HKDF) or is stored inside what it unlocks (vault repo).
+- This workflow ends with the task document. To begin executing tasks, open `tasks.md` and click "Start task" next to a task item.

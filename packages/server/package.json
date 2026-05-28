@@ -1,0 +1,18 @@
+{
+  "name": "@sdw/server",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/index.ts",
+    "start": "bun run src/index.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "hono": "^4.7.0",
+    "@sdw/core": "workspace:*"
+  },
+  "devDependencies": {
+    "bun-types": "^1.2.0",
+    "fast-check": "^4.1.0"
+  }
+}

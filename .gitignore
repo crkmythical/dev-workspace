@@ -1,0 +1,22 @@
+# Secrets
+.env
+
+# Vault ciphertext (cloned separately)
+vault-cipher/
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+out/
+
+# Build artifacts
+*.tar
+
+# Logs
+*.log
+
+# OS junk
+.DS_Store
+Thumbs.db
