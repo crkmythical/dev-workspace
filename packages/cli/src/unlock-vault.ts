@@ -1,16 +1,16 @@
 #!/usr/bin/env bun
+import { existsSync, mkdirSync } from "node:fs";
+import {
+  CREDENTIALS_DIR,
+  STATE_SOCKET_PATH,
+  SYNC_PASSPHRASE_PATH,
+  VAULT_CIPHER_DIR,
+  WORKSPACE_MOUNT,
+} from "@sdw/core/constants";
 /**
  * unlock-vault — Mount the gocryptfs vault at /workspace
  */
 import { $ } from "bun";
-import { existsSync, mkdirSync } from "node:fs";
-import {
-  VAULT_CIPHER_DIR,
-  WORKSPACE_MOUNT,
-  CREDENTIALS_DIR,
-  SYNC_PASSPHRASE_PATH,
-  STATE_SOCKET_PATH,
-} from "@sdw/core/constants";
 
 // 1. Already mounted?
 const mountCheck = await $`mountpoint -q ${WORKSPACE_MOUNT}`.quiet().nothrow();
@@ -39,9 +39,9 @@ if (!passphrase) {
 }
 if (passphrase.length < 8) {
   console.warn("⚠ WARNING: Passphrase is very short (<8 chars). Use 16+ for production.");
-}// 4. Mount — pipe passphrase to gocryptfs stdin (-nonempty allows README placeholder)
+} // 4. Mount — pipe passphrase to gocryptfs stdin (-nonempty allows README placeholder)
 const gocryptfs = Bun.spawn(["gocryptfs", "-q", "-nonempty", VAULT_CIPHER_DIR, WORKSPACE_MOUNT], {
-  stdin: new Response(passphrase + "\n").body!,
+  stdin: new Response(`${passphrase}\n`).body!,
   stdout: "pipe",
   stderr: "pipe",
 });

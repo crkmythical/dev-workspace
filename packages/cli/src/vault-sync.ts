@@ -1,15 +1,15 @@
 #!/usr/bin/env bun
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  SYNC_FAILURE_THRESHOLD,
+  VAULT_CIPHER_DIR,
+  VAULT_SYNC_STATE_DIR,
+  WORKSPACE_MOUNT,
+} from "@sdw/core/constants";
 /**
  * vault-sync — Periodic vault ciphertext sync to GitHub
  */
 import { $ } from "bun";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import {
-  VAULT_CIPHER_DIR,
-  WORKSPACE_MOUNT,
-  VAULT_SYNC_STATE_DIR,
-  SYNC_FAILURE_THRESHOLD,
-} from "@sdw/core/constants";
 
 const LAST_SUCCESS = `${VAULT_SYNC_STATE_DIR}/last-success`;
 const FAILURE_COUNT = `${VAULT_SYNC_STATE_DIR}/consecutive-failures`;
@@ -46,7 +46,9 @@ if (pushOk) {
   writeFileSync(FAILURE_COUNT, "0");
 } else {
   let failures = 0;
-  try { failures = parseInt(readFileSync(FAILURE_COUNT, "utf-8")); } catch {}
+  try {
+    failures = Number.parseInt(readFileSync(FAILURE_COUNT, "utf-8"));
+  } catch {}
   failures++;
   writeFileSync(FAILURE_COUNT, String(failures));
 

@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
+import { STATE_SOCKET_PATH, WORKSPACE_MOUNT } from "@sdw/core/constants";
 /**
  * lock-vault — Unmount the gocryptfs vault
  */
 import { $ } from "bun";
-import { WORKSPACE_MOUNT, STATE_SOCKET_PATH } from "@sdw/core/constants";
 
 // 1. Check if mounted
 const check = await $`mountpoint -q ${WORKSPACE_MOUNT}`.quiet().nothrow();

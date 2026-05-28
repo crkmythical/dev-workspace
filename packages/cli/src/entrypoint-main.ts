@@ -3,7 +3,7 @@ import { CLASH_HTTP_PORT, CLASH_SOCKS_PORT } from "@sdw/core/constants";
 /**
  * entrypoint-main — Container startup logic (called from entrypoint.sh)
  *
- * 1. Cleanup stale FUSE mount
+ * 1. Cleanup stale FUSE mounts
  * 2. Fetch Clash subscription
  * 3. Configure git globals
  * 4. Tune inotify
@@ -12,10 +12,11 @@ import { CLASH_HTTP_PORT, CLASH_SOCKS_PORT } from "@sdw/core/constants";
  * 7. exec supervisord
  */
 import { $ } from "bun";
+import { cleanupStaleMount } from "./lib/vault.ts";
 
-// 1. Cleanup stale FUSE mount
-await $`fusermount -uz /workspace`.quiet().nothrow();
-await $`fusermount -uz /pentest/rootfs`.quiet().nothrow();
+// 1. Cleanup stale FUSE mounts from previous container lifecycle
+await cleanupStaleMount("/workspace");
+await cleanupStaleMount("/pentest/rootfs");
 
 // 2. Fetch subscription (must bypass proxy since Clash isn't ready yet)
 const subUrl = process.env.CLASH_SUBSCRIPTION_URL;

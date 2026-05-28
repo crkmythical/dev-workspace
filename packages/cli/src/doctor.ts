@@ -1,55 +1,86 @@
 #!/usr/bin/env bun
+import { existsSync, readFileSync } from "node:fs";
+import {
+  CLASH_HTTP_PORT,
+  CODE_SERVER_PORT,
+  PENTEST_CIPHER_DIR,
+  PENTEST_MOUNT,
+  SYNC_SERVICE_PORT,
+  VAULT_CIPHER_DIR,
+  VAULT_SYNC_STATE_DIR,
+  WORKSPACE_MOUNT,
+} from "@sdw/core/constants";
+import type { DoctorResult } from "@sdw/core/types";
 /**
  * doctor — Workspace health check
  */
 import { $ } from "bun";
-import { existsSync, readFileSync } from "node:fs";
-import type { DoctorResult } from "@sdw/core/types";
-import {
-  CLASH_HTTP_PORT,
-  CODE_SERVER_PORT,
-  SYNC_SERVICE_PORT,
-  WORKSPACE_MOUNT,
-  VAULT_CIPHER_DIR,
-  VAULT_SYNC_STATE_DIR,
-  PENTEST_CIPHER_DIR,
-  PENTEST_MOUNT,
-} from "@sdw/core/constants";
 
 const results: DoctorResult[] = [];
 
 // 1. Clash
-const clashProbe = await $`curl -s --connect-timeout 2 -x http://127.0.0.1:${CLASH_HTTP_PORT} http://www.gstatic.com/generate_204 -o /dev/null`.quiet().nothrow();
-results.push(clashProbe.exitCode === 0
-  ? { component: "Clash proxy", status: "ok", detail: `port ${CLASH_HTTP_PORT} responding` }
-  : { component: "Clash proxy", status: "fail", detail: `port ${CLASH_HTTP_PORT} not responding` });
+const clashProbe =
+  await $`curl -s --connect-timeout 2 -x http://127.0.0.1:${CLASH_HTTP_PORT} http://www.gstatic.com/generate_204 -o /dev/null`
+    .quiet()
+    .nothrow();
+results.push(
+  clashProbe.exitCode === 0
+    ? { component: "Clash proxy", status: "ok", detail: `port ${CLASH_HTTP_PORT} responding` }
+    : {
+        component: "Clash proxy",
+        status: "fail",
+        detail: `port ${CLASH_HTTP_PORT} not responding`,
+      },
+);
 
 // 2. Vault mount
 const mountCheck = await $`mountpoint -q ${WORKSPACE_MOUNT}`.quiet().nothrow();
-results.push(mountCheck.exitCode === 0
-  ? { component: "Vault mount", status: "ok", detail: "/workspace mounted" }
-  : { component: "Vault mount", status: "warn", detail: "not mounted — run unlock-vault" });
+results.push(
+  mountCheck.exitCode === 0
+    ? { component: "Vault mount", status: "ok", detail: "/workspace mounted" }
+    : { component: "Vault mount", status: "warn", detail: "not mounted — run unlock-vault" },
+);
 
 // 3. code-server
-const csProbe = await $`curl -s --connect-timeout 2 http://127.0.0.1:${CODE_SERVER_PORT}/healthz -o /dev/null`.quiet().nothrow();
-results.push(csProbe.exitCode === 0
-  ? { component: "code-server", status: "ok" }
-  : { component: "code-server", status: "fail", detail: `port ${CODE_SERVER_PORT} not responding` });
+const csProbe =
+  await $`curl -s --connect-timeout 2 http://127.0.0.1:${CODE_SERVER_PORT}/healthz -o /dev/null`
+    .quiet()
+    .nothrow();
+results.push(
+  csProbe.exitCode === 0
+    ? { component: "code-server", status: "ok" }
+    : {
+        component: "code-server",
+        status: "fail",
+        detail: `port ${CODE_SERVER_PORT} not responding`,
+      },
+);
 
 // 4. Sync service
-const syncProbe = await $`curl -s --connect-timeout 2 http://127.0.0.1:${SYNC_SERVICE_PORT}/sync/api/doctor -o /dev/null`.quiet().nothrow();
-results.push(syncProbe.exitCode === 0
-  ? { component: "Sync service", status: "ok" }
-  : { component: "Sync service", status: "fail", detail: `port ${SYNC_SERVICE_PORT} not responding` });
+const syncProbe =
+  await $`curl -s --connect-timeout 2 http://127.0.0.1:${SYNC_SERVICE_PORT}/sync/api/doctor -o /dev/null`
+    .quiet()
+    .nothrow();
+results.push(
+  syncProbe.exitCode === 0
+    ? { component: "Sync service", status: "ok" }
+    : {
+        component: "Sync service",
+        status: "fail",
+        detail: `port ${SYNC_SERVICE_PORT} not responding`,
+      },
+);
 
 // 5. Last vault sync
 const lastSyncFile = `${VAULT_SYNC_STATE_DIR}/last-success`;
 if (existsSync(lastSyncFile)) {
   const ts = readFileSync(lastSyncFile, "utf-8").trim();
   const age = Date.now() - new Date(ts).getTime();
-  results.push(age < 7200_000
-    ? { component: "Vault sync", status: "ok", detail: `last: ${ts}` }
-    : { component: "Vault sync", status: "warn", detail: `last: ${ts} (>2h ago)` });
+  results.push(
+    age < 7200_000
+      ? { component: "Vault sync", status: "ok", detail: `last: ${ts}` }
+      : { component: "Vault sync", status: "warn", detail: `last: ${ts} (>2h ago)` },
+  );
 } else {
   results.push({ component: "Vault sync", status: "warn", detail: "no sync recorded" });
 }

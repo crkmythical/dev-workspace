@@ -1,4 +1,12 @@
 #!/usr/bin/env bun
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  CLASH_SOCKS_PORT,
+  CREDENTIALS_DIR,
+  SYNC_PASSPHRASE_PATH,
+  VAULT_CIPHER_DIR,
+  WORKSPACE_MOUNT,
+} from "@sdw/core/constants";
 /**
  * setup — Interactive or automated workspace configuration
  *
@@ -8,14 +16,6 @@
  *   setup --clash-url URL    # Set specific values non-interactively
  */
 import { $ } from "bun";
-import { existsSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
-import {
-  VAULT_CIPHER_DIR,
-  WORKSPACE_MOUNT,
-  CREDENTIALS_DIR,
-  SYNC_PASSPHRASE_PATH,
-  CLASH_SOCKS_PORT,
-} from "@sdw/core/constants";
 
 // --- Parse args ---
 const args = process.argv.slice(2);
@@ -42,17 +42,25 @@ async function testClashUrl(url: string): Promise<boolean> {
   try {
     const r = await $`curl -fsSL --max-time 10 "${url}" -o /dev/null`.quiet().nothrow();
     return r.exitCode === 0;
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 }
 
 async function testProxy(): Promise<boolean> {
   try {
-    const r = await $`curl -s --proxy socks5://127.0.0.1:${CLASH_SOCKS_PORT} --max-time 10 https://www.google.com -o /dev/null`.quiet().nothrow();
+    const r =
+      await $`curl -s --proxy socks5://127.0.0.1:${CLASH_SOCKS_PORT} --max-time 10 https://www.google.com -o /dev/null`
+        .quiet()
+        .nothrow();
     return r.exitCode === 0;
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 }
 
-const DEFAULT_CLASH_URL = "https://cfnew.cicd.dpdns.org/372074d4-385f-4205-9071-7e61186dffd4/sub?target=clash";
+const DEFAULT_CLASH_URL =
+  "https://cfnew.cicd.dpdns.org/372074d4-385f-4205-9071-7e61186dffd4/sub?target=clash";
 const DEFAULT_TUNNEL_HOSTNAME = "workspace.cicd.dpdns.org";
 const DEFAULT_TUNNEL_NAME = "dev-workspace";
 const DEFAULT_TUNNEL_PORT = "18080";
@@ -69,7 +77,9 @@ if (!clashUrl && !isAuto) {
 if (!clashUrl) clashUrl = DEFAULT_CLASH_URL;
 if (clashUrl) {
   // Write subscription directly (don't test — network may not be available yet)
-  const fetchResult = await $`curl -fsSL --max-time 15 "${clashUrl}" -o /etc/clash/config.yaml.new`.quiet().nothrow();
+  const fetchResult = await $`curl -fsSL --max-time 15 "${clashUrl}" -o /etc/clash/config.yaml.new`
+    .quiet()
+    .nothrow();
   if (fetchResult.exitCode === 0) {
     await $`mv /etc/clash/config.yaml.new /etc/clash/config.yaml`.quiet();
     console.log("  ✓ 订阅配置已更新");
@@ -115,10 +125,16 @@ if (existsSync(`${VAULT_CIPHER_DIR}/gocryptfs.conf`)) {
     await $`git config --global user.email "${process.env.GIT_USER_EMAIL || "vault@local"}"`.quiet();
     await $`git config --global user.name "${process.env.GIT_USER_NAME || "Vault"}"`.quiet();
     await $`cd ${VAULT_CIPHER_DIR} && git init -b main`.quiet();
-    const gitignore = "node_modules/\ntarget/\nbuild/\ndist/\n.cache/\n**/*.log\n.idea/\n.vscode/\n__pycache__/\n.DS_Store\n*.tmp\n*.swp\nshared/\n";
+    const gitignore =
+      "node_modules/\ntarget/\nbuild/\ndist/\n.cache/\n**/*.log\n.idea/\n.vscode/\n__pycache__/\n.DS_Store\n*.tmp\n*.swp\nshared/\n";
     writeFileSync(`${VAULT_CIPHER_DIR}/.gitignore`, gitignore);
-    writeFileSync(`${VAULT_CIPHER_DIR}/.gitattributes`, "*.bin filter=lfs diff=lfs merge=lfs -text\n");
-    await $`cd ${VAULT_CIPHER_DIR} && git add -A && git commit -q -m "init vault"`.quiet().nothrow();
+    writeFileSync(
+      `${VAULT_CIPHER_DIR}/.gitattributes`,
+      "*.bin filter=lfs diff=lfs merge=lfs -text\n",
+    );
+    await $`cd ${VAULT_CIPHER_DIR} && git add -A && git commit -q -m "init vault"`
+      .quiet()
+      .nothrow();
   }
 }
 
@@ -162,8 +178,8 @@ console.log("\n=== 配置完成 ===");
 console.log(`  code-server: http://localhost:${DEFAULT_TUNNEL_PORT}`);
 console.log(`  远程访问:    https://${DEFAULT_TUNNEL_HOSTNAME}`);
 console.log(`  文件同步:    https://${DEFAULT_TUNNEL_HOSTNAME}/sync/`);
-console.log(`  健康检查:    docker exec dev-workspace doctor`);
+console.log("  健康检查:    docker exec dev-workspace doctor");
 if (existsSync(`${VAULT_CIPHER_DIR}/gocryptfs.conf`)) {
-  console.log(`  解锁 vault:  docker exec -it dev-workspace unlock-vault`);
+  console.log("  解锁 vault:  docker exec -it dev-workspace unlock-vault");
 }
 console.log("");

@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
+import { existsSync } from "node:fs";
+import { VAULT_CIPHER_DIR, WORKSPACE_MOUNT } from "@sdw/core/constants";
 /**
  * init-vault — One-time gocryptfs vault initialization
  */
 import { $ } from "bun";
-import { existsSync } from "node:fs";
-import { VAULT_CIPHER_DIR, WORKSPACE_MOUNT } from "@sdw/core/constants";
 
 // Idempotency check
 if (existsSync(`${VAULT_CIPHER_DIR}/gocryptfs.conf`)) {
@@ -46,7 +46,10 @@ shared/
 await Bun.write(`${VAULT_CIPHER_DIR}/.gitignore`, gitignore);
 
 // Write .gitattributes
-await Bun.write(`${VAULT_CIPHER_DIR}/.gitattributes`, "*.bin filter=lfs diff=lfs merge=lfs -text\n*.jar filter=lfs diff=lfs merge=lfs -text\n");
+await Bun.write(
+  `${VAULT_CIPHER_DIR}/.gitattributes`,
+  "*.bin filter=lfs diff=lfs merge=lfs -text\n*.jar filter=lfs diff=lfs merge=lfs -text\n",
+);
 
 // Initial commit
 await $`cd ${VAULT_CIPHER_DIR} && git add -A && git commit -q -m "init vault"`.quiet();
@@ -54,7 +57,9 @@ await $`cd ${VAULT_CIPHER_DIR} && git add -A && git commit -q -m "init vault"`.q
 // Push to remote if configured
 const vaultRepo = process.env.VAULT_GIT_REPO;
 if (vaultRepo) {
-  await $`cd ${VAULT_CIPHER_DIR} && git remote add origin ${vaultRepo} && git push -u origin main`.quiet().nothrow();
+  await $`cd ${VAULT_CIPHER_DIR} && git remote add origin ${vaultRepo} && git push -u origin main`
+    .quiet()
+    .nothrow();
   console.log(`Pushed to ${vaultRepo}`);
 } else {
   console.log("No VAULT_GIT_REPO configured — skipping remote push.");
