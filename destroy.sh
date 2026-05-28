@@ -30,7 +30,7 @@ echo "Destroying workspace..."
 
 # Standard cleanup
 docker compose down -v 2>/dev/null || true
-docker volume rm vault-data clash-config 2>/dev/null || true
+docker volume rm vault-data cache-data clash-config 2>/dev/null || true
 docker image rm dev-workspace-workspace 2>/dev/null || true
 docker image rm dev-workspace 2>/dev/null || true
 

@@ -10,6 +10,7 @@ services:
       - "/dev/fuse"
     volumes:
       - vault-data:/vault/cipher
+      - cache-data:/pentest/cipher
       - clash-config:/etc/clash
     ports:
       - "127.0.0.1:${TUNNEL_HOST_PORT:-18080}:8080"
@@ -29,4 +30,5 @@ services:
 
 volumes:
   vault-data:
+  cache-data:
   clash-config:

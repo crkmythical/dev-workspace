@@ -50,3 +50,8 @@ export const GRACEFUL_RESTART_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24h
 // Vault sync
 export const DEFAULT_VAULT_SYNC_INTERVAL = 1800; // 30 min
 export const SYNC_FAILURE_THRESHOLD = 3;
+
+// Pentest environment (dual vault)
+export const PENTEST_CIPHER_DIR = "/pentest/cipher";
+export const PENTEST_MOUNT = "/pentest/rootfs";
+export const PENTEST_TOR_PORT = 9050;

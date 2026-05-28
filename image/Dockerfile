@@ -24,6 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tmux \
     bash \
     locales \
+    debootstrap \
     && sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen \
     && locale-gen \
     && rm -rf /var/lib/apt/lists/*
@@ -62,7 +63,8 @@ RUN curl -fsSL "https://code-server.dev/install.sh" | sh -s -- --version=${CODE_
 
 # Filesystem prep
 RUN mkdir -p /workspace /vault/cipher /etc/supervisor/conf.d /var/run/vault-sync \
-    /etc/caddy /etc/clash /opt/workspace
+    /etc/caddy /etc/clash /opt/workspace \
+    /pentest/cipher /pentest/rootfs
 
 # Ensure proxy env is available in all shells (interactive terminals via code-server)
 RUN echo 'export http_proxy=http://127.0.0.1:7890' >> /etc/profile.d/proxy.sh && \
@@ -101,7 +103,13 @@ RUN cd packages/spa && bunx vite build
 RUN for cmd in init-vault unlock-vault lock-vault vault-sync doctor setup; do \
       printf '#!/bin/bash\nexec bun run /opt/workspace/packages/cli/src/%s.ts "$@"\n' "$cmd" > /usr/local/bin/$cmd; \
       chmod +x /usr/local/bin/$cmd; \
-    done
+    done && \
+    for cmd in init-pentest unlock-pentest lock-pentest pentest-bootstrap; do \
+      printf '#!/bin/bash\nexec bun run /opt/workspace/packages/cli/src/%s.ts "$@"\n' "$cmd" > /usr/local/bin/$cmd; \
+      chmod +x /usr/local/bin/$cmd; \
+    done && \
+    printf '#!/bin/bash\nexec bun run /opt/workspace/packages/cli/src/pentest-enter.ts "$@"\n' > /usr/local/bin/pentest && \
+    chmod +x /usr/local/bin/pentest
 
 # Copy entrypoint (minimal shell → exec bun)
 COPY scripts/entrypoint.sh /usr/local/lib/workspace/entrypoint.sh

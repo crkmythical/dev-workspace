@@ -12,6 +12,8 @@ import {
   WORKSPACE_MOUNT,
   VAULT_CIPHER_DIR,
   VAULT_SYNC_STATE_DIR,
+  PENTEST_CIPHER_DIR,
+  PENTEST_MOUNT,
 } from "@sdw/core/constants";
 
 const results: DoctorResult[] = [];
@@ -57,6 +59,20 @@ if (existsSync(VAULT_CIPHER_DIR)) {
   const du = await $`du -sh ${VAULT_CIPHER_DIR}`.text();
   const size = du.split("\t")[0];
   results.push({ component: "Vault disk", status: "ok", detail: size });
+}
+
+// 7. Pentest vault
+if (existsSync(`${PENTEST_CIPHER_DIR}/gocryptfs.conf`)) {
+  const pentestMount = await $`mountpoint -q ${PENTEST_MOUNT}`.quiet().nothrow();
+  if (pentestMount.exitCode === 0) {
+    const du = await $`du -sh ${PENTEST_MOUNT}`.text();
+    const size = du.split("\t")[0];
+    results.push({ component: "Pentest vault", status: "ok", detail: `mounted (${size})` });
+  } else {
+    results.push({ component: "Pentest vault", status: "ok", detail: "locked (initialized)" });
+  }
+} else {
+  results.push({ component: "Pentest vault", status: "ok", detail: "not initialized (optional)" });
 }
 
 // Output

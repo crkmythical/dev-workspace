@@ -156,6 +156,67 @@ docker exec -it dev-workspace doctor
 | 密码轮换 | `lock-vault` → `change-password` → `unlock-vault` |
 | 销毁 | `./destroy.sh --force` |
 
+## 渗透测试环境（双 Vault 架构）
+
+独立的加密分区存放完整 Kali rootfs，通过 namespace 隔离进入。锁定后磁盘上零痕迹。
+
+### 架构
+
+```
+┌─── dev-workspace container ────────────────────────────────┐
+│                                                             │
+│  Vault 1 (workspace):  /vault/cipher → /workspace          │
+│    ├── 代码、项目、配置（git 自动备份）                       │
+│    └── 与渗透环境完全独立                                    │
+│                                                             │
+│  Vault 2 (pentest):  /pentest/cipher → /pentest/rootfs     │
+│    ├── 完整 Kali rootfs（不备份，可重建）                     │
+│    ├── 独立密码 (plausible deniability)                      │
+│    └── 通过 unshare+chroot 隔离进入                          │
+│                                                             │
+│  网络:                                                       │
+│    开发流量 → Clash 代理 (VLESS)                             │
+│    渗透流量 → Tor/proxychains (inside chroot)                │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 首次配置
+
+```bash
+# 1. 初始化渗透 vault（设置独立密码）
+docker exec -it dev-workspace init-pentest
+
+# 2. 解锁
+docker exec -it dev-workspace unlock-pentest
+
+# 3. 安装 Kali rootfs（约 2-4GB，需要 5-15 分钟）
+docker exec -it dev-workspace pentest-bootstrap
+
+# 4. 进入
+docker exec -it dev-workspace pentest
+```
+
+### 日常使用
+
+| 操作 | 命令 |
+|------|------|
+| 解锁渗透环境 | `docker exec -it dev-workspace unlock-pentest` |
+| 进入渗透环境 | `docker exec -it dev-workspace pentest` |
+| 锁定渗透环境 | `docker exec -it dev-workspace lock-pentest` |
+| 安装更多工具 | `(inside) /opt/tools/install-kali-tools.sh` |
+| 启动 Tor | `(inside) service tor start` |
+| 验证匿名性 | `(inside) tor-check` |
+| 使用代理链 | `(inside) proxychains4 nmap target` |
+
+### 安全特性
+
+- **双密码隔离**：workspace 和 pentest 用不同密码，解锁一个看不到另一个
+- **独立网络**：渗透流量走 Tor，不经过日常用的 Clash 节点
+- **不备份**：rootfs 不进 git（避免 GitHub 体积爆炸 + 内容暴露）
+- **PID 隔离**：chroot 内进程对外不可见
+- **锁定即消失**：`lock-pentest` 后磁盘上只有无法识别的密文
+
 ## 迁移到新机器
 
 ```bash
