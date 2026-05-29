@@ -1,7 +1,13 @@
 :8080 {
-    handle /desktop/* {
-        uri strip_prefix /desktop
+    handle_path /desktop/websockify {
         reverse_proxy 127.0.0.1:6080
+    }
+    handle_path /desktop/* {
+        root * /usr/share/kasmvnc/www
+        file_server
+    }
+    handle /desktop {
+        redir /desktop/ permanent
     }
     handle /sync/* {
         reverse_proxy 127.0.0.1:8081
