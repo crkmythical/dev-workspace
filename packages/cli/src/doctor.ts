@@ -92,7 +92,27 @@ if (existsSync(VAULT_CIPHER_DIR)) {
   results.push({ component: "Vault disk", status: "ok", detail: size });
 }
 
-// 7. Pentest vault
+// 7. Desktop (optional, on-demand)
+const desktopXvfb = await $`supervisorctl status desktop:desktop-xvfb`.quiet().nothrow();
+if (desktopXvfb.exitCode === 0 && desktopXvfb.text().includes("RUNNING")) {
+  results.push({ component: "Desktop Xvfb", status: "ok", detail: "running" });
+  const kasmProbe = await $`nc -z 127.0.0.1 6080`.quiet().nothrow();
+  results.push(
+    kasmProbe.exitCode === 0
+      ? { component: "Desktop KasmVNC", status: "ok", detail: "port 6080 listening" }
+      : { component: "Desktop KasmVNC", status: "fail", detail: "port 6080 not responding" },
+  );
+  const displayCheck = await $`DISPLAY=:1 xdpyinfo`.quiet().nothrow();
+  results.push(
+    displayCheck.exitCode === 0
+      ? { component: "Desktop Display", status: "ok", detail: ":1 active" }
+      : { component: "Desktop Display", status: "warn", detail: ":1 not responding" },
+  );
+} else {
+  results.push({ component: "Desktop", status: "ok", detail: "not started (optional)" });
+}
+
+// 8. Pentest vault
 if (existsSync(`${PENTEST_CIPHER_DIR}/gocryptfs.conf`)) {
   const pentestMount = await $`mountpoint -q ${PENTEST_MOUNT}`.quiet().nothrow();
   if (pentestMount.exitCode === 0) {

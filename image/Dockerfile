@@ -33,6 +33,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -fsSL https://bun.sh/install | bash
 ENV PATH="/root/.bun/bin:${PATH}"
 
+# Desktop layer: Xvfb + KasmVNC + Openbox + tint2 + fonts + mesa
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    xvfb \
+    openbox \
+    tint2 \
+    xterm \
+    pcmanfm \
+    dbus-x11 \
+    libgl1-mesa-dri \
+    mesa-utils \
+    libglib2.0-0 \
+    fonts-noto-cjk \
+    fonts-dejavu-core \
+    xdg-utils \
+    x11-utils \
+    x11-xserver-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install KasmVNC from GitHub releases
+ARG KASMVNC_VERSION=1.3.3
+RUN ARCH=$(dpkg --print-architecture) && \
+    curl -fsSL "https://github.com/kasmtech/KasmVNC/releases/download/v${KASMVNC_VERSION}/kasmvncserver_bookworm_${KASMVNC_VERSION}_${ARCH}.deb" \
+    -o /tmp/kasmvnc.deb && \
+    apt-get update && apt-get install -y --no-install-recommends /tmp/kasmvnc.deb && \
+    rm -f /tmp/kasmvnc.deb && rm -rf /var/lib/apt/lists/*
+
 # Install Caddy
 RUN curl -fsSL "https://caddyserver.com/api/download?os=linux&arch=$(dpkg --print-architecture)" -o /usr/bin/caddy \
     && chmod +x /usr/bin/caddy
@@ -64,7 +90,11 @@ RUN curl -fsSL "https://code-server.dev/install.sh" | sh -s -- --version=${CODE_
 # Filesystem prep
 RUN mkdir -p /workspace /vault/cipher /etc/supervisor/conf.d /var/run/vault-sync \
     /etc/caddy /etc/clash /opt/workspace \
-    /pentest/cipher /pentest/rootfs
+    /pentest/cipher /pentest/rootfs \
+    /opt/desktop-apps /tmp/.desktop-cache
+
+# Desktop apps registry
+RUN echo '[]' > /opt/desktop-apps/.registry.json
 
 # Ensure proxy env is available in all shells (interactive terminals via code-server)
 RUN echo 'export http_proxy=http://127.0.0.1:7890' >> /etc/profile.d/proxy.sh && \
@@ -90,6 +120,9 @@ COPY image/etc/cron.d/vault-sync /etc/cron.d/vault-sync
 COPY image/etc/cron.d/cleanup /etc/cron.d/cleanup
 RUN chmod 0644 /etc/cron.d/vault-sync /etc/cron.d/cleanup
 
+# Desktop default configs
+COPY image/etc/desktop/ /opt/workspace/image/etc/desktop/
+
 # Copy monorepo packages (workspace code)
 COPY packages/ /opt/workspace/packages/
 COPY package.json bunfig.toml /opt/workspace/
@@ -104,7 +137,7 @@ RUN for cmd in init-vault unlock-vault lock-vault vault-sync doctor setup; do \
       printf '#!/bin/bash\nexec bun run /opt/workspace/packages/cli/src/%s.ts "$@"\n' "$cmd" > /usr/local/bin/$cmd; \
       chmod +x /usr/local/bin/$cmd; \
     done && \
-    for cmd in init-pentest unlock-pentest lock-pentest pentest-bootstrap self-destruct; do \
+    for cmd in init-pentest unlock-pentest lock-pentest pentest-bootstrap self-destruct desktop-start desktop-stop desktop-install; do \
       printf '#!/bin/bash\nexec bun run /opt/workspace/packages/cli/src/%s.ts "$@"\n' "$cmd" > /usr/local/bin/$cmd; \
       chmod +x /usr/local/bin/$cmd; \
     done && \

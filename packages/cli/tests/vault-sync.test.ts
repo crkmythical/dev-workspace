@@ -1,7 +1,7 @@
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import fc from "fast-check";
+import { isIgnored, parseGitignore } from "../src/lib/gitignore-match.ts";
 import { planSync } from "../src/lib/vault-lifecycle.ts";
-import { parseGitignore, isIgnored } from "../src/lib/gitignore-match.ts";
 
 /**
  * Property tests for vault-sync (task 4.3).

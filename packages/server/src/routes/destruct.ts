@@ -1,12 +1,12 @@
-import type { Context } from "hono";
 import { existsSync, readFileSync } from "node:fs";
+import type { Context } from "hono";
+import { destroyCore } from "../../../cli/src/lib/destroy.ts";
 import {
   DESTRUCT_KEY_HASH_PATH,
   DESTRUCT_RATE_LIMIT_MAX_ATTEMPTS,
   DESTRUCT_RATE_LIMIT_WINDOW_MS,
   DESTRUCT_RESPONSE_DELAY_MS,
 } from "../../../core/src/constants.ts";
-import { destroyCore } from "../../../cli/src/lib/destroy.ts";
 
 // Module-level rate limiter (per client IP).
 const attempts = new Map<string, { count: number; resetAt: number }>();

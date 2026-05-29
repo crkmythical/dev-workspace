@@ -1,16 +1,11 @@
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import fc from "fast-check";
 import {
-  planUnlock,
-  planLock,
-  planInit,
-  planSync,
-} from "../src/lib/vault-lifecycle.ts";
-import {
-  findMissingRequiredEnv,
-  envValidationError,
   REQUIRED_ENV_VARS,
+  envValidationError,
+  findMissingRequiredEnv,
 } from "../src/lib/env-validate.ts";
+import { planInit, planLock, planSync, planUnlock } from "../src/lib/vault-lifecycle.ts";
 
 /**
  * Property tests for vault lifecycle (task 3.5).
@@ -86,9 +81,9 @@ describe("Property 3: Vault Lifecycle Round-Trip and Idempotence", () => {
           );
           // Every subsequent call observes mounted=true → no-op, regardless of count.
           for (let i = 0; i < repeats; i++) {
-            expect(
-              planUnlock({ mounted: true, initialized: true, passphrase: pass }).action,
-            ).toBe("noop");
+            expect(planUnlock({ mounted: true, initialized: true, passphrase: pass }).action).toBe(
+              "noop",
+            );
           }
         },
       ),

@@ -1,12 +1,18 @@
-import type { Context } from "hono";
-import { mkdir, appendFile, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
 import crypto from "node:crypto";
+import { existsSync } from "node:fs";
+import { appendFile, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { SHARED_DIR, PNG_HEADER_SIZE, NONCE_LENGTH, TAG_LENGTH, SYNC_PASSPHRASE_PATH } from "../../../core/src/constants.ts";
-import { deriveKey, decrypt } from "../crypto.ts";
+import type { Context } from "hono";
 import { buildAad } from "../../../core/src/aad.ts";
+import {
+  NONCE_LENGTH,
+  PNG_HEADER_SIZE,
+  SHARED_DIR,
+  SYNC_PASSPHRASE_PATH,
+  TAG_LENGTH,
+} from "../../../core/src/constants.ts";
 import { ReplayWindow } from "../../../core/src/replay-window.ts";
+import { decrypt, deriveKey } from "../crypto.ts";
 
 const UPLOAD_DIR = `${SHARED_DIR}/.uploads`;
 let syncKey: Buffer | null = null;
@@ -18,7 +24,9 @@ async function getSyncKey(): Promise<Buffer | null> {
     const passphrase = await readFile(SYNC_PASSPHRASE_PATH, "utf-8");
     syncKey = deriveKey(passphrase.trim());
     return syncKey;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 export async function uploadRoute(c: Context) {
@@ -49,11 +57,11 @@ export async function uploadRoute(c: Context) {
 
     // Replay protection
     const nonceHex = Buffer.from(nonce).toString("hex");
-    if (!replayWindow.check(nonceHex, parseInt(ts))) {
+    if (!replayWindow.check(nonceHex, Number.parseInt(ts))) {
       return c.json({ error: "replay-detected" }, 400);
     }
 
-    const aad = buildAad(op, parseInt(ts), fileId, chunkIdx);
+    const aad = buildAad(op, Number.parseInt(ts), fileId, chunkIdx);
 
     // Decrypt
     let plaintext: Buffer;
@@ -70,7 +78,7 @@ export async function uploadRoute(c: Context) {
       // plaintext is raw file chunk bytes
       const tempPath = path.join(UPLOAD_DIR, `.uploading-${fileId}`);
       await appendFile(tempPath, plaintext);
-      return c.json({ status: "chunk-received", chunk_idx: parseInt(chunkIdx) });
+      return c.json({ status: "chunk-received", chunk_idx: Number.parseInt(chunkIdx) });
     }
 
     if (op === "put-finalize") {
@@ -105,5 +113,8 @@ export async function uploadRoute(c: Context) {
 }
 
 export function resetSyncKey() {
-  if (syncKey) { syncKey.fill(0); syncKey = null; }
+  if (syncKey) {
+    syncKey.fill(0);
+    syncKey = null;
+  }
 }

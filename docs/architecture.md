@@ -14,7 +14,8 @@ packages/
 
 - **Bun** — TypeScript runtime (replaces Node.js)
 - **Hono** — HTTP framework (12,640 req/s)
-- **Caddy** — Reverse proxy (code-server + sync-service on single port)
+- **Caddy** — Reverse proxy (code-server + sync-service + KasmVNC on single port)
+- **KasmVNC** — Browser-accessible remote desktop (on-demand, autostart=false)
 - **Clash/mihomo** — Encrypted egress proxy
 - **gocryptfs** — Disk encryption (AES-256, 4KB blocks)
 - **supervisord** — Process management

@@ -12,7 +12,7 @@ import { CLASH_HTTP_PORT, CLASH_SOCKS_PORT } from "@sdw/core/constants";
  * 7. exec supervisord
  */
 import { $ } from "bun";
-import { findMissingRequiredEnv, envValidationError } from "./lib/env-validate.ts";
+import { envValidationError, findMissingRequiredEnv } from "./lib/env-validate.ts";
 import { cleanupStaleMount } from "./lib/vault.ts";
 
 // 0. Defense-in-depth env validation (mirrors entrypoint.sh pre-flight).

@@ -24,8 +24,8 @@
 
 ## Tasks
 
-- [ ] 1. PoC 验证
-  - [ ] 1.1 构建 PoC 验证 KasmVNC 在 Docker Desktop macOS 下的可用性
+- [x] 1. PoC 验证
+  - [x] 1.1 构建 PoC 验证 KasmVNC 在 Docker Desktop macOS 下的可用性
     - 创建 `image/Dockerfile.desktop-poc`：基于 debian:bookworm-slim，安装 Xvfb + KasmVNC + Openbox + mesa-utils
     - 创建 `docker-compose.desktop-poc.yml`：映射 6080 端口
     - 验证项:
@@ -37,8 +37,8 @@
     - PoC 通过后删除临时文件，进入正式实现
     - _Requirements: 1.1, 1.2, 1.3, 1.6, 2.1_
 
-- [ ] 2. Dockerfile 与基础设施
-  - [ ] 2.1 在主 Dockerfile 中添加桌面层
+- [x] 2. Dockerfile 与基础设施
+  - [x] 2.1 在主 Dockerfile 中添加桌面层
     - 新增 apt 包（在现有 core layer 之后，作为独立 RUN layer 方便缓存）:
       ```
       xvfb, openbox, tint2, xterm, pcmanfm, dbus-x11,
@@ -52,7 +52,7 @@
     - 预创建默认配置: `image/etc/desktop/` 目录包含 openbox/rc.xml, tint2rc 默认配置模板
     - Image 大小增加预估: ~400-500MB (fonts + mesa 是大头)
     - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 5.4_
-  - [ ] 2.2 添加 KasmVNC 配置模板
+  - [x] 2.2 添加 KasmVNC 配置模板
     - `image/etc/desktop/kasmvnc-defaults.yaml`: 默认 KasmVNC 配置
       - websocket_port: 6080
       - interface: 127.0.0.1
@@ -66,14 +66,14 @@
     - `image/etc/desktop/openbox-rc.xml`: Openbox 默认配置 (键盘快捷键、窗口行为)
     - `image/etc/desktop/tint2rc`: tint2 面板配置 (底部任务栏、系统托盘、时钟)
     - _Requirements: 2.1, 2.2, 2.3, 2.6, 2.7, 2.8, 2.10_
-  - [ ] 2.3 添加 supervisord desktop group
+  - [x] 2.3 添加 supervisord desktop group
     - 在 `image/supervisord.conf` 中新增 `[group:desktop]` 和四个 program（xvfb, openbox, tint2, kasmvnc）
     - 所有设为 `autostart=false`
     - 环境变量: DISPLAY=:1, HOME=/workspace/.desktop, XDG_* 全套
     - xvfb 使用 `%(ENV_DESKTOP_RESOLUTION)s` 支持运行时配置
     - 启动顺序: xvfb → (openbox, tint2, kasmvnc) 并行
     - _Requirements: 1.7, 4.1, 4.2_
-  - [ ] 2.4 修改 Caddy 配置
+  - [x] 2.4 修改 Caddy 配置
     - 在 `image/etc/caddy/Caddyfile` 中 `/sync/*` handle 之前添加:
       ```
       handle /desktop/* {
@@ -84,8 +84,8 @@
     - 确认 WebSocket 升级透传（Caddy 默认支持）
     - _Requirements: 1.8, 6.3_
 
-- [ ] 3. CLI 命令
-  - [ ] 3.1 实现 `packages/cli/src/desktop-start.ts`
+- [x] 3. CLI 命令
+  - [x] 3.1 实现 `packages/cli/src/desktop-start.ts`
     - 检查 vault 是否已挂载 → 否则报错退出
     - 检查 desktop 是否已运行 → 是则打印 URL 并退出
     - 初始化桌面配置 (`initDesktopConfig()`):
@@ -96,12 +96,12 @@
     - 等待 6080 端口就绪 (轮询, timeout 30s)
     - 输出: "Desktop ready. Access at: /desktop/"
     - _Requirements: 4.1, 3.1, 3.2, 3.5, 1.7_
-  - [ ] 3.2 实现 `packages/cli/src/desktop-stop.ts`
+  - [x] 3.2 实现 `packages/cli/src/desktop-stop.ts`
     - `supervisorctl stop desktop:*`
     - 确认所有 desktop 进程已退出
     - 输出: "Desktop stopped."
     - _Requirements: 4.1_
-  - [ ] 3.3 实现 `packages/cli/src/desktop-install.ts`
+  - [x] 3.3 实现 `packages/cli/src/desktop-install.ts`
     - 解析 argv: 应用名称 (firefox, chromium, idea, burpsuite, wireshark)
     - 检查 Clash 代理可用（network access needed for downloads）
     - 按 APPS 注册表执行安装:
@@ -111,12 +111,12 @@
     - 更新 `/opt/desktop-apps/.registry.json`
     - 输出: "Installed <app>. Launch from desktop menu or: <command>"
     - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6_
-  - [ ] 3.4 注册 CLI 命令到 Dockerfile
+  - [x] 3.4 注册 CLI 命令到 Dockerfile
     - 在 `image/Dockerfile` 的 symlink 循环中添加: `desktop-start`, `desktop-stop`, `desktop-install`
     - _Requirements: 4.1, 5.3_
 
-- [ ] 4. 现有系统集成
-  - [ ] 4.1 修改 lock-vault.ts — 停止桌面再卸载
+- [x] 4. 现有系统集成
+  - [x] 4.1 修改 lock-vault.ts — 停止桌面再卸载
     - 在 fusermount 调用之前新增:
       ```typescript
       if (await isDesktopRunning()) {
@@ -126,13 +126,13 @@
       ```
     - 新增 helper `isDesktopRunning()` in `lib/vault.ts` (检查 supervisorctl status)
     - _Requirements: 6.7, 3.4_
-  - [ ] 4.2 修改 destroyCore() — Phase 1 添加桌面停止
+  - [x] 4.2 修改 destroyCore() — Phase 1 添加桌面停止
     - 在 `packages/cli/src/lib/destroy.ts` Phase 1 (unmount) 之前:
       ```typescript
       await $`supervisorctl stop desktop:*`.quiet().nothrow();
       ```
     - _Requirements: 3.6_
-  - [ ] 4.3 修改 pentest-enter.ts — X11 socket 共享
+  - [x] 4.3 修改 pentest-enter.ts — X11 socket 共享
     - 在 enter script 的 mount 列表中添加:
       ```bash
       if [ -e /tmp/.X11-unix/X1 ]; then
@@ -142,7 +142,7 @@
       ```
     - 在 chroot 环境中设置 `export DISPLAY=:1`
     - _Requirements: 6.5_
-  - [ ] 4.4 修改 doctor.ts — 添加桌面健康检查
+  - [x] 4.4 修改 doctor.ts — 添加桌面健康检查
     - 新增检查项:
       - Desktop Xvfb: 检查 `supervisorctl status desktop:xvfb` 是否 RUNNING (如果 group 已启动)
       - Desktop KasmVNC: 检查 6080 端口是否监听
@@ -150,8 +150,8 @@
     - 如果 desktop group 未启动，显示 "Desktop: not started (optional)" 而非 ✗
     - _Requirements: 4.6_
 
-- [ ] 5. 环境变量与配置
-  - [ ] 5.1 新增 constants
+- [x] 5. 环境变量与配置
+  - [x] 5.1 新增 constants
     - 在 `packages/core/src/constants.ts` 中添加:
       - `DESKTOP_HOME = "/workspace/.desktop"`
       - `DESKTOP_CONFIG_DIR = "/workspace/.desktop/.config"`
@@ -161,16 +161,16 @@
       - `KASMVNC_PORT = 6080`
       - `DESKTOP_DEFAULT_RESOLUTION = "1920x1080"`
     - _Requirements: 1.1, 4.5_
-  - [ ] 5.2 更新 .env.example
+  - [x] 5.2 更新 .env.example
     - 添加: `DESKTOP_RESOLUTION=1920x1080  # Optional: resolution for remote desktop (WxH)`
     - _Requirements: 4.5_
 
-- [ ] 6. 文档与验证
-  - [ ] 6.1 更新文档
+- [x] 6. 文档与验证
+  - [x] 6.1 更新文档
     - `README.md`: 添加 "远程桌面" 章节，含启动/停止/安装应用的命令
     - `docs/runbook.md`: 添加桌面操作章节 (启动/停止/安装 GUI 应用/性能调优)
     - `docs/architecture.md`: 更新系统拓扑图，添加 KasmVNC 组件
-  - [ ] 6.2 端到端验证
+  - [x] 6.2 端到端验证
     - 验证清单:
       1. `unlock-vault` → `desktop-start` → 浏览器访问 `/desktop/` → 看到桌面
       2. 桌面内右键菜单可用，终端可打开

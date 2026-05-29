@@ -1,6 +1,6 @@
-import { describe, it, expect } from "bun:test";
-import { deriveKey, encrypt, decrypt, keyFingerprint } from "../src/crypto.ts";
+import { describe, expect, it } from "bun:test";
 import { buildAad } from "../../core/src/aad.ts";
+import { decrypt, deriveKey, encrypt, keyFingerprint } from "../src/crypto.ts";
 
 describe("server/crypto", () => {
   it("deriveKey returns 32 bytes deterministically", () => {

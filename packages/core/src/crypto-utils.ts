@@ -15,13 +15,7 @@ import { AES_KEY_LENGTH, DESTRUCT_HKDF_INFO, DESTRUCT_HKDF_SALT } from "./consta
  */
 export function deriveDestructKey(passphrase: string): Buffer {
   return Buffer.from(
-    crypto.hkdfSync(
-      "sha256",
-      passphrase,
-      DESTRUCT_HKDF_SALT,
-      DESTRUCT_HKDF_INFO,
-      AES_KEY_LENGTH,
-    ),
+    crypto.hkdfSync("sha256", passphrase, DESTRUCT_HKDF_SALT, DESTRUCT_HKDF_INFO, AES_KEY_LENGTH),
   );
 }
 

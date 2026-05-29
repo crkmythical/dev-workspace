@@ -82,9 +82,9 @@ mkdirSync(CREDENTIALS_DIR, { recursive: true });
 await Bun.write(SYNC_PASSPHRASE_PATH, passphrase);
 await $`chmod 600 ${SYNC_PASSPHRASE_PATH}`.quiet();
 
+import { DESTRUCT_KEY_HASH_PATH, DESTRUCT_STATE_DIR } from "@sdw/core/constants";
 // 5c-2. Derive and store destruct key hash (for remote self-destruct API)
 import { deriveDestructKey, destructKeyToPassphrase } from "@sdw/core/crypto-utils";
-import { DESTRUCT_KEY_HASH_PATH, DESTRUCT_STATE_DIR } from "@sdw/core/constants";
 {
   const destructKey = deriveDestructKey(passphrase);
   const destructPassphrase = destructKeyToPassphrase(destructKey);

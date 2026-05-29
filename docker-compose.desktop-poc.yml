@@ -1,0 +1,11 @@
+# PoC: KasmVNC remote desktop validation
+# Usage: docker compose -f docker-compose.desktop-poc.yml up --build
+# Then open http://localhost:6080
+services:
+  desktop-poc:
+    build:
+      context: .
+      dockerfile: image/Dockerfile.desktop-poc
+    ports:
+      - "127.0.0.1:6080:6080"
+    mem_reservation: 512m

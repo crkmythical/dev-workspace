@@ -1,0 +1,34 @@
+# KasmVNC default configuration for dev-workspace remote desktop.
+# Copied to /workspace/.desktop/.config/kasmvnc/ on first desktop-start.
+network:
+  interface: 127.0.0.1
+  websocket_port: 6080
+  use_ipv4: true
+
+desktop:
+  resolution:
+    width: 1920
+    height: 1080
+  allow_resize: true
+
+encoding:
+  frame_rate: 30
+  dynamic_quality_min: 4
+  dynamic_quality_max: 9
+  webp_compression: 8
+  rect_encoding_mode:
+    min_quality: 4
+    max_quality: 9
+
+runtime_configuration:
+  allow_client_to_override_kasm_server_settings: true
+
+security:
+  # No VNC-level auth — Cloudflare Access handles authentication.
+  security_types:
+    - None
+
+logging:
+  log_writer_name: all
+  log_dest: logfile
+  level: 30

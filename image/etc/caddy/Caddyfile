@@ -1,4 +1,8 @@
 :8080 {
+    handle /desktop/* {
+        uri strip_prefix /desktop
+        reverse_proxy 127.0.0.1:6080
+    }
     handle /sync/* {
         reverse_proxy 127.0.0.1:8081
     }

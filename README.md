@@ -83,6 +83,12 @@
 - 换机器 git clone + 输入密码即恢复
 - 完整版本历史
 
+### 5.5 远程桌面 (KasmVNC)
+- 按需启动 (`desktop-start`)，不占用空闲资源
+- 浏览器访问 `/desktop/`，支持中文渲染
+- 安装 GUI 应用: `desktop-install firefox`
+- 与 pentest 环境共享 X11 display
+
 ### 6. 一键部署/迁移/销毁
 - `setup` 交互式引导
 - `bootstrap.sh` 自动化部署
@@ -163,6 +169,9 @@ docker exec -it dev-workspace doctor
 | 密码轮换 | `lock-vault` → `change-password` → `unlock-vault` |
 | 销毁 | `./destroy.sh --force` |
 | 紧急销毁 | `docker exec -it dev-workspace self-destruct --force` |
+| 启动桌面 | `docker exec -it dev-workspace desktop-start` |
+| 停止桌面 | `docker exec -it dev-workspace desktop-stop` |
+| 安装桌面应用 | `docker exec -it dev-workspace desktop-install firefox` |
 
 ## 渗透测试环境（双 Vault 架构）
 

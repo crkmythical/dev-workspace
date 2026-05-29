@@ -14,7 +14,14 @@ if (lockPlan.action === "noop") {
   process.exit(lockPlan.exitCode);
 }
 
-// 2. Unmount
+// 2. Stop desktop if running (before unmount to avoid FUSE EBUSY)
+const desktopStatus = await $`supervisorctl status desktop:desktop-xvfb`.quiet().nothrow();
+if (desktopStatus.exitCode === 0 && desktopStatus.text().includes("RUNNING")) {
+  console.log("Stopping desktop session...");
+  await $`supervisorctl stop desktop:*`.quiet().nothrow();
+}
+
+// 3. Unmount
 console.log("Locking vault...");
 const umount = await $`fusermount -u ${WORKSPACE_MOUNT}`.quiet().nothrow();
 if (umount.exitCode !== 0) {
@@ -31,6 +38,6 @@ if (umount.exitCode !== 0) {
   console.log("Vault locked.");
 }
 
-// 3. Broadcast
+// 4. Broadcast
 await $`echo '{"state":"locked"}' | socat - UNIX-CONNECT:${STATE_SOCKET_PATH}`.quiet().nothrow();
 console.log("Plaintext data is no longer accessible.");

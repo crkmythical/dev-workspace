@@ -93,3 +93,42 @@ curl -X POST https://workspace.cicd.dpdns.org/sync/api/destruct \
 bash scripts/host-watcher.sh --install    # 安装 LaunchAgent
 bash scripts/host-watcher.sh --uninstall  # 卸载
 ```
+
+## Remote Desktop (KasmVNC)
+
+桌面环境按需启动，不影响容器空闲时的资源占用。
+
+### 启动/停止
+
+```bash
+docker exec -it dev-workspace desktop-start   # 启动，等待 KasmVNC 就绪
+docker exec -it dev-workspace desktop-stop    # 停止所有桌面进程
+```
+
+启动后通过浏览器访问: `https://workspace.cicd.dpdns.org/desktop/`
+
+### 安装 GUI 应用
+
+```bash
+docker exec -it dev-workspace desktop-install firefox
+docker exec -it dev-workspace desktop-install chromium
+docker exec -it dev-workspace desktop-install wireshark
+docker exec -it dev-workspace desktop-install idea
+docker exec -it dev-workspace desktop-install burpsuite
+```
+
+### 性能调优
+
+- 降低分辨率: 在 `.env` 中设置 `DESKTOP_RESOLUTION=1600x900`
+- 调整帧率: 编辑 `/workspace/.desktop/.config/kasmvnc/kasmvnc.yaml` 中的 `frame_rate`
+- 降低画质: 调低 `dynamic_quality_max` (默认 9，可降到 6)
+
+### 与 Pentest 环境联动
+
+桌面启动后，pentest 环境内的 GUI 程序可直接显示在宿主桌面上:
+
+```bash
+docker exec -it dev-workspace pentest
+# inside chroot:
+DISPLAY=:1 wireshark &
+```

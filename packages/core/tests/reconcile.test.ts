@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { reconcile } from "../src/reconcile.ts";
 import type { FileState } from "../src/types.ts";
 
@@ -25,7 +25,9 @@ describe("reconcile", () => {
     const local: FileState[] = [{ path: "f.txt", mtime: 2, size: 5, hash: "local" }];
     const remote: FileState[] = [{ path: "f.txt", mtime: 3, size: 5, hash: "remote" }];
     const actions = reconcile(local, remote, baseline);
-    expect(actions).toEqual([{ type: "conflict", path: "f.txt", localHash: "local", remoteHash: "remote" }]);
+    expect(actions).toEqual([
+      { type: "conflict", path: "f.txt", localHash: "local", remoteHash: "remote" },
+    ]);
   });
 
   it("actions are sorted by path", () => {

@@ -5,7 +5,6 @@
  * The caller (CLI or API route) is responsible for process termination.
  */
 import { existsSync, mkdirSync } from "node:fs";
-import { $ } from "bun";
 import {
   CREDENTIALS_DIR,
   DESTRUCT_COMPLETED_PATH,
@@ -15,6 +14,7 @@ import {
   VAULT_CIPHER_DIR,
   WORKSPACE_MOUNT,
 } from "@sdw/core/constants";
+import { $ } from "bun";
 import { unmountVault } from "./vault.ts";
 
 export interface DestroyOptions {
@@ -51,6 +51,7 @@ export async function destroyCore(opts: DestroyOptions): Promise<void> {
 
   // Phase 1: Unmount vaults
   log(opts, "[Phase 1] Unmounting vaults...");
+  await $`supervisorctl stop desktop:*`.quiet().nothrow();
   await unmountVault(WORKSPACE_MOUNT);
   await unmountVault(PENTEST_MOUNT);
 

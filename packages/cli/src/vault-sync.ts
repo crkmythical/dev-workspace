@@ -27,9 +27,7 @@ if (planSync({ mounted: mounted.exitCode === 0, hasStagedChanges: true }).action
 const addResult = await $`cd ${VAULT_CIPHER_DIR} && git add -A`.quiet().nothrow();
 const diffResult = await $`cd ${VAULT_CIPHER_DIR} && git diff --cached --quiet`.quiet().nothrow();
 // diffResult.exitCode === 0 means nothing staged (no changes)
-if (
-  planSync({ mounted: true, hasStagedChanges: diffResult.exitCode !== 0 }).action === "skip"
-) {
+if (planSync({ mounted: true, hasStagedChanges: diffResult.exitCode !== 0 }).action === "skip") {
   process.exit(0); // No changes
 }
 

@@ -27,13 +27,39 @@ export const AES_KEY_LENGTH = 32;
 
 // PNG camouflage (33 bytes)
 export const PNG_HEADER = new Uint8Array([
-  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, // PNG signature (8)
-  0x00, 0x00, 0x00, 0x0d, // IHDR length (4)
-  0x49, 0x48, 0x44, 0x52, // "IHDR" (4)
-  0x00, 0x00, 0x00, 0x01, // width=1 (4)
-  0x00, 0x00, 0x00, 0x01, // height=1 (4)
-  0x08, 0x02, 0x00, 0x00, 0x00, // bitDepth=8, colorType=2, comp=0, filter=0, interlace=0 (5)
-  0x90, 0x77, 0x53, 0xde, // CRC (4)
+  0x89,
+  0x50,
+  0x4e,
+  0x47,
+  0x0d,
+  0x0a,
+  0x1a,
+  0x0a, // PNG signature (8)
+  0x00,
+  0x00,
+  0x00,
+  0x0d, // IHDR length (4)
+  0x49,
+  0x48,
+  0x44,
+  0x52, // "IHDR" (4)
+  0x00,
+  0x00,
+  0x00,
+  0x01, // width=1 (4)
+  0x00,
+  0x00,
+  0x00,
+  0x01, // height=1 (4)
+  0x08,
+  0x02,
+  0x00,
+  0x00,
+  0x00, // bitDepth=8, colorType=2, comp=0, filter=0, interlace=0 (5)
+  0x90,
+  0x77,
+  0x53,
+  0xde, // CRC (4)
 ]);
 export const PNG_HEADER_SIZE = 33;
 
@@ -65,3 +91,12 @@ export const DESTRUCT_HKDF_INFO = "self-destruct";
 export const DESTRUCT_RATE_LIMIT_WINDOW_MS = 60_000;
 export const DESTRUCT_RATE_LIMIT_MAX_ATTEMPTS = 3;
 export const DESTRUCT_RESPONSE_DELAY_MS = 200;
+
+// Remote desktop (KasmVNC)
+export const DESKTOP_HOME = "/workspace/.desktop";
+export const DESKTOP_CONFIG_DIR = "/workspace/.desktop/.config";
+export const DESKTOP_CACHE_DIR = "/tmp/.desktop-cache";
+export const DESKTOP_APPS_DIR = "/opt/desktop-apps";
+export const DESKTOP_APPS_REGISTRY = "/opt/desktop-apps/.registry.json";
+export const KASMVNC_PORT = 6080;
+export const DESKTOP_DEFAULT_RESOLUTION = "1920x1080";

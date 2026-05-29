@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { buildAad, buildChunkAad, buildFinalizeAad } from "../src/aad.ts";
 
 describe("buildAad", () => {

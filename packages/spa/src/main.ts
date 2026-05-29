@@ -3,7 +3,13 @@
  * Uses WebCrypto AES-256-GCM with HKDF-derived key from vault passphrase.
  * Files are PNG-camouflaged for DLP evasion.
  */
-import { PNG_HEADER, CHUNK_SIZE, SIZE_LIMIT, NONCE_LENGTH, TAG_LENGTH } from "../../core/src/constants.ts";
+import {
+  CHUNK_SIZE,
+  NONCE_LENGTH,
+  PNG_HEADER,
+  SIZE_LIMIT,
+  TAG_LENGTH,
+} from "../../core/src/constants.ts";
 
 let syncKey: CryptoKey | null = null;
 let dirHandle: FileSystemDirectoryHandle | null = null;
@@ -17,19 +23,32 @@ const HKDF_INFO = "aead-key";
 // --- Crypto (WebCrypto) ---
 async function deriveKey(passphrase: string): Promise<CryptoKey> {
   const enc = new TextEncoder();
-  const keyMaterial = await crypto.subtle.importKey("raw", enc.encode(passphrase), "HKDF", false, ["deriveKey"]);
+  const keyMaterial = await crypto.subtle.importKey("raw", enc.encode(passphrase), "HKDF", false, [
+    "deriveKey",
+  ]);
   return crypto.subtle.deriveKey(
     { name: "HKDF", hash: "SHA-256", salt: enc.encode(HKDF_SALT), info: enc.encode(HKDF_INFO) },
-    keyMaterial, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"],
+    keyMaterial,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"],
   );
 }
 
-async function encryptPayload(key: CryptoKey, plaintext: ArrayBuffer, aadStr: string): Promise<Uint8Array> {
+async function encryptPayload(
+  key: CryptoKey,
+  plaintext: ArrayBuffer,
+  aadStr: string,
+): Promise<Uint8Array> {
   const nonce = crypto.getRandomValues(new Uint8Array(NONCE_LENGTH));
   const aad = new TextEncoder().encode(aadStr);
-  const combined = new Uint8Array(await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv: nonce, additionalData: aad, tagLength: TAG_LENGTH * 8 }, key, plaintext,
-  ));
+  const combined = new Uint8Array(
+    await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv: nonce, additionalData: aad, tagLength: TAG_LENGTH * 8 },
+      key,
+      plaintext,
+    ),
+  );
   // Format: nonce(12) + ciphertext + tag(16) — tag is appended by WebCrypto
   const result = new Uint8Array(NONCE_LENGTH + combined.length);
   result.set(nonce, 0);
@@ -62,7 +81,7 @@ async function init() {
       isActive = false;
     }
   };
-  await new Promise(r => setTimeout(r, 300)); // Wait for responses
+  await new Promise((r) => setTimeout(r, 300)); // Wait for responses
   if (!isActive) return;
 
   render();
@@ -70,12 +89,20 @@ async function init() {
     const stored = await loadHandle();
     if (stored) {
       const perm = await stored.queryPermission({ mode: "readwrite" });
-      if (perm === "granted") { dirHandle = stored; log("Folder restored"); }
+      if (perm === "granted") {
+        dirHandle = stored;
+        log("Folder restored");
+      }
     }
     const storedKey = await loadKey();
-    if (storedKey) { syncKey = storedKey; log("Key restored"); }
-    if (syncKey && dirHandle) { startPolling(); setStatus("idle"); }
-    else if (!syncKey) setStatus("Set passphrase to start");
+    if (storedKey) {
+      syncKey = storedKey;
+      log("Key restored");
+    }
+    if (syncKey && dirHandle) {
+      startPolling();
+      setStatus("idle");
+    } else if (!syncKey) setStatus("Set passphrase to start");
     else setStatus("Choose folder to start");
   } catch {}
 }
@@ -96,8 +123,9 @@ function render() {
     <div style="font-size:12px;text-transform:uppercase;color:#a6adc8;margin-bottom:8px">Activity</div>
     <div id="log"></div>
   `;
-  const btnStyle = "padding:8px 16px;border:1px solid #45475a;border-radius:6px;background:#2a2a3c;color:#cdd6f4;cursor:pointer";
-  document.querySelectorAll("button").forEach(b => b.setAttribute("style", btnStyle));
+  const btnStyle =
+    "padding:8px 16px;border:1px solid #45475a;border-radius:6px;background:#2a2a3c;color:#cdd6f4;cursor:pointer";
+  document.querySelectorAll("button").forEach((b) => b.setAttribute("style", btnStyle));
   document.getElementById("bf")!.onclick = chooseFolder;
   document.getElementById("bk")!.onclick = setPassphrase;
   document.getElementById("bl")!.onclick = async () => {
@@ -106,7 +134,10 @@ function render() {
     const tx = db.transaction("kv", "readwrite");
     tx.objectStore("kv").delete("key");
     tx.oncomplete = () => db.close();
-    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
     setStatus("Key cleared — set passphrase to resume");
     log("Key cleared from browser");
   };
@@ -119,18 +150,27 @@ async function chooseFolder() {
     dirHandle = h;
     await saveHandle(h);
     log("Folder selected");
-    if (syncKey) { startPolling(); setStatus("idle"); }
+    if (syncKey) {
+      startPolling();
+      setStatus("idle");
+    }
   } catch {}
 }
 
 async function setPassphrase() {
-  const pass = prompt("Vault passphrase (same as unlock-vault):"); if (!pass) return;
+  const pass = prompt("Vault passphrase (same as unlock-vault):");
+  if (!pass) return;
   try {
     syncKey = await deriveKey(pass);
     await saveKey(syncKey);
     log("Key set");
-    if (dirHandle) { startPolling(); setStatus("idle"); }
-  } catch { log("Key derivation failed"); }
+    if (dirHandle) {
+      startPolling();
+      setStatus("idle");
+    }
+  } catch {
+    log("Key derivation failed");
+  }
 }
 
 function startPolling() {
@@ -152,7 +192,7 @@ async function poll() {
       try {
         const resp = await fetch("/sync/api/download");
         if (resp.ok) {
-          const { files } = await resp.json() as any;
+          const { files } = (await resp.json()) as any;
           for (const f of files || []) {
             baseline.set(f.name, { mtime: 0, size: f.size }); // Mark as already synced
           }
@@ -172,13 +212,19 @@ async function poll() {
     for (const c of changes) await uploadFile(c.path, c.handle);
     baseline = new Map([...current].map(([k, v]) => [k, { mtime: v.mtime, size: v.size }]));
     setStatus("idle");
-  } catch (e: any) { log(`Error: ${e.message}`); setStatus("error"); }
+  } catch (e: any) {
+    log(`Error: ${e.message}`);
+    setStatus("error");
+  }
 }
 
 async function uploadFile(filePath: string, fileHandle: FileSystemFileHandle) {
   if (!syncKey) return;
   const file = await fileHandle.getFile();
-  if (file.size > SIZE_LIMIT) { log(`Skip (>500MB): ${filePath}`); return; }
+  if (file.size > SIZE_LIMIT) {
+    log(`Skip (>500MB): ${filePath}`);
+    return;
+  }
 
   const fileId = crypto.randomUUID();
   const totalChunks = Math.ceil(file.size / CHUNK_SIZE) || 1;
@@ -202,14 +248,26 @@ async function uploadFile(filePath: string, fileHandle: FileSystemFileHandle) {
       },
       body: camouflaged,
     });
-    if (!resp.ok) { log(`✗ chunk ${i} failed`); return; }
+    if (!resp.ok) {
+      log(`✗ chunk ${i} failed`);
+      return;
+    }
   }
 
   // Finalize
   const contentHash = await hashFile(file);
-  const finalizePayload = JSON.stringify({ file_id: fileId, file_path: filePath, content_sha256: contentHash, total_chunks: totalChunks });
+  const finalizePayload = JSON.stringify({
+    file_id: fileId,
+    file_path: filePath,
+    content_sha256: contentHash,
+    total_chunks: totalChunks,
+  });
   const finalizeAad = `put-finalize|${ts}|${fileId}|${totalChunks}`;
-  const encrypted = await encryptPayload(syncKey, new TextEncoder().encode(finalizePayload).buffer, finalizeAad);
+  const encrypted = await encryptPayload(
+    syncKey,
+    new TextEncoder().encode(finalizePayload).buffer,
+    finalizeAad,
+  );
   const camouflaged = wrapPng(encrypted);
 
   const resp = await fetch("/sync/api/upload", {
@@ -230,10 +288,15 @@ async function uploadFile(filePath: string, fileHandle: FileSystemFileHandle) {
 async function hashFile(file: File): Promise<string> {
   const buf = await file.arrayBuffer();
   const hash = await crypto.subtle.digest("SHA-256", buf);
-  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, "0")).join("");
+  return Array.from(new Uint8Array(hash))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
-async function scanDir(handle: FileSystemDirectoryHandle, prefix = ""): Promise<Map<string, { mtime: number; size: number; handle: FileSystemFileHandle }>> {
+async function scanDir(
+  handle: FileSystemDirectoryHandle,
+  prefix = "",
+): Promise<Map<string, { mtime: number; size: number; handle: FileSystemFileHandle }>> {
   const entries = new Map<string, { mtime: number; size: number; handle: FileSystemFileHandle }>();
   for await (const [name, child] of (handle as any).entries()) {
     if (name.startsWith(".")) continue;
@@ -273,15 +336,65 @@ const DB = "sdw-sync";
 function openDB(): Promise<IDBDatabase> {
   return new Promise((res, rej) => {
     const req = indexedDB.open(DB, 1);
-    req.onupgradeneeded = () => { if (!req.result.objectStoreNames.contains("kv")) req.result.createObjectStore("kv"); };
+    req.onupgradeneeded = () => {
+      if (!req.result.objectStoreNames.contains("kv")) req.result.createObjectStore("kv");
+    };
     req.onsuccess = () => res(req.result);
     req.onerror = () => rej(req.error);
   });
 }
-async function saveHandle(h: FileSystemDirectoryHandle) { const db = await openDB(); const tx = db.transaction("kv", "readwrite"); tx.objectStore("kv").put(h, "handle"); return new Promise<void>(r => { tx.oncomplete = () => { db.close(); r(); }; }); }
-async function loadHandle(): Promise<FileSystemDirectoryHandle | undefined> { const db = await openDB(); return new Promise(r => { const tx = db.transaction("kv", "readonly"); const req = tx.objectStore("kv").get("handle"); req.onsuccess = () => { db.close(); r(req.result); }; req.onerror = () => { db.close(); r(undefined); }; }); }
-async function saveKey(k: CryptoKey) { const db = await openDB(); const tx = db.transaction("kv", "readwrite"); tx.objectStore("kv").put(k, "key"); return new Promise<void>(r => { tx.oncomplete = () => { db.close(); r(); }; }); }
-async function loadKey(): Promise<CryptoKey | undefined> { const db = await openDB(); return new Promise(r => { const tx = db.transaction("kv", "readonly"); const req = tx.objectStore("kv").get("key"); req.onsuccess = () => { db.close(); r(req.result); }; req.onerror = () => { db.close(); r(undefined); }; }); }
+async function saveHandle(h: FileSystemDirectoryHandle) {
+  const db = await openDB();
+  const tx = db.transaction("kv", "readwrite");
+  tx.objectStore("kv").put(h, "handle");
+  return new Promise<void>((r) => {
+    tx.oncomplete = () => {
+      db.close();
+      r();
+    };
+  });
+}
+async function loadHandle(): Promise<FileSystemDirectoryHandle | undefined> {
+  const db = await openDB();
+  return new Promise((r) => {
+    const tx = db.transaction("kv", "readonly");
+    const req = tx.objectStore("kv").get("handle");
+    req.onsuccess = () => {
+      db.close();
+      r(req.result);
+    };
+    req.onerror = () => {
+      db.close();
+      r(undefined);
+    };
+  });
+}
+async function saveKey(k: CryptoKey) {
+  const db = await openDB();
+  const tx = db.transaction("kv", "readwrite");
+  tx.objectStore("kv").put(k, "key");
+  return new Promise<void>((r) => {
+    tx.oncomplete = () => {
+      db.close();
+      r();
+    };
+  });
+}
+async function loadKey(): Promise<CryptoKey | undefined> {
+  const db = await openDB();
+  return new Promise((r) => {
+    const tx = db.transaction("kv", "readonly");
+    const req = tx.objectStore("kv").get("key");
+    req.onsuccess = () => {
+      db.close();
+      r(req.result);
+    };
+    req.onerror = () => {
+      db.close();
+      r(undefined);
+    };
+  });
+}
 
 document.addEventListener("DOMContentLoaded", init);
 

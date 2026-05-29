@@ -9,13 +9,7 @@ export type SyncState =
   | "error"
   | "auth-expired";
 
-export type EnvelopeOp =
-  | "put-chunk"
-  | "put-finalize"
-  | "delete"
-  | "rename"
-  | "list"
-  | "handshake";
+export type EnvelopeOp = "put-chunk" | "put-finalize" | "delete" | "rename" | "list" | "handshake";
 
 export interface Envelope {
   v: 1;

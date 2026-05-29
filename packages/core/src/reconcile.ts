@@ -13,11 +13,7 @@ export function reconcile(
   const remoteMap = new Map(remote.map((f) => [f.path, f]));
   const baselineMap = new Map(baseline.map((f) => [f.path, f]));
 
-  const allPaths = new Set([
-    ...localMap.keys(),
-    ...remoteMap.keys(),
-    ...baselineMap.keys(),
-  ]);
+  const allPaths = new Set([...localMap.keys(), ...remoteMap.keys(), ...baselineMap.keys()]);
 
   const actions: SyncAction[] = [];
 

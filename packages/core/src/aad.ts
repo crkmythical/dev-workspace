@@ -18,11 +18,7 @@ export function buildAad(op: string, timestampMs: number, ...extra: string[]): U
 /**
  * Build AAD specifically for put-chunk (includes file_id and chunk_idx).
  */
-export function buildChunkAad(
-  timestampMs: number,
-  fileId: string,
-  chunkIdx: number,
-): Uint8Array {
+export function buildChunkAad(timestampMs: number, fileId: string, chunkIdx: number): Uint8Array {
   return buildAad("put-chunk", timestampMs, fileId, String(chunkIdx));
 }
 

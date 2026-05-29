@@ -14,7 +14,10 @@
     "lock-pentest": "./src/lock-pentest.ts",
     "pentest-bootstrap": "./src/pentest-bootstrap.ts",
     "pentest": "./src/pentest-enter.ts",
-    "self-destruct": "./src/self-destruct.ts"
+    "self-destruct": "./src/self-destruct.ts",
+    "desktop-start": "./src/desktop-start.ts",
+    "desktop-stop": "./src/desktop-stop.ts",
+    "desktop-install": "./src/desktop-install.ts"
   },
   "dependencies": {
     "@sdw/core": "workspace:*"

@@ -3,11 +3,11 @@
  * Serves: SPA static files, encrypted upload/download API, doctor endpoint, WebSocket events.
  */
 import { Hono } from "hono";
-import { SYNC_SERVICE_PORT, SHARED_DIR } from "../../core/src/constants.ts";
-import { uploadRoute } from "./routes/upload.ts";
-import { downloadRoute } from "./routes/download.ts";
-import { doctorRoute } from "./routes/doctor.ts";
+import { SHARED_DIR, SYNC_SERVICE_PORT } from "../../core/src/constants.ts";
 import { destructRoute } from "./routes/destruct.ts";
+import { doctorRoute } from "./routes/doctor.ts";
+import { downloadRoute } from "./routes/download.ts";
+import { uploadRoute } from "./routes/upload.ts";
 
 const app = new Hono();
 
@@ -31,7 +31,9 @@ app.get("/sync/api/doctor", doctorRoute);
 app.post("/sync/api/destruct", destructRoute);
 
 // Content type parser for image/png (encrypted payloads)
-app.use("/sync/api/upload", async (c, next) => { await next(); });
+app.use("/sync/api/upload", async (c, next) => {
+  await next();
+});
 
 // WebSocket clients
 const wsClients = new Set<any>();
@@ -50,9 +52,13 @@ const server = Bun.serve({
     return app.fetch(req);
   },
   websocket: {
-    open(ws) { wsClients.add(ws); },
+    open(ws) {
+      wsClients.add(ws);
+    },
     message() {},
-    close(ws) { wsClients.delete(ws); },
+    close(ws) {
+      wsClients.delete(ws);
+    },
   },
 });
 
