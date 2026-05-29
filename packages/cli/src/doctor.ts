@@ -93,9 +93,9 @@ if (existsSync(VAULT_CIPHER_DIR)) {
 }
 
 // 7. Desktop (optional, on-demand)
-const desktopXvfb = await $`supervisorctl status desktop:desktop-xvfb`.quiet().nothrow();
+const desktopXvfb = await $`supervisorctl status desktop:desktop-xvnc`.quiet().nothrow();
 if (desktopXvfb.exitCode === 0 && desktopXvfb.text().includes("RUNNING")) {
-  results.push({ component: "Desktop Xvfb", status: "ok", detail: "running" });
+  results.push({ component: "Desktop Xvnc", status: "ok", detail: "running" });
   const kasmProbe = await $`nc -z 127.0.0.1 6080`.quiet().nothrow();
   results.push(
     kasmProbe.exitCode === 0

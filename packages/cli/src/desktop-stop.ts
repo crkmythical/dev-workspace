@@ -4,10 +4,10 @@
  */
 import { $ } from "bun";
 
-await $`supervisorctl stop desktop:*`.quiet().nothrow();
+await $`supervisorctl stop desktop:desktop-xvnc desktop:desktop-openbox desktop:desktop-tint2`.quiet().nothrow();
 
 // Confirm all desktop processes stopped
-const status = await $`supervisorctl status desktop:*`.quiet().nothrow();
+const status = await $`supervisorctl status desktop:desktop-xvnc desktop:desktop-openbox desktop:desktop-tint2`.quiet().nothrow();
 const lines = status
   .text()
   .split("\n")

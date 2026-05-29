@@ -20,7 +20,7 @@ if (mountCheck.exitCode !== 0) {
 }
 
 // 2. Check if desktop is already running
-const statusCheck = await $`supervisorctl status desktop:desktop-xvfb`.quiet().nothrow();
+const statusCheck = await $`supervisorctl status desktop:desktop-xvnc`.quiet().nothrow();
 if (statusCheck.exitCode === 0 && statusCheck.text().includes("RUNNING")) {
   console.log("Desktop already running. Access at: /desktop/");
   process.exit(0);
@@ -56,7 +56,7 @@ if (
 
 // 4. Start desktop group
 console.log("Starting desktop...");
-await $`supervisorctl start desktop:*`.quiet().nothrow();
+await $`supervisorctl start desktop:desktop-xvnc desktop:desktop-openbox desktop:desktop-tint2`.quiet().nothrow();
 
 // 5. Wait for KasmVNC port
 let ready = false;

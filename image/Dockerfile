@@ -56,7 +56,9 @@ ARG KASMVNC_VERSION=1.3.3
 RUN ARCH=$(dpkg --print-architecture) && \
     curl -fsSL "https://github.com/kasmtech/KasmVNC/releases/download/v${KASMVNC_VERSION}/kasmvncserver_bookworm_${KASMVNC_VERSION}_${ARCH}.deb" \
     -o /tmp/kasmvnc.deb && \
-    apt-get update && apt-get install -y --no-install-recommends /tmp/kasmvnc.deb && \
+    apt-get update && apt-get install -y --no-install-recommends /tmp/kasmvnc.deb \
+    libdatetime-perl libhash-merge-simple-perl libscalar-list-utils-perl \
+    libyaml-tiny-perl libtry-tiny-perl && \
     rm -f /tmp/kasmvnc.deb && rm -rf /var/lib/apt/lists/*
 
 # Install Caddy

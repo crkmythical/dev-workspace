@@ -18,6 +18,8 @@ services:
     restart: unless-stopped
     mem_reservation: ${MEMORY_RESERVATION:-8g}
     env_file: .env
+    environment:
+      - DESKTOP_RESOLUTION=${DESKTOP_RESOLUTION:-1920x1080}
     ulimits:
       core: 0
       nofile:

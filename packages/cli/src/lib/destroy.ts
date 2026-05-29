@@ -51,7 +51,7 @@ export async function destroyCore(opts: DestroyOptions): Promise<void> {
 
   // Phase 1: Unmount vaults
   log(opts, "[Phase 1] Unmounting vaults...");
-  await $`supervisorctl stop desktop:*`.quiet().nothrow();
+  await $`supervisorctl stop desktop:desktop-xvnc desktop:desktop-openbox desktop:desktop-tint2`.quiet().nothrow();
   await unmountVault(WORKSPACE_MOUNT);
   await unmountVault(PENTEST_MOUNT);
 
@@ -82,7 +82,7 @@ export async function destroyCore(opts: DestroyOptions): Promise<void> {
 
   // Phase 5: Clear history, write completion marker
   log(opts, "[Phase 5] Finalizing...");
-  await $`> ~/.bash_history`.quiet().nothrow();
+  await $`truncate -s 0 ~/.bash_history`.quiet().nothrow();
   mkdirSync("/var/run/self-destruct", { recursive: true });
   await Bun.write(DESTRUCT_COMPLETED_PATH, new Date().toISOString());
 

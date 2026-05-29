@@ -79,7 +79,7 @@ export async function unmountVault(mountPoint: string): Promise<void> {
   const r3 = await $`fusermount -u ${mountPoint}`.quiet().nothrow();
   if (r3.exitCode === 0) return;
 
-  await $`fusermount -uz ${mountPoint}`.quiet();
+  await $`fusermount -uz ${mountPoint}`.quiet().nothrow();
 }
 
 /** Cleanup stale FUSE mount from previous container lifecycle. */
