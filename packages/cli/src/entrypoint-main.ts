@@ -64,8 +64,8 @@ if (process.env.GIT_USER_NAME) {
 if (process.env.GIT_USER_EMAIL) {
   await $`git config --global user.email "${process.env.GIT_USER_EMAIL}"`.quiet();
 }
-await $`git config --global http.proxy http://127.0.0.1:7890`.quiet();
-await $`git config --global https.proxy http://127.0.0.1:7890`.quiet();
+await $`git config --global http.proxy http://127.0.0.1:${CLASH_HTTP_PORT}`.quiet();
+await $`git config --global https.proxy http://127.0.0.1:${CLASH_HTTP_PORT}`.quiet();
 
 // 4. inotify
 await $`sysctl -w fs.inotify.max_user_watches=524288`.quiet().nothrow();
@@ -74,7 +74,6 @@ await $`sysctl -w fs.inotify.max_user_watches=524288`.quiet().nothrow();
 console.log("Starting Clash...");
 Bun.spawn(["/usr/bin/clash", "-d", "/etc/clash"], { stdout: "ignore", stderr: "ignore" });
 
-// Wait for readiness
 let ready = false;
 for (let i = 0; i < 30; i++) {
   const probe = await $`nc -z 127.0.0.1 ${CLASH_HTTP_PORT}`.quiet().nothrow();
@@ -86,7 +85,7 @@ for (let i = 0; i < 30; i++) {
 }
 console.log(ready ? "Clash ready." : "WARNING: Clash not ready after 30s.");
 
-// 6b. Auto-select proxy node (switch from DIRECT to first available proxy)
+// 6. Auto-select proxy node
 if (ready) {
   try {
     const resp = await fetch("http://127.0.0.1:9090/proxies");
@@ -94,11 +93,9 @@ if (ready) {
       const data = (await resp.json()) as any;
       const selector = data.proxies?.["🚀 节点选择"];
       if (selector && selector.now === "🎯 全球直连" && selector.all?.length > 1) {
-        // Try to find a url-test/fallback group first (auto-selects fastest)
         const autoGroup = selector.all.find(
           (n: string) => n.includes("自动") || n.includes("auto") || n.includes("url-test"),
         );
-        // Otherwise pick first real proxy node
         const proxyNode =
           autoGroup ||
           selector.all.find(
@@ -140,7 +137,7 @@ for (let i = 0; i < 3; i++) {
 }
 console.log(egress ? "Egress confirmed." : "WARNING: Egress probe failed.");
 
-// 7. exec supervisord
+// 8. exec supervisord
 console.log("Starting supervisord...");
 const proc = Bun.spawn(["/usr/bin/supervisord", "-c", "/etc/supervisor/supervisord.conf"], {
   stdout: "inherit",
