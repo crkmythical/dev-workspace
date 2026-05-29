@@ -5,9 +5,10 @@ import { VAULT_CIPHER_DIR, WORKSPACE_MOUNT } from "@sdw/core/constants";
  * init-vault — One-time gocryptfs vault initialization
  */
 import { $ } from "bun";
+import { planInit } from "./lib/vault-lifecycle.ts";
 
 // Idempotency check
-if (existsSync(`${VAULT_CIPHER_DIR}/gocryptfs.conf`)) {
+if (planInit(existsSync(`${VAULT_CIPHER_DIR}/gocryptfs.conf`)).action === "noop") {
   console.log("Vault already initialized.");
   process.exit(0);
 }

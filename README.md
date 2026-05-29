@@ -88,6 +88,13 @@
 - `bootstrap.sh` 自动化部署
 - `destroy.sh --force` 30 秒清除所有痕迹
 
+### 7. 紧急自毁 (Self-Destruct)
+- 容器内 CLI: `self-destruct --force`
+- 远程 API: `POST /sync/api/destruct` (需 destruct passphrase)
+- 浏览器: 访问 `/sync/#emergency` 输入 passphrase
+- 销毁后容器进入 inert 模式 (sleep infinity)
+- 宿主机 host-watcher 自动检测并执行 `destroy.sh --force --paranoid`
+
 ## 安全防御层级
 
 ```
@@ -155,6 +162,7 @@ docker exec -it dev-workspace doctor
 | 重启 | `docker compose restart` |
 | 密码轮换 | `lock-vault` → `change-password` → `unlock-vault` |
 | 销毁 | `./destroy.sh --force` |
+| 紧急销毁 | `docker exec -it dev-workspace self-destruct --force` |
 
 ## 渗透测试环境（双 Vault 架构）
 

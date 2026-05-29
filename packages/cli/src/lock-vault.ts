@@ -4,12 +4,14 @@ import { STATE_SOCKET_PATH, WORKSPACE_MOUNT } from "@sdw/core/constants";
  * lock-vault — Unmount the gocryptfs vault
  */
 import { $ } from "bun";
+import { planLock } from "./lib/vault-lifecycle.ts";
 
 // 1. Check if mounted
 const check = await $`mountpoint -q ${WORKSPACE_MOUNT}`.quiet().nothrow();
-if (check.exitCode !== 0) {
+const lockPlan = planLock(check.exitCode === 0);
+if (lockPlan.action === "noop") {
   console.log("Vault is not currently mounted.");
-  process.exit(0);
+  process.exit(lockPlan.exitCode);
 }
 
 // 2. Unmount

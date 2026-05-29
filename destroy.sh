@@ -50,6 +50,14 @@ fi
 if [[ "$PARANOID" == "true" ]]; then
   echo "Paranoid mode: deep cleanup..."
 
+  # Remove host-watcher LaunchAgent
+  launchctl unload ~/Library/LaunchAgents/com.dev-workspace.host-watcher.plist 2>/dev/null || true
+  rm -f ~/Library/LaunchAgents/com.dev-workspace.host-watcher.plist
+  echo "  ✗ host-watcher LaunchAgent removed"
+
+  # Remove destruct-state volume (may survive compose down if externally created)
+  docker volume rm destruct-state 2>/dev/null || true
+
   # Remove cloudflared credentials and config
   rm -rf ~/.cloudflared/ 2>/dev/null || true
   echo "  ✗ ~/.cloudflared/ removed"

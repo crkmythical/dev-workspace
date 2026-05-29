@@ -55,3 +55,13 @@ export const SYNC_FAILURE_THRESHOLD = 3;
 export const PENTEST_CIPHER_DIR = "/pentest/cipher";
 export const PENTEST_MOUNT = "/pentest/rootfs";
 export const PENTEST_TOR_PORT = 9050;
+
+// Self-destruct
+export const DESTRUCT_STATE_DIR = "/var/run/self-destruct";
+export const DESTRUCT_KEY_HASH_PATH = "/var/run/self-destruct/key-hash";
+export const DESTRUCT_COMPLETED_PATH = "/var/run/self-destruct/completed";
+export const DESTRUCT_HKDF_SALT = "destruct-key-v1";
+export const DESTRUCT_HKDF_INFO = "self-destruct";
+export const DESTRUCT_RATE_LIMIT_WINDOW_MS = 60_000;
+export const DESTRUCT_RATE_LIMIT_MAX_ATTEMPTS = 3;
+export const DESTRUCT_RESPONSE_DELAY_MS = 200;

@@ -85,7 +85,7 @@ Implementation languages (locked by design):
     - `fusermount -u /workspace`; on EBUSY, prompt user and offer `fusermount -uz`.
     - Best-effort broadcast `{"state":"locked"}` to sync-service socket; missing-socket is non-fatal (sync-service detects state via mount poll).
     - _Requirements: 4.4, 4.5, 4.6_
-  - [ ] 3.5 Property/bats tests for vault lifecycle
+  - [x] 3.5 Property/bats tests for vault lifecycle
     - **Property 3: Vault Lifecycle Round-Trip and Idempotence** (Validates: 4.1, 4.3, 4.4, 4.6).
     - **Property 4: Wrong-Password Rejection** (Validates: 4.2).
     - **Property 6: Init-Vault Idempotence** (Validates: 3.4).
@@ -107,7 +107,7 @@ Implementation languages (locked by design):
     - Cron entry honors `VAULT_SYNC_INTERVAL` (default 1800s).
     - Supervisord supervises the cron daemon and restarts on crash.
     - _Requirements: 9.2, 8.7_
-  - [ ] 4.3 Property/bats tests for vault-sync
+  - [x] 4.3 Property/bats tests for vault-sync
     - **Property 5: Vault State Invariants on Locked Boundary** (Validates: 5.8, 8.6, 9.6, 13.5) — locked state never produces a commit.
     - **Property 15: Vault-Sync Exclusion Correctness** (Validates: 9.9, 25.1) — generated paths against `.gitignore` patterns vs `git check-ignore`.
     - **Property 16: Vault-Sync No-Op on Quiet Cycle** (Validates: 9.3, 9.4).

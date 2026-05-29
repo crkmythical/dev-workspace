@@ -12,6 +12,7 @@ services:
       - vault-data:/vault/cipher
       - cache-data:/pentest/cipher
       - clash-config:/etc/clash
+      - destruct-state:/var/run/self-destruct
     ports:
       - "127.0.0.1:${TUNNEL_HOST_PORT:-18080}:8080"
     restart: unless-stopped
@@ -32,3 +33,4 @@ volumes:
   vault-data:
   cache-data:
   clash-config:
+  destruct-state:

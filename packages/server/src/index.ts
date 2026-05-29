@@ -7,6 +7,7 @@ import { SYNC_SERVICE_PORT, SHARED_DIR } from "../../core/src/constants.ts";
 import { uploadRoute } from "./routes/upload.ts";
 import { downloadRoute } from "./routes/download.ts";
 import { doctorRoute } from "./routes/doctor.ts";
+import { destructRoute } from "./routes/destruct.ts";
 
 const app = new Hono();
 
@@ -27,6 +28,7 @@ app.get("/sync/assets/*", async (c) => {
 app.post("/sync/api/upload", uploadRoute);
 app.get("/sync/api/download", downloadRoute);
 app.get("/sync/api/doctor", doctorRoute);
+app.post("/sync/api/destruct", destructRoute);
 
 // Content type parser for image/png (encrypted payloads)
 app.use("/sync/api/upload", async (c, next) => { await next(); });

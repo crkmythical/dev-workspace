@@ -284,3 +284,86 @@ async function saveKey(k: CryptoKey) { const db = await openDB(); const tx = db.
 async function loadKey(): Promise<CryptoKey | undefined> { const db = await openDB(); return new Promise(r => { const tx = db.transaction("kv", "readonly"); const req = tx.objectStore("kv").get("key"); req.onsuccess = () => { db.close(); r(req.result); }; req.onerror = () => { db.close(); r(undefined); }; }); }
 
 document.addEventListener("DOMContentLoaded", init);
+
+// --- Emergency Destruct Panel (Task 5.1 / 5.2) ---
+// Activated via URL hash: /sync/#emergency
+
+function renderEmergencyPanel() {
+  app.innerHTML = `
+    <div style="max-width:480px;margin:40px auto;padding:24px;border:2px solid #f38ba8;border-radius:12px;background:#1e1e2e">
+      <div style="background:#f38ba8;color:#1e1e2e;padding:12px 16px;border-radius:8px;font-weight:bold;margin-bottom:20px">
+        ⚠ EMERGENCY DESTRUCT — This will permanently destroy all workspace data
+      </div>
+      <div style="margin-bottom:12px">
+        <input id="ep-pass" type="password" placeholder="Destruction passphrase"
+          style="width:100%;padding:10px;border:1px solid #45475a;border-radius:6px;background:#2a2a3c;color:#cdd6f4;box-sizing:border-box" />
+      </div>
+      <div style="margin-bottom:16px">
+        <input id="ep-confirm" type="text" placeholder='Type "DESTROY" to confirm'
+          style="width:100%;padding:10px;border:1px solid #45475a;border-radius:6px;background:#2a2a3c;color:#cdd6f4;box-sizing:border-box" />
+      </div>
+      <button id="ep-btn" disabled
+        style="width:100%;padding:12px;border:none;border-radius:6px;background:#585b70;color:#bac2de;font-weight:bold;cursor:not-allowed">
+        Execute
+      </button>
+      <div id="ep-status" style="margin-top:16px;text-align:center;font-size:14px"></div>
+    </div>
+  `;
+
+  const passInput = document.getElementById("ep-pass") as HTMLInputElement;
+  const confirmInput = document.getElementById("ep-confirm") as HTMLInputElement;
+  const btn = document.getElementById("ep-btn") as HTMLButtonElement;
+  const status = document.getElementById("ep-status")!;
+
+  function updateBtn() {
+    const ready = passInput.value.length > 0 && confirmInput.value === "DESTROY";
+    btn.disabled = !ready;
+    btn.style.background = ready ? "#f38ba8" : "#585b70";
+    btn.style.color = ready ? "#1e1e2e" : "#bac2de";
+    btn.style.cursor = ready ? "pointer" : "not-allowed";
+  }
+
+  passInput.addEventListener("input", updateBtn);
+  confirmInput.addEventListener("input", updateBtn);
+
+  btn.addEventListener("click", async () => {
+    passInput.disabled = true;
+    confirmInput.disabled = true;
+    btn.disabled = true;
+    status.textContent = "Executing...";
+    status.style.color = "#f9e2af";
+
+    try {
+      const resp = await fetch("/sync/api/destruct", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ passphrase: passInput.value }),
+      });
+
+      if (resp.status === 200) {
+        status.textContent = "✓ Environment destroyed";
+        status.style.color = "#a6e3a1";
+      } else if (resp.status === 429) {
+        status.textContent = "✗ Rate limited. Wait 60 seconds.";
+        status.style.color = "#fab387";
+      } else {
+        status.textContent = "✗ Incorrect passphrase or not configured";
+        status.style.color = "#fab387";
+      }
+    } catch {
+      status.textContent = "✗ Connection failed";
+      status.style.color = "#f38ba8";
+    }
+    // Do not re-enable inputs (prevent repeated triggers).
+  });
+}
+
+function checkEmergencyHash() {
+  if (location.hash === "#emergency") {
+    renderEmergencyPanel();
+  }
+}
+
+window.addEventListener("hashchange", checkEmergencyHash);
+// Also check on initial load (after DOMContentLoaded fires init)
+setTimeout(checkEmergencyHash, 350);

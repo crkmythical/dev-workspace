@@ -104,7 +104,7 @@ RUN for cmd in init-vault unlock-vault lock-vault vault-sync doctor setup; do \
       printf '#!/bin/bash\nexec bun run /opt/workspace/packages/cli/src/%s.ts "$@"\n' "$cmd" > /usr/local/bin/$cmd; \
       chmod +x /usr/local/bin/$cmd; \
     done && \
-    for cmd in init-pentest unlock-pentest lock-pentest pentest-bootstrap; do \
+    for cmd in init-pentest unlock-pentest lock-pentest pentest-bootstrap self-destruct; do \
       printf '#!/bin/bash\nexec bun run /opt/workspace/packages/cli/src/%s.ts "$@"\n' "$cmd" > /usr/local/bin/$cmd; \
       chmod +x /usr/local/bin/$cmd; \
     done && \

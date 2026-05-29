@@ -10,6 +10,7 @@ import {
  * vault-sync — Periodic vault ciphertext sync to GitHub
  */
 import { $ } from "bun";
+import { planSync } from "./lib/vault-lifecycle.ts";
 
 const LAST_SUCCESS = `${VAULT_SYNC_STATE_DIR}/last-success`;
 const FAILURE_COUNT = `${VAULT_SYNC_STATE_DIR}/consecutive-failures`;
@@ -18,12 +19,19 @@ mkdirSync(VAULT_SYNC_STATE_DIR, { recursive: true });
 
 // Skip if vault not mounted
 const mounted = await $`mountpoint -q ${WORKSPACE_MOUNT}`.quiet().nothrow();
-if (mounted.exitCode !== 0) process.exit(0);
+if (planSync({ mounted: mounted.exitCode === 0, hasStagedChanges: true }).action === "skip") {
+  process.exit(0);
+}
 
 // Check for changes
 const addResult = await $`cd ${VAULT_CIPHER_DIR} && git add -A`.quiet().nothrow();
 const diffResult = await $`cd ${VAULT_CIPHER_DIR} && git diff --cached --quiet`.quiet().nothrow();
-if (diffResult.exitCode === 0) process.exit(0); // No changes
+// diffResult.exitCode === 0 means nothing staged (no changes)
+if (
+  planSync({ mounted: true, hasStagedChanges: diffResult.exitCode !== 0 }).action === "skip"
+) {
+  process.exit(0); // No changes
+}
 
 // Commit
 await $`cd ${VAULT_CIPHER_DIR} && git commit -q -m "auto-sync ${new Date().toISOString()}"`.quiet();
