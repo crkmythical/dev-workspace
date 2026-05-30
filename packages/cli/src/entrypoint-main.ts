@@ -146,7 +146,62 @@ for (let i = 0; i < 3; i++) {
 }
 console.log(egress ? "Egress confirmed." : "WARNING: Egress probe failed.");
 
-// 8. exec supervisord
+// 8. Generate auth for desktop and code-server
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+const csConfigPath = "/root/.config/code-server/config.yaml";
+const envPassword = process.env.PASSWORD;
+if (!existsSync(csConfigPath) || envPassword) {
+  mkdirSync("/root/.config/code-server", { recursive: true });
+  const pw = envPassword || crypto.randomUUID().replace(/-/g, "").slice(0, 24);
+  writeFileSync(
+    csConfigPath,
+    `bind-addr: 127.0.0.1:8082\nauth: password\npassword: ${pw}\ncert: false\n`,
+  );
+}
+const csConfig = readFileSync(csConfigPath, "utf-8");
+const passMatch = csConfig.match(/^password:\s*(.+)$/m);
+if (passMatch) {
+  const pw = passMatch[1].trim();
+  // Generate bcrypt hash for Caddy basicauth
+  const hashProc = Bun.spawn(["caddy", "hash-password", "--plaintext", pw], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const hashOut = await new Response(hashProc.stdout).text();
+  await hashProc.exited;
+  const bcryptHash = hashOut.trim();
+  if (bcryptHash) {
+    const caddyfile = `:8080 {
+    @desktop path /desktop /desktop/*
+    handle @desktop {
+        uri strip_prefix /desktop
+        basic_auth {
+            user ${bcryptHash}
+        }
+        root * /usr/share/kasmvnc/www
+        try_files {path} /index.html
+        file_server
+    }
+    handle /websockify {
+        basic_auth {
+            user ${bcryptHash}
+        }
+        reverse_proxy 127.0.0.1:6080
+    }
+    handle /sync/* {
+        reverse_proxy 127.0.0.1:8081
+    }
+    handle {
+        reverse_proxy 127.0.0.1:8082
+    }
+}
+`;
+    writeFileSync("/etc/caddy/Caddyfile", caddyfile);
+    console.log(`Auth configured (user: user, password same as code-server: ${pw}).`);
+  }
+}
+
+// 9. exec supervisord
 console.log("Starting supervisord...");
 const proc = Bun.spawn(["/usr/bin/supervisord", "-c", "/etc/supervisor/supervisord.conf"], {
   stdout: "inherit",

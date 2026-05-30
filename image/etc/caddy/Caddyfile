@@ -1,13 +1,22 @@
 :8080 {
-    handle_path /desktop/websockify {
-        reverse_proxy 127.0.0.1:6080
-    }
-    handle_path /desktop/* {
-        root * /usr/share/kasmvnc/www
-        file_server
-    }
-    handle /desktop {
-        redir /desktop/ permanent
+    @desktop path /desktop /desktop/*
+    handle @desktop {
+        uri strip_prefix /desktop
+        basicauth {
+            user {$DESKTOP_BCRYPT_HASH}
+        }
+        @websocket {
+            header Connection *Upgrade*
+            header Upgrade websocket
+        }
+        handle @websocket {
+            reverse_proxy 127.0.0.1:6080
+        }
+        handle {
+            root * /usr/share/kasmvnc/www
+            try_files {path} /index.html
+            file_server
+        }
     }
     handle /sync/* {
         reverse_proxy 127.0.0.1:8081

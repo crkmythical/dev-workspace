@@ -30,7 +30,7 @@ if (statusCheck.exitCode === 0 && statusCheck.text().includes("RUNNING")) {
 const configDirs = [
   `${DESKTOP_CONFIG_DIR}/openbox`,
   `${DESKTOP_CONFIG_DIR}/tint2`,
-  `${DESKTOP_CONFIG_DIR}/kasmvnc`,
+  `${DESKTOP_HOME}/.vnc`,
   `${DESKTOP_HOME}/.local/share/applications`,
   DESKTOP_CACHE_DIR,
 ];
@@ -44,14 +44,20 @@ if (
 ) {
   cpSync(`${defaults}/openbox-rc.xml`, `${DESKTOP_CONFIG_DIR}/openbox/rc.xml`);
 }
+if (
+  !existsSync(`${DESKTOP_CONFIG_DIR}/openbox/autostart`) &&
+  existsSync(`${defaults}/autostart`)
+) {
+  cpSync(`${defaults}/autostart`, `${DESKTOP_CONFIG_DIR}/openbox/autostart`);
+}
 if (!existsSync(`${DESKTOP_CONFIG_DIR}/tint2/tint2rc`) && existsSync(`${defaults}/tint2rc`)) {
   cpSync(`${defaults}/tint2rc`, `${DESKTOP_CONFIG_DIR}/tint2/tint2rc`);
 }
 if (
-  !existsSync(`${DESKTOP_CONFIG_DIR}/kasmvnc/kasmvnc.yaml`) &&
+  !existsSync(`${DESKTOP_HOME}/.vnc/kasmvnc.yaml`) &&
   existsSync(`${defaults}/kasmvnc-defaults.yaml`)
 ) {
-  cpSync(`${defaults}/kasmvnc-defaults.yaml`, `${DESKTOP_CONFIG_DIR}/kasmvnc/kasmvnc.yaml`);
+  cpSync(`${defaults}/kasmvnc-defaults.yaml`, `${DESKTOP_HOME}/.vnc/kasmvnc.yaml`);
 }
 
 // 4. Start desktop group

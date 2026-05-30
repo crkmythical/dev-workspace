@@ -125,8 +125,9 @@ RUN chmod 0644 /etc/cron.d/vault-sync /etc/cron.d/cleanup
 # Desktop default configs
 COPY image/etc/desktop/ /opt/workspace/image/etc/desktop/
 
-# KasmVNC runs with -SecurityTypes None (Cloudflare Access handles auth)
-# No password file needed.
+# KasmVNC system-level config (reverse proxy mode: no SSL, no STUN, no blacklist)
+RUN mkdir -p /etc/kasmvnc
+COPY image/etc/desktop/kasmvnc-defaults.yaml /etc/kasmvnc/kasmvnc.yaml
 
 # Copy monorepo packages (workspace code)
 COPY packages/ /opt/workspace/packages/

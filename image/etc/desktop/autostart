@@ -1,0 +1,3 @@
+# Openbox autostart — runs when desktop session starts
+xsetroot -solid "#2c3e50" &
+tint2 &
