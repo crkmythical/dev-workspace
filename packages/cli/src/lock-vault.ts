@@ -4,6 +4,7 @@ import { STATE_SOCKET_PATH, WORKSPACE_MOUNT } from "@sdw/core/constants";
  * lock-vault — Unmount the gocryptfs vault
  */
 import { $ } from "bun";
+import { isDesktopRunning, stopDesktop } from "./lib/desktop.ts";
 import { planLock } from "./lib/vault-lifecycle.ts";
 
 // 1. Check if mounted
@@ -15,10 +16,9 @@ if (lockPlan.action === "noop") {
 }
 
 // 2. Stop desktop if running (before unmount to avoid FUSE EBUSY)
-const desktopStatus = await $`supervisorctl status desktop:desktop-xvnc`.quiet().nothrow();
-if (desktopStatus.exitCode === 0 && desktopStatus.text().includes("RUNNING")) {
+if (await isDesktopRunning()) {
   console.log("Stopping desktop session...");
-  await $`supervisorctl stop desktop:desktop-xvnc desktop:desktop-openbox desktop:desktop-tint2`.quiet().nothrow();
+  await stopDesktop();
 }
 
 // 3. Unmount

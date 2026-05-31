@@ -1,27 +1,18 @@
 :8080 {
-    @desktop path /desktop /desktop/*
-    handle @desktop {
-        uri strip_prefix /desktop
-        basicauth {
-            user {$DESKTOP_BCRYPT_HASH}
-        }
-        @websocket {
-            header Connection *Upgrade*
-            header Upgrade websocket
-        }
-        handle @websocket {
-            reverse_proxy 127.0.0.1:6080
-        }
-        handle {
-            root * /usr/share/kasmvnc/www
-            try_files {path} /index.html
-            file_server
-        }
-    }
-    handle /sync/* {
-        reverse_proxy 127.0.0.1:8081
-    }
-    handle {
-        reverse_proxy 127.0.0.1:8082
-    }
+	# --- Remote desktop (stack-specific routing) ---
+	# The desktop block is provisioned at build time based on DESKTOP_STACK:
+	#   selkies  → Caddy serves static client + reverse-proxies WS /desktop/websockets
+	#   kasmvnc  → Caddy reverse-proxies everything under /desktop to KasmVNC
+	# Both bind 127.0.0.1:6080 and sit behind the shared $DESKTOP_BCRYPT_HASH auth.
+	import /etc/caddy/desktop.caddy
+
+	# --- Sync service ---
+	handle /sync/* {
+		reverse_proxy 127.0.0.1:8081
+	}
+
+	# --- code-server (default) ---
+	handle {
+		reverse_proxy 127.0.0.1:8082
+	}
 }

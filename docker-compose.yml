@@ -1,11 +1,25 @@
 services:
   workspace:
+    image: dev-workspace:latest
     build:
       context: .
       dockerfile: image/Dockerfile
+      args:
+        # Base image: Kali (default) or Debian trixie
+        # Override: docker compose build --build-arg BASE_IMAGE=debian:trixie-slim
     container_name: dev-workspace
     cap_add:
       - SYS_ADMIN
+    security_opt:
+      # Required for the XFCE desktop on Kali. Kali's gdk-pixbuf (>=2.44) routes
+      # SVG icon loading through glycin, which renders inside a bubblewrap (bwrap)
+      # sandbox. bwrap needs pivot_root + user namespaces, which Docker's default
+      # seccomp profile blocks (pivot_root -> EPERM). Without this, the XFCE panel
+      # aborts (SIGABRT) on first SVG icon and the desktop comes up black.
+      # Verified: no glycin env var / config disables its sandbox in this version,
+      # and the classic librsvg gdk-pixbuf loader is bypassed by GTK's SVG path.
+      # code-server / vault / sync do NOT need this; it is purely for the desktop.
+      - seccomp:unconfined
     devices:
       - "/dev/fuse"
     volumes:
@@ -20,6 +34,7 @@ services:
     env_file: .env
     environment:
       - DESKTOP_RESOLUTION=${DESKTOP_RESOLUTION:-1920x1080}
+      - DESKTOP_AUDIO=${DESKTOP_AUDIO:-0}
     ulimits:
       core: 0
       nofile:

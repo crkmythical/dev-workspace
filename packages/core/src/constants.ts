@@ -4,6 +4,9 @@
 export const CLASH_HTTP_PORT = 7890;
 export const CLASH_SOCKS_PORT = 7891;
 export const CLASH_CONTROLLER_PORT = 9090;
+// CADDY_PORT documents the in-container reverse-proxy port. It is referenced by
+// the baked Caddyfile and docker-compose port mapping (not by TS), kept here as
+// the canonical value so the topology has one source of truth.
 export const CADDY_PORT = 8080;
 export const SYNC_SERVICE_PORT = 8081;
 export const CODE_SERVER_PORT = 8082;
@@ -68,6 +71,13 @@ export const CHUNK_SIZE = 4 * 1024 * 1024; // 4 MiB
 export const SIZE_LIMIT = 500 * 1024 * 1024; // 500 MB
 export const REPLAY_WINDOW_SIZE = 10000;
 export const REPLAY_TOLERANCE_MS = 300_000; // 5 min
+
+// Reserved for not-yet-wired spec features. Kept as the single source of truth
+// so the eventual implementation references these instead of fresh magic
+// numbers. POLL_INTERVAL_* — SPA adaptive polling (currently hardcoded in
+// packages/spa/src/main.ts); STALE_UPLOAD_THRESHOLD_MS — orphan .uploading-*
+// cleanup cron (Req 27.5); GRACEFUL_RESTART_INTERVAL_MS — sync-service periodic
+// restart (Req 27.1).
 export const POLL_INTERVAL_FOCUSED_MS = 2000;
 export const POLL_INTERVAL_BACKGROUND_MS = 10000;
 export const STALE_UPLOAD_THRESHOLD_MS = 60 * 60 * 1000; // 1h
@@ -92,11 +102,17 @@ export const DESTRUCT_RATE_LIMIT_WINDOW_MS = 60_000;
 export const DESTRUCT_RATE_LIMIT_MAX_ATTEMPTS = 3;
 export const DESTRUCT_RESPONSE_DELAY_MS = 200;
 
-// Remote desktop (KasmVNC)
+// Remote desktop (Selkies stream)
 export const DESKTOP_HOME = "/workspace/.desktop";
 export const DESKTOP_CONFIG_DIR = "/workspace/.desktop/.config";
 export const DESKTOP_CACHE_DIR = "/tmp/.desktop-cache";
 export const DESKTOP_APPS_DIR = "/opt/desktop-apps";
 export const DESKTOP_APPS_REGISTRY = "/opt/desktop-apps/.registry.json";
-export const KASMVNC_PORT = 6080;
+/** Port the Selkies WebSocket server listens on (--port=6080). Selkies' own
+ *  default is 8082 which collides with code-server; we use 6080 instead. */
+export const DESKTOP_STREAM_PORT = 6080;
+/** X display the desktop runs on. Xvfb, selkies, and XFCE all bind here. */
+export const DESKTOP_DISPLAY = ":1";
+/** Path where the static Selkies web client is served from by Caddy. */
+export const DESKTOP_WEB_ROOT = "/usr/share/selkies/web";
 export const DESKTOP_DEFAULT_RESOLUTION = "1920x1080";

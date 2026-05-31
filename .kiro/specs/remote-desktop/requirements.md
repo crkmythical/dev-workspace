@@ -5,15 +5,16 @@
 为 dev-workspace 容器添加完整的 Linux 桌面环境，通过浏览器访问。支持运行任意 GUI 应用（JetBrains IDE、Burp Suite、Firefox、Wireshark 等），用于重度远程开发和渗透测试场景。使用 KasmVNC 作为传输层，提供低延迟、自适应帧率的远程桌面体验。
 
 技术选型依据：
-- **KasmVNC** 而非 noVNC+TigerVNC：WebSocket native 协议、WebP 自适应编码、30-60fps、帧差分传输、剪贴板/文件双向同步
+- **KasmVNC** 而非 noVNC+TigerVNC：WebSocket native 协议、WebP 自适应编码、30-60fps、帧差分传输、剪贴板/文件双向同步。使用其集成的 `Xkasmvnc`（X server + VNC + 内置 web 服务器三合一），而非分离的 Xvfb + 独立 VNC 进程，减少进程数与故障面
 - **CPU 软渲染 (llvmpipe)** 而非 GPU：Docker Desktop on macOS 无 GPU passthrough，但多核 CPU 下 GUI 应用（IDE、工具）性能完全够用
-- **轻量窗口管理器 (openbox)** 而非完整 DE：减少资源消耗，仅提供窗口管理基础能力
+- **XFCE4** 而非完整 GNOME/KDE 或极简 Openbox：在资源占用与开箱即用之间取得平衡。Kali 官方默认桌面即 XFCE，工具集成度最好；提供任务栏、菜单、文件管理器、设置中心等完整能力，无需自行拼装 tint2/pcmanfm
+- **基础镜像 Kali Linux rolling**：渗透工具通过 apt 直接可得；保留 `debian:bookworm-slim` 作为轻量备选（见 Dockerfile 注释）
 
 ## Glossary
 
-- **KasmVNC**: 基于 TigerVNC 深度定制的 VNC 服务器，专为浏览器访问优化，支持 WebSocket 原生协议和 WebP/JPEG 自适应编码
-- **Xvfb**: X Virtual Framebuffer，无硬件显示的虚拟 X Server，提供内存中的帧缓冲
-- **Openbox**: 轻量级 X11 窗口管理器（~2MB 内存），提供窗口拖拽、最大化、任务切换等基础功能
+- **KasmVNC**: 基于 TigerVNC 深度定制的 VNC 服务器，专为浏览器访问优化，支持 WebSocket 原生协议和 WebP/JPEG 自适应编码。本项目使用其 `Xkasmvnc` 二进制：单进程同时提供虚拟 X display、VNC 编码、以及内置 HTTP/WebSocket 服务器（`-httpd` + `-websocketPort`）
+- **Xkasmvnc**: KasmVNC 的集成 X server（取代独立的 Xvfb + VNC 组合）。监听 display `:1`，并在 `-websocketPort` 上同时服务 noVNC 静态客户端和 `/websockify` WebSocket
+- **XFCE4**: Kali 默认的轻量桌面环境，提供窗口管理器（xfwm4）、面板（xfce4-panel）、桌面（xfdesktop）、终端、文件管理器（Thunar）。通过 `dbus-run-session -- startxfce4` 启动以保证 D-Bus 会话总线就绪
 - **llvmpipe**: Mesa 的 CPU 软件 OpenGL 渲染器，无需 GPU 即可运行需要 OpenGL 的应用
 - **Desktop_Home**: GUI 应用的 HOME 目录 `/workspace/.desktop/`，位于 gocryptfs 加密层内，锁定后所有配置变为密文
 
@@ -25,14 +26,14 @@
 
 #### Acceptance Criteria
 
-1. THE container SHALL include a virtual X server (Xvfb) running on display `:1` with default resolution 1920x1080x24
-2. THE container SHALL include Openbox window manager providing basic window management (move, resize, maximize, minimize, virtual desktops)
-3. THE container SHALL include KasmVNC server binding to `127.0.0.1:6080` (WebSocket), connecting to the Xvfb display
-4. THE container SHALL include essential desktop utilities: a terminal emulator (xterm or xfce4-terminal), a file manager (pcmanfm or thunar), and a taskbar/panel (tint2)
+1. THE container SHALL include an integrated KasmVNC X server (`Xkasmvnc`) running on display `:1` with default resolution 1920x1080x24
+2. THE container SHALL include the XFCE4 desktop environment providing window management (xfwm4), a panel (xfce4-panel), and the desktop (xfdesktop)
+3. THE `Xkasmvnc` server SHALL bind to `127.0.0.1:6080`, serving both the WebSocket (`/websockify`) and the noVNC static client via its built-in web server (`-httpd /usr/share/kasmvnc/www`)
+4. THE container SHALL include essential desktop utilities: a terminal emulator (xfce4-terminal), a file manager (Thunar), and the XFCE panel with application menu (whiskermenu)
 5. THE container SHALL include CJK font support (fonts-noto-cjk) to correctly render Chinese/Japanese/Korean text in GUI applications
 6. THE container SHALL include mesa-utils and libgl1-mesa-dri for CPU-based OpenGL rendering (llvmpipe), enabling applications that require OpenGL (e.g., some JetBrains IDEs)
-7. THE desktop environment SHALL start automatically via supervisord after vault unlock (GUI applications need access to `/workspace/.desktop/` for configs)
-8. THE desktop environment SHALL be accessible via Caddy reverse proxy at path `/desktop/*`, sharing the same Cloudflare Tunnel as code-server and sync-service
+7. THE desktop environment SHALL be started on-demand via `desktop-start` after vault unlock (GUI applications need access to `/workspace/.desktop/` for configs). The XFCE session SHALL launch via `dbus-run-session` and only after the X server on `:1` is accepting connections
+8. THE desktop environment SHALL be accessible via Caddy reverse proxy at path `/desktop/*` (plus the root `/websockify` that the noVNC client connects to), sharing the same Cloudflare Tunnel as code-server and sync-service
 
 ### Requirement 2: KasmVNC 配置与优化
 
@@ -49,7 +50,7 @@
 7. KasmVNC SHALL use `-websocketPort 6080` and NOT expose a traditional VNC port (5900) — browser-only access
 8. KasmVNC SHALL be configured with idle timeout of 0 (never disconnect idle sessions — desktop should persist)
 9. KasmVNC SHALL support multi-user view (optional) — allowing one additional read-only viewer for pair programming or demonstration
-10. THE KasmVNC web interface SHALL be served without its own authentication (authentication is handled by Cloudflare Access at the tunnel layer)
+10. THE KasmVNC server SHALL run without its own authentication (`-SecurityTypes None -DisableBasicAuth`); authentication is enforced at the Caddy reverse-proxy layer via HTTP Basic Auth (bcrypt), sharing the same password as code-server (from `PASSWORD` env or a generated random one). This keeps a single credential for the whole workspace and works whether or not Cloudflare Access is configured
 
 ### Requirement 3: 安全与加密集成
 

@@ -1,0 +1,31 @@
+# Desktop routing — SELKIES stack. Imported by the main Caddyfile via
+# `import /etc/caddy/desktop.caddy`. Selected at build time (DESKTOP_STACK=selkies).
+#
+# Selkies is WS-ONLY on :6080 (does NOT serve the web client). Caddy serves the
+# static client from /usr/share/selkies/web and reverse-proxies only the WebSocket.
+# The client opens <path>/websockets (plural).
+#
+# AUTH MODEL: Basic Auth gates the static client (the page load). The WebSocket
+# upgrade is NOT re-authed because browsers do NOT attach basic-auth credentials
+# to JS-initiated WebSocket handshakes (a 401 there → blank "Waiting for stream...").
+# Safe: the WS only carries an already-authenticated same-origin session, the
+# upstream binds 127.0.0.1 only, and there are zero inbound ports (tunnel-only).
+
+# (1) WebSocket — must come BEFORE the static handler (longer path = higher priority).
+@desktop_ws path /desktop/websockets
+handle @desktop_ws {
+	uri strip_prefix /desktop
+	reverse_proxy 127.0.0.1:6080
+}
+
+# (2) Static client — Caddy file_server serves the dashboard (Basic Auth gated).
+handle_path /desktop/* {
+	basic_auth {
+		user {$DESKTOP_BCRYPT_HASH}
+	}
+	root * /usr/share/selkies/web
+	file_server
+}
+handle /desktop {
+	redir /desktop/ permanent
+}

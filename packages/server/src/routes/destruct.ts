@@ -63,9 +63,18 @@ export async function destructRoute(c: Context): Promise<Response> {
   // Schedule destruction after response is sent.
   // We kill PID 1 directly (not supervisorctl stop all) because sync-service
   // itself runs under supervisord — stopping all would kill us mid-destroy.
+  // try/finally: destroyCore crosses an irreversible "point of no return"
+  // (shredding gocryptfs.conf). If it throws partway, we must STILL terminate
+  // PID 1 so the container never lingers in a half-destroyed state with the
+  // vault key gone but processes alive.
   setTimeout(async () => {
-    await destroyCore({ force: true, skipShred: false, remote: false, silent: true });
-    process.kill(1, "SIGTERM");
+    try {
+      await destroyCore({ force: true, skipShred: false, remote: false, silent: true });
+    } catch (err) {
+      console.error("destroyCore failed mid-destruct; terminating anyway:", err);
+    } finally {
+      process.kill(1, "SIGTERM");
+    }
   }, DESTRUCT_RESPONSE_DELAY_MS);
 
   return c.json({ status: "destroyed" }, 200);

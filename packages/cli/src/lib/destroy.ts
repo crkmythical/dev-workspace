@@ -15,6 +15,7 @@ import {
   WORKSPACE_MOUNT,
 } from "@sdw/core/constants";
 import { $ } from "bun";
+import { stopDesktop } from "./desktop.ts";
 import { unmountVault } from "./vault.ts";
 
 export interface DestroyOptions {
@@ -51,7 +52,7 @@ export async function destroyCore(opts: DestroyOptions): Promise<void> {
 
   // Phase 1: Unmount vaults
   log(opts, "[Phase 1] Unmounting vaults...");
-  await $`supervisorctl stop desktop:desktop-xvnc desktop:desktop-openbox desktop:desktop-tint2`.quiet().nothrow();
+  await stopDesktop();
   await unmountVault(WORKSPACE_MOUNT);
   await unmountVault(PENTEST_MOUNT);
 

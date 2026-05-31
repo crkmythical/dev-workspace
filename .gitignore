@@ -20,3 +20,13 @@ out/
 # OS junk
 .DS_Store
 Thumbs.db
+
+# Pre-downloaded build artifacts (local build acceleration)
+image/*.tar.gz
+
+# PoC / temporary files
+.poc-tmp/
+iE
+
+# Docker build cache
+.docker/

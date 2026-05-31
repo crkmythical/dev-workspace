@@ -3,6 +3,8 @@ import { existsSync, readFileSync } from "node:fs";
 import {
   CLASH_HTTP_PORT,
   CODE_SERVER_PORT,
+  DESKTOP_STREAM_PORT,
+  DESKTOP_WEB_ROOT,
   PENTEST_CIPHER_DIR,
   PENTEST_MOUNT,
   SYNC_SERVICE_PORT,
@@ -15,6 +17,7 @@ import type { DoctorResult } from "@sdw/core/types";
  * doctor — Workspace health check
  */
 import { $ } from "bun";
+import { desktopAnchor, desktopStack } from "./lib/desktop.ts";
 
 const results: DoctorResult[] = [];
 
@@ -92,21 +95,60 @@ if (existsSync(VAULT_CIPHER_DIR)) {
   results.push({ component: "Vault disk", status: "ok", detail: size });
 }
 
-// 7. Desktop (optional, on-demand)
-const desktopXvfb = await $`supervisorctl status desktop:desktop-xvnc`.quiet().nothrow();
-if (desktopXvfb.exitCode === 0 && desktopXvfb.text().includes("RUNNING")) {
-  results.push({ component: "Desktop Xvnc", status: "ok", detail: "running" });
-  const kasmProbe = await $`nc -z 127.0.0.1 6080`.quiet().nothrow();
+// 7. Desktop (optional, on-demand) — stack-aware
+const stack = desktopStack();
+const desktopAnchorProg = desktopAnchor(stack);
+const anchorStatus = await $`supervisorctl status ${desktopAnchorProg}`.quiet().nothrow();
+if (anchorStatus.exitCode === 0 && anchorStatus.text().includes("RUNNING")) {
+  const xLabel = stack === "kasmvnc" ? "Desktop X/VNC server (Xkasmvnc)" : "Desktop X server (Xvfb)";
+  results.push({ component: xLabel, status: "ok", detail: "running" });
+
+  const streamLabel = stack === "kasmvnc" ? "Desktop stream (KasmVNC)" : "Desktop stream (Selkies)";
+  const streamProbe = await $`nc -z 127.0.0.1 ${DESKTOP_STREAM_PORT}`.quiet().nothrow();
   results.push(
-    kasmProbe.exitCode === 0
-      ? { component: "Desktop KasmVNC", status: "ok", detail: "port 6080 listening" }
-      : { component: "Desktop KasmVNC", status: "fail", detail: "port 6080 not responding" },
+    streamProbe.exitCode === 0
+      ? { component: streamLabel, status: "ok", detail: `port ${DESKTOP_STREAM_PORT} listening` }
+      : {
+          component: streamLabel,
+          status: "fail",
+          detail: `port ${DESKTOP_STREAM_PORT} not responding`,
+        },
   );
+
+  // Static client reachability — selkies only. Selkies is WS-only, so a missing
+  // static client is invisible to a port probe yet fatal (426/white-screen).
+  // KasmVNC serves its own client from the same port, so this check is N/A there.
+  if (stack === "selkies") {
+    const clientExists = existsSync(`${DESKTOP_WEB_ROOT}/index.html`);
+    results.push(
+      clientExists
+        ? { component: "Desktop client (static)", status: "ok", detail: `${DESKTOP_WEB_ROOT}/index.html present` }
+        : { component: "Desktop client (static)", status: "warn", detail: `${DESKTOP_WEB_ROOT}/index.html MISSING — browser will get 426` },
+    );
+  }
+
   const displayCheck = await $`DISPLAY=:1 xdpyinfo`.quiet().nothrow();
   results.push(
     displayCheck.exitCode === 0
       ? { component: "Desktop Display", status: "ok", detail: ":1 active" }
       : { component: "Desktop Display", status: "warn", detail: ":1 not responding" },
+  );
+
+  // Detect the "fake-alive" session: the X server is up but the window manager /
+  // panel crashed, which shows as a black screen in the browser even though
+  // supervisord reports the session program RUNNING. Both stacks use XFCE.
+  const [wmName, panelName] = ["xfwm4", "xfce4-panel"];
+  const wm = await $`pgrep -x ${wmName}`.quiet().nothrow();
+  const panel = await $`pgrep -x ${panelName}`.quiet().nothrow();
+  const wmOk = wm.exitCode === 0 && panel.exitCode === 0;
+  results.push(
+    wmOk
+      ? { component: "Desktop session", status: "ok", detail: `${wmName} + ${panelName} running` }
+      : {
+          component: "Desktop session",
+          status: "warn",
+          detail: `${wmName}/${panelName} not running — restart: desktop-stop && desktop-start`,
+        },
   );
 } else {
   results.push({ component: "Desktop", status: "ok", detail: "not started (optional)" });

@@ -2,19 +2,15 @@
 /**
  * desktop-stop — Stop the remote desktop session.
  */
-import { $ } from "bun";
+import { runningDesktopPrograms, stopDesktop } from "./lib/desktop.ts";
 
-await $`supervisorctl stop desktop:desktop-xvnc desktop:desktop-openbox desktop:desktop-tint2`.quiet().nothrow();
+await stopDesktop();
 
 // Confirm all desktop processes stopped
-const status = await $`supervisorctl status desktop:desktop-xvnc desktop:desktop-openbox desktop:desktop-tint2`.quiet().nothrow();
-const lines = status
-  .text()
-  .split("\n")
-  .filter((l) => l.includes("RUNNING"));
-if (lines.length > 0) {
+const stillRunning = await runningDesktopPrograms();
+if (stillRunning.length > 0) {
   console.warn("⚠ Some desktop processes still running:");
-  for (const l of lines) console.warn(`  ${l}`);
+  for (const p of stillRunning) console.warn(`  ${p}`);
 } else {
   console.log("Desktop stopped.");
 }

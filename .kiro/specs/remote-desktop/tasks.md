@@ -183,7 +183,12 @@
 
 ## Notes
 
-- KasmVNC 版本选择: 使用最新 stable release，从 https://github.com/kasmtech/KasmVNC/releases 获取 .deb
-- 如果 PoC 验证帧率不满足 (< 20fps)，备选方案: 降低默认分辨率到 1600x900 或调低 WebP 质量
-- vault-sync 会同步 `/workspace/.desktop/` 到 GitHub — 如果用户安装了大量 IDEA 索引等文件，可能需要在 vault 的 `.gitignore` 中排除特定子目录
-- 未来增强方向: 音频支持 (PulseAudio → WebSocket)、多显示器模拟、GPU passthrough (迁移到 Linux 物理机后)
+- 实现已从原设计（Xvfb + Openbox + tint2 + 独立 KasmVNC）演进为 **Xkasmvnc（集成 X+VNC+httpd）+ XFCE4**，进程数从 4 降到 2，故障面更小。requirements.md / design.md 已同步更新为实际架构
+- 桌面进程组的唯一事实源在 `packages/cli/src/lib/desktop.ts`（group 成员、start/stop 顺序、就绪探测、运行态检测）。desktop-start/stop、lock-vault、destroy、doctor 全部引用它，避免进程名散落多处导致改名遗漏（曾因此残留 openbox/tint2 死引用，破坏 lock 前停桌面的保证）
+- XFCE 启动经 `image/etc/desktop/start-xfce.sh`：先等待 X server `:1` 就绪，再用 `dbus-run-session -- startxfce4`，解决了 supervisord 下 WM/panel 偶发不启动（黑屏）的竞争
+- 认证：KasmVNC 自身关闭认证（`-SecurityTypes None -DisableBasicAuth`），由 Caddy `basic_auth`（bcrypt）统一处理，密码与 code-server 一致（`$DESKTOP_BCRYPT_HASH` 注入静态 Caddyfile）
+- Kali 上 gdk-pixbuf(>=2.44) 经 glycin 加载 SVG 图标，glycin 在 bwrap 沙箱内运行，需要 `pivot_root` —— Docker 默认 seccomp 拦截。故 docker-compose 需 `security_opt: seccomp:unconfined`（仅桌面需要，已在 compose 注释说明）。已验证：无 glycin 环境变量/配置可绕过，classic librsvg loader 被 GTK 的 SVG 路径绕过
+- 本地构建加速：`image/*.tar.gz`（Java/Node/Python）预下载并 COPY，绕过 GitHub 慢速；正式版可改回 mise 在线下载（Dockerfile 内有 ONLINE MODE 注释）。这些 tar.gz 已 gitignore
+- KasmVNC 版本：1.3.3（GitHub release .deb，bookworm 包在 Kali 上兼容）
+- vault-sync 会同步 `/workspace/.desktop/` 到 GitHub — 如安装大量 IDEA 索引，需在 vault `.gitignore` 排除
+- 未来增强：音频 (PulseAudio → WebSocket)、多显示器、GPU passthrough (迁移到 Linux 物理机后)

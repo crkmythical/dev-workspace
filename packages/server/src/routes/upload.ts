@@ -10,15 +10,40 @@ import {
   SHARED_DIR,
   SYNC_PASSPHRASE_PATH,
   TAG_LENGTH,
+  UPLOAD_TRACKING_DIR,
 } from "../../../core/src/constants.ts";
+import { checkRelativePath } from "../../../core/src/path-safety.ts";
 import { ReplayWindow } from "../../../core/src/replay-window.ts";
 import { decrypt, deriveKey } from "../crypto.ts";
 
-const UPLOAD_DIR = `${SHARED_DIR}/.uploads`;
+const UPLOAD_DIR = UPLOAD_TRACKING_DIR;
 let syncKey: Buffer | null = null;
 const replayWindow = new ReplayWindow();
 
+/** Zero and drop the cached AEAD key (e.g. when the vault is locked). */
+export function resetSyncKey() {
+  if (syncKey) {
+    syncKey.fill(0);
+    syncKey = null;
+  }
+}
+
+/**
+ * Resolve the AEAD sync key, honouring vault lock state.
+ *
+ * The passphrase file lives inside the vault (`/workspace/.credentials/...`),
+ * so it is only readable while the vault is FUSE-mounted. We treat its
+ * disappearance as the authoritative "vault locked" signal and drop any cached
+ * key from memory — this fulfils the design requirement that the sync-service
+ * drops its in-memory key on lock (design.md §"lock-vault"), deterministically
+ * and without a separate socket listener. On re-unlock the file reappears and
+ * the key is re-derived. The existsSync stat is cheap relative to a request.
+ */
 async function getSyncKey(): Promise<Buffer | null> {
+  if (!existsSync(SYNC_PASSPHRASE_PATH)) {
+    resetSyncKey();
+    return null;
+  }
   if (syncKey) return syncKey;
   try {
     const passphrase = await readFile(SYNC_PASSPHRASE_PATH, "utf-8");
@@ -75,17 +100,36 @@ export async function uploadRoute(c: Context) {
     await mkdir(SHARED_DIR, { recursive: true });
 
     if (op === "put-chunk") {
-      // plaintext is raw file chunk bytes
-      const tempPath = path.join(UPLOAD_DIR, `.uploading-${fileId}`);
+      // plaintext is raw file chunk bytes. fileId is attacker-influenced and is
+      // used to build a temp path — reject anything that isn't a flat, safe
+      // path segment (no traversal, no separators).
+      const fileIdCheck = checkRelativePath(fileId);
+      if (!fileIdCheck.ok || fileIdCheck.normalized.includes("/")) {
+        return c.json({ error: "bad-file-id" }, 400);
+      }
+      const tempPath = path.join(UPLOAD_DIR, `.uploading-${fileIdCheck.normalized}`);
       await appendFile(tempPath, plaintext);
       return c.json({ status: "chunk-received", chunk_idx: Number.parseInt(chunkIdx) });
     }
 
     if (op === "put-finalize") {
-      // plaintext is JSON metadata
+      // plaintext is JSON metadata. Both file_id (temp path) and file_path
+      // (final path under SHARED_DIR) come from decrypted, attacker-influenced
+      // data and must be validated before any filesystem use (defense-in-depth
+      // against path traversal even though the payload is AEAD-authenticated).
       const data = JSON.parse(plaintext.toString("utf-8"));
-      const tempPath = path.join(UPLOAD_DIR, `.uploading-${data.file_id}`);
-      const finalPath = path.join(SHARED_DIR, data.file_path);
+
+      const idCheck = checkRelativePath(String(data.file_id ?? ""));
+      if (!idCheck.ok || idCheck.normalized.includes("/")) {
+        return c.json({ error: "bad-file-id" }, 400);
+      }
+      const pathCheck = checkRelativePath(String(data.file_path ?? ""));
+      if (!pathCheck.ok) {
+        return c.json({ error: "bad-file-path" }, 400);
+      }
+
+      const tempPath = path.join(UPLOAD_DIR, `.uploading-${idCheck.normalized}`);
+      const finalPath = path.join(SHARED_DIR, pathCheck.normalized);
 
       if (!existsSync(tempPath)) {
         return c.json({ error: "no-chunks" }, 400);
@@ -103,18 +147,12 @@ export async function uploadRoute(c: Context) {
 
       await mkdir(path.dirname(finalPath), { recursive: true });
       await rename(tempPath, finalPath);
-      return c.json({ status: "upload-complete", path: data.file_path });
+      return c.json({ status: "upload-complete", path: pathCheck.normalized });
     }
 
     return c.json({ error: "unknown-op" }, 400);
-  } catch (err: any) {
-    return c.json({ error: "internal", detail: err.message }, 500);
-  }
-}
-
-export function resetSyncKey() {
-  if (syncKey) {
-    syncKey.fill(0);
-    syncKey = null;
+  } catch {
+    // Do not leak internal error details to the client (info disclosure).
+    return c.json({ error: "internal" }, 500);
   }
 }

@@ -1,0 +1,40 @@
+#!/bin/bash
+# XFCE launcher for the KasmVNC remote desktop.
+#
+# Two reliability fixes baked in (both verified empirically in the container):
+#
+# 1. Wait for the X server (display :1) before launching. Otherwise startxfce4
+#    races the KasmVNC X server during supervisord startup and the window
+#    manager / panel fail to attach.
+#
+# 2. Launch via `dbus-run-session`. XFCE needs a real per-session D-Bus bus to
+#    orchestrate xfwm4 + xfce4-panel + xfdesktop. Relying on
+#    DBUS_SESSION_BUS_ADDRESS=autolaunch: is flaky in a container and leaves the
+#    session with only xfce4-session running (black screen, no WM/panel).
+set -u
+
+export DISPLAY=:1
+export HOME=/workspace/.desktop
+export XDG_CONFIG_HOME=/workspace/.desktop/.config
+export XDG_DATA_HOME=/workspace/.desktop/.local/share
+export XDG_CACHE_HOME=/tmp/.desktop-cache
+
+# Proxy settings for GUI apps (Firefox, Chromium, etc.)
+export http_proxy=http://127.0.0.1:7890
+export https_proxy=http://127.0.0.1:7890
+export all_proxy=socks5://127.0.0.1:7890
+export no_proxy=localhost,127.0.0.0/8,172.16.0.0/12,10.0.0.0/8
+export HTTP_PROXY=$http_proxy
+export HTTPS_PROXY=$https_proxy
+export ALL_PROXY=$all_proxy
+export NO_PROXY=$no_proxy
+
+# Wait up to 30s for the X server on :1 to accept connections.
+for _ in $(seq 1 60); do
+  if xdpyinfo -display :1 >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.5
+done
+
+exec dbus-run-session -- /usr/bin/startxfce4

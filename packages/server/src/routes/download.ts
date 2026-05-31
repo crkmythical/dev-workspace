@@ -2,6 +2,7 @@ import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import type { Context } from "hono";
 import { PNG_HEADER, SHARED_DIR } from "../../../core/src/constants.ts";
+import { checkRelativePath } from "../../../core/src/path-safety.ts";
 
 export async function downloadRoute(c: Context) {
   const filePath = c.req.query("path");
@@ -25,8 +26,13 @@ export async function downloadRoute(c: Context) {
     }
   }
 
-  // Download specific file
-  const fullPath = path.join(SHARED_DIR, filePath);
+  // Download specific file. `filePath` is attacker-influenced query input and
+  // must be validated to stay within SHARED_DIR (defense-in-depth traversal).
+  const pathCheck = checkRelativePath(filePath);
+  if (!pathCheck.ok) {
+    return c.json({ error: "not-found" }, 404);
+  }
+  const fullPath = path.join(SHARED_DIR, pathCheck.normalized);
   try {
     const data = await readFile(fullPath);
     // Wrap with PNG header for camouflage

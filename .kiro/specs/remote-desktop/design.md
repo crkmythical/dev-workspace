@@ -2,13 +2,31 @@
 
 ## Overview
 
-为 dev-workspace 添加浏览器可访问的完整 Linux 桌面环境。使用 KasmVNC 作为传输层，Xvfb 作为虚拟显示，Openbox 作为窗口管理器。桌面环境按需启动，所有应用配置存储在 gocryptfs 加密层内。
+为 dev-workspace 添加浏览器可访问的完整 Linux 桌面环境。使用 KasmVNC 的集成 `Xkasmvnc`（X server + VNC + 内置 web 服务器）作为传输与显示层，XFCE4 作为桌面环境。桌面环境按需启动，所有应用配置存储在 gocryptfs 加密层内。
 
 设计原则：
 - **按需启动**：桌面不是必须的，不用时零资源消耗
 - **加密一致**：GUI 应用配置享受与代码相同的加密保护
 - **无缝集成**：共享 workspace、proxy、tunnel，不引入新的访问入口
-- **轻量优先**：基础设施 < 250MB，不预装重型应用
+- **故障面最小**：用 Xkasmvnc 单进程取代 Xvfb+独立 VNC；XFCE 经 dbus-run-session 启动保证会话总线可靠
+
+### 显示服务器选型：X11（非 Wayland）—— 架构硬约束
+
+KasmVNC 的传输层**本质是一个 X server**，不是 Wayland compositor。官方文档原文：
+"KasmVNC utilizes its own Xorg server with a virtual frame buffer running in
+Linux userspace."（GPU Acceleration 页）；容器内 `Xkasmvnc -help` 输出
+`use: X [:<display>]`，并注册为 `/usr/bin/Xvnc`。因此：
+
+- 桌面与应用必须经 **X11 协议**连到 `:1`；KasmVNC 不实现 Wayland 协议，无 Wayland 后端
+- 换 Wayland 需替换整条传输链（如 wayvnc + headless compositor），将**丢失 KasmVNC
+  的核心优势**：WebP 自适应编码、帧差分、内置 web 客户端、剪贴板/文件双向同步
+- 远程桌面场景下 X11 的网络透明性本就是优势；Wayland 刻意移除网络透明，所有远程
+  方案都要再加一层 screencopy+编码（等于重解 X11 已解决的问题），且需 XWayland 兜底
+  老旧/渗透 GUI 工具的兼容性 —— 净效应为负
+- **XFCE 是原生 X11 桌面**（xfwm4 为 X11 WM），与 Xkasmvnc 天然契合，无需 XWayland 转译；
+  实测空闲 ~438MB、≈0% CPU、崩溃可自愈
+- Wayland 仅在未来迁移到带 GPU 的物理 Linux 机、且更换 KasmVNC 传输层时才值得重评
+  （见 tasks.md「未来增强：GPU passthrough」）
 
 ## Architecture
 
@@ -18,18 +36,21 @@
 浏览器
 ├── /              → Caddy → code-server (:8082)     ← IDE
 ├── /sync/*        → Caddy → sync-service (:8081)    ← 文件同步
-└── /desktop/*     → Caddy → KasmVNC (:6080)         ← 远程桌面 (NEW)
+├── /desktop/*     → Caddy(basic_auth) → Xkasmvnc (:6080)   ← 远程桌面静态客户端
+└── /websockify    → Caddy(basic_auth) → Xkasmvnc (:6080)   ← 桌面 WebSocket
                                 │
-                                ▼ WebSocket
-                         KasmVNC Server
+                                ▼ (单进程：X + VNC + httpd)
+                         Xkasmvnc :1 (1920x1080x24)
                                 │
-                                ▼ X11 protocol
-                         Xvfb (:1, 1920x1080x24)
+                         dbus-run-session
                                 │
-                         Openbox (窗口管理)
-                         tint2 (任务栏)
+                         XFCE4 (xfwm4 + xfce4-panel + xfdesktop)
                          GUI 应用 (用户安装)
 ```
+
+> 注：noVNC 客户端（ui.js）把 WebSocket 路径硬编码为根路径 `/websockify`（从
+> `window.location.hostname` 推导，忽略 `/desktop/` 子路径）。因此 Caddy 必须同时
+> 路由根 `/websockify` 与 `/desktop/*` 到 Xkasmvnc。两者都经 Basic Auth 保护。
 
 ### 进程树（桌面运行时）
 
@@ -40,11 +61,15 @@ supervisord
 ├── sync-service
 ├── vault-sync-cron
 ├── clash-watcher
-└── desktop (NEW — supervisord program, autostart=false)
-    ├── Xvfb :1 -screen 0 ${RESOLUTION}x24
-    ├── openbox --config-file /workspace/.desktop/.config/openbox/rc.xml
-    ├── tint2 -c /workspace/.desktop/.config/tint2/tint2rc
-    └── kasmvnc_server -websocketPort 6080 -display :1 ...
+└── desktop (NEW — supervisord group, autostart=false)
+    ├── desktop-xvnc:  Xkasmvnc :1 -geometry ${RESOLUTION} -depth 24
+    │                    -websocketPort 6080 -httpd /usr/share/kasmvnc/www
+    │                    -SecurityTypes None -DisableBasicAuth ...
+    └── desktop-xfce:  start-xfce.sh
+                         └── (waits for :1) dbus-run-session -- startxfce4
+                               ├── xfwm4 (窗口管理)
+                               ├── xfce4-panel (面板)
+                               └── xfdesktop (桌面)
 ```
 
 ### 文件系统布局
