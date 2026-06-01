@@ -118,8 +118,11 @@ async function gracefulStop() {
 // ─── Backup execution ────────────────────────────────────────────────────────
 
 async function runBackup() {
+  if (backupInFlight) return; // guard against re-entry from setInterval overlap
   backupInFlight = true;
   lastTriggerMs = Date.now();
+  // Clear pending flag for THIS backup cycle — we only care about events
+  // that arrive DURING this backup, not before it.
   pendingDuringFlight = false;
 
   const excludeArgs = BACKUP_EXCLUSION_SET.flatMap((p) => ["--exclude", p]);
@@ -141,13 +144,15 @@ async function runBackup() {
       },
     );
 
+    // Save stderr ref before nulling resticProc (needed for failure reporting)
+    const stderrStream = resticProc.stderr;
     const exitCode = await resticProc.exited;
     resticProc = null;
 
     if (exitCode === 0) {
-      onBackupSuccess();
+      await onBackupSuccess();
     } else {
-      const stderr = await new Response(resticProc?.stderr ?? "").text().catch(() => "");
+      const stderr = await new Response(stderrStream).text().catch(() => "");
       onBackupFailure(stderr);
     }
   } catch (err) {
@@ -164,7 +169,7 @@ async function runBackup() {
   }
 }
 
-function onBackupSuccess() {
+async function onBackupSuccess() {
   consecutiveFailures = 0;
   lastFailureMs = null;
   writeFileSync(`${BACKUP_STATE_DIR}/last-success`, new Date().toISOString());
@@ -176,7 +181,7 @@ function onBackupSuccess() {
     nowMs: Date.now(),
   });
   if (pruneDecision === "prune-due") {
-    runPrune();
+    await runPrune();
   }
 }
 
