@@ -39,4 +39,9 @@ for _ in $(seq 1 60); do
   sleep 0.5
 done
 
+# Set consistent DPI for both stacks. Selkies runs a 4K framebuffer with
+# adaptive resize — force 96 DPI so XFCE renders at standard size regardless
+# of the framebuffer dimensions. KasmVNC also benefits from explicit DPI.
+xrandr --dpi 96 2>/dev/null || true
+
 exec dbus-run-session -- /usr/bin/startxfce4

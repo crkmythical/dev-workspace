@@ -49,6 +49,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     cron \
     curl \
+    bzip2 \
     jq \
     tmux \
     bash \
@@ -249,7 +250,7 @@ RUN cp /opt/workspace/image/etc/desktop/start-xfce.sh /usr/local/bin/start-xfce.
 
 # Copy monorepo packages (workspace code)
 COPY packages/ /opt/workspace/packages/
-COPY package.json bunfig.toml /opt/workspace/
+COPY package.json bunfig.toml bun.lock /opt/workspace/
 WORKDIR /opt/workspace
 RUN bun install --frozen-lockfile 2>/dev/null || bun install
 

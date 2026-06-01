@@ -1,121 +1,155 @@
 # Secure Dev Workspace
 
-Encrypted, cloud-ready development environment with remote desktop, code-server, and proxy.
+加密、云端就绪的开发环境，集成远程桌面、Code Server 和代理。
 
-## Quick Start
+## 快速开始
 
 ```bash
-# 1. Configure (copy and edit .env)
+# 1. 配置环境变量
 cp .env.example .env
-# Set PASSWORD (or leave empty for auto-generated)
-# Set CLASH_SUBSCRIPTION_URL (required)
+# 设置 PASSWORD（留空则自动生成）
+# 设置 CLASH_SUBSCRIPTION_URL（必填）
 
-# 2. Build & Run
+# 2a. 本地构建运行
 docker compose build
 docker compose up -d
 
-# 3. Access
+# 2b. 或拉取 CI 预构建镜像
+docker compose pull
+docker compose up -d
+
+# 3. 访问
 # Code:    http://localhost:18080
-# Desktop: http://localhost:18080/desktop/   (Selkies, H.264)
+# 桌面:    http://localhost:18080/desktop/   (Selkies, H.264)
 # VNC:     http://localhost:18080/vnc/        (KasmVNC)
-# Auth:    user / <your PASSWORD>
+# 认证:    user / <你的 PASSWORD>
 ```
 
-## Rebuild / Reset
+## 重建 / 重置
 
 ```bash
-# Stop
+# 停止
 docker compose down
 
-# Rebuild (after code changes)
+# 重建（代码变更后）
 docker compose build
 docker compose up -d
 
-# Full reset (wipe vault data)
+# 完全重置（清除 vault 数据）
 docker compose down
 docker volume rm dev-workspace_vault-data
 docker compose build --no-cache
 docker compose up -d
 ```
 
-## Features
+## 功能
 
-- **Dual Remote Desktop** — two independent desktops run in parallel:
-  - **Selkies** (`/desktop/`) — H.264/WebCodecs streaming, best for low-latency localhost.
-    Auto-fits the browser window (adaptive resolution); no fixed size to configure.
-  - **KasmVNC** (`/vnc/`) — VNC-over-WebSocket, robust over high-latency tunnels
-- **Code Server** — VS Code in browser
-- **Encrypted Vault** — gocryptfs auto-init/unlock
-- **Proxy** — Clash global mode (all traffic through proxy)
-- **Audio** — PulseAudio null-sink for desktop audio streaming
-- **Base** — Kali Linux (pentest tools available via apt)
+- **双远程桌面** — 两个独立桌面并行运行：
+  - **Selkies** (`/desktop/`) — H.264/WebCodecs 流式传输，低延迟本地访问最佳。自适应浏览器窗口大小，无需配置分辨率。
+  - **KasmVNC** (`/vnc/`) — VNC-over-WebSocket，高延迟隧道下更稳定
+- **Code Server** — 浏览器中的 VS Code
+- **加密 Vault** — gocryptfs 自动初始化/解锁
+- **代理** — Clash 全局模式（所有流量走代理）
+- **音频** — PulseAudio null-sink 桌面音频流
+- **基础系统** — Kali Linux（可通过 apt 安装渗透测试工具）
 
-## Build Options
+## 构建选项
 
 ```bash
-# Both desktops (default) — selkies + kasmvnc in parallel
+# 双桌面（默认）— selkies + kasmvnc 并行
 docker compose build
 
-# Single stack (fallback)
-DESKTOP_STACK=selkies docker compose build   # selkies only
-DESKTOP_STACK=kasmvnc docker compose build   # kasmvnc only
+# 单栈（备选）
+DESKTOP_STACK=selkies docker compose build   # 仅 selkies
+DESKTOP_STACK=kasmvnc docker compose build   # 仅 kasmvnc
 
-# Debian trixie base instead of Kali
+# 使用 Debian trixie 替代 Kali 作为基础镜像
 docker compose build --build-arg BASE_IMAGE=debian:trixie-slim
 ```
 
-## Commands (inside container)
+## 容器内命令
 
 ```bash
-doctor              # Health check (reports both desktops + backup)
-noproxy <cmd>       # Run command bypassing proxy (direct network)
-lock-vault          # Lock the encrypted workspace (stops desktops + backup first)
-unlock-vault        # Unlock with password
-desktop-start       # Start all installed desktops
-desktop-start vnc   # Start only the KasmVNC desktop
-desktop-stop        # Stop all desktops
-desktop-stop selkies # Stop only the Selkies desktop
-backup-init         # Initialize restic repo (auto-runs on first boot if configured)
+doctor              # 健康检查（报告双桌面 + 备份状态）
+noproxy <cmd>       # 绕过代理直连执行命令
+lock-vault          # 锁定加密工作区（先停止桌面和备份）
+unlock-vault        # 输入密码解锁
+desktop-start       # 启动所有已安装桌面
+desktop-start vnc   # 仅启动 KasmVNC 桌面
+desktop-stop        # 停止所有桌面
+desktop-stop selkies # 仅停止 Selkies 桌面
+backup-init         # 初始化 restic 仓库（配置后首次启动自动执行）
 ```
 
-## Authentication
+## 认证
 
-All endpoints share the same credentials (`user` / your `PASSWORD`):
+所有端点共享相同凭证（`user` / 你的 `PASSWORD`）：
 
-- **Code-server** and **Selkies** (`/desktop/`) are gated by Caddy (realm `restricted`).
-- **KasmVNC** (`/vnc/`) uses its own native auth (realm `Websockify`).
+- **Code-server** 和 **Selkies** (`/desktop/`) 由 Caddy 网关认证（realm `restricted`）
+- **KasmVNC** (`/vnc/`) 使用原生认证（realm `Websockify`）
 
-Because KasmVNC owns its auth realm, the browser prompts for it separately from
-Selkies — same username/password, just one extra prompt. This is required:
-browsers do not replay Caddy's basic-auth credentials to the VNC WebSocket
-handshake, so KasmVNC must authenticate the WebSocket itself.
+由于 KasmVNC 拥有独立的认证域，浏览器会单独弹出一次认证提示 — 用户名密码相同，只是多一次输入。这是必要的：浏览器不会将 Caddy 的 basic-auth 凭证转发给 VNC WebSocket 握手。
 
-## Remote Access (Cloudflare Tunnel)
+## 远程访问（Cloudflare Tunnel）
 
-Expose the workspace to the internet via Cloudflare Tunnel (zero inbound ports):
+通过 Cloudflare Tunnel 暴露工作区到公网（零入站端口）：
 
 ```bash
-# One-time setup (run on host machine, not inside container)
+# 一次性配置（在宿主机执行，非容器内）
 ./scripts/setup-cloudflared.sh
 
-# Access from anywhere:
+# 从任何地方访问：
 # https://workspace.cicd.dpdns.org
 # https://workspace.cicd.dpdns.org/desktop/   (Selkies)
 # https://workspace.cicd.dpdns.org/vnc/        (KasmVNC)
 ```
 
-The tunnel auto-starts on macOS login via LaunchAgent. No port forwarding needed.
+Tunnel 通过 macOS LaunchAgent 开机自启，无需端口转发。
 
-## Environment Variables (.env)
+## 环境变量 (.env)
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| PASSWORD | (auto-generated) | Unified password for code-server, desktop, and vault |
-| CLASH_SUBSCRIPTION_URL | (required) | Clash proxy subscription URL |
-| DESKTOP_RESOLUTION | 1920x1080 | KasmVNC (`/vnc/`) geometry. Selkies (`/desktop/`) ignores this — it auto-fits the browser window (adaptive). |
-| DESKTOP_AUDIO | 1 | Enable PulseAudio (0 to disable) |
-| TUNNEL_HOST_PORT | 18080 | Host port mapping |
-| RESTIC_REPOSITORY | (empty) | S3 backup repo URL. Presence enables realtime backup. |
-| RESTIC_PASSWORD | (empty) | Backup repo encryption password |
-| AWS_ACCESS_KEY_ID | (empty) | S3 credentials for backup |
-| AWS_SECRET_ACCESS_KEY | (empty) | S3 credentials for backup |
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| PASSWORD | (自动生成) | 统一密码，用于 code-server、桌面和 vault |
+| CLASH_SUBSCRIPTION_URL | (必填) | Clash 代理订阅地址 |
+| DESKTOP_RESOLUTION | 1920x1080 | KasmVNC (`/vnc/`) 分辨率。Selkies (`/desktop/`) 忽略此项（自适应）。 |
+| DESKTOP_AUDIO | 1 | 启用 PulseAudio（0 禁用） |
+| TUNNEL_HOST_PORT | 18080 | 宿主机端口映射 |
+| RESTIC_REPOSITORY | (空) | S3 备份仓库 URL，设置后启用实时备份 |
+| RESTIC_PASSWORD | (空) | 备份仓库加密密码 |
+| AWS_ACCESS_KEY_ID | (空) | S3 备份凭证 |
+| AWS_SECRET_ACCESS_KEY | (空) | S3 备份凭证 |
+
+## CI/CD（GitHub Actions）
+
+镜像在推送 `v*` tag 时自动构建并推送，配置文件：`.github/workflows/build-image.yml`。
+
+- **多架构**：`linux/amd64` + `linux/arm64`（原生 runner，无 QEMU 模拟）
+- **Registry**：GHCR（始终推送）+ Docker Hub（配置 secrets 后自动推送）
+- **缓存**：按架构分离的 registry cache（GHCR 上的 `cache-amd64` / `cache-arm64` tag）
+
+### 配置步骤
+
+1. 在 GitHub repo **Settings → Secrets and variables → Actions** 中添加：
+   - `DOCKERHUB_USERNAME` — Docker Hub 用户名
+   - `DOCKERHUB_TOKEN` — Docker Hub Access Token（在 hub.docker.com → Account Settings → Security 生成）
+   - GHCR 无需额外配置，`GITHUB_TOKEN` 自带 `packages:write` 权限
+
+2. 打 tag 触发构建：
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+3. 拉取构建好的镜像：
+
+```bash
+# 从 GHCR
+docker pull ghcr.io/<owner>/dev-workspace:latest
+
+# 从 Docker Hub
+docker pull <username>/dev-workspace:latest
+```
+
+也可通过 Actions → "Run workflow" 手动触发，支持选择 desktop stack。
