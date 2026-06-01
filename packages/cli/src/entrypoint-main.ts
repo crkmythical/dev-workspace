@@ -218,7 +218,7 @@ if (bcryptHash) {
 // 8b. Auto-vault: init (if needed) + unlock (if not mounted) using masterPassword
 import { initVault, isInitialized, mountVault } from "./lib/vault.ts";
 import { VAULT_CIPHER_DIR, WORKSPACE_MOUNT, SELKIES_HOME, VNC_HOME } from "@sdw/core/constants";
-import { installedStacks } from "./lib/desktop.ts";
+import { ensureKasmPasswd, installedStacks } from "./lib/desktop.ts";
 
 const vaultInitialized = isInitialized(VAULT_CIPHER_DIR);
 if (!vaultInitialized) {
@@ -242,20 +242,10 @@ if (mountCheck.exitCode !== 0 && (vaultInitialized || isInitialized(VAULT_CIPHER
     }
     if (stacks.includes("vnc")) {
       mkdirSync(`${VNC_HOME}/.local/share/applications`, { recursive: true });
-      // KasmVNC native HTTP Basic Auth reads $HOME/.kasmpasswd. Write the master
-      // password there (user "user") so the /vnc/ WS upgrade authenticates with
-      // the same credentials as code-server/selkies. KasmVNC owns its WS auth;
-      // Caddy does NOT gate /vnc/ (browsers don't replay Caddy creds to the WS).
-      const kasmpasswd = `${VNC_HOME}/.kasmpasswd`;
-      const pwProc = Bun.spawn(["kasmvncpasswd", "-u", "user", "-w", "-r", kasmpasswd], {
-        stdin: "pipe",
-        stdout: "ignore",
-        stderr: "ignore",
-      });
-      pwProc.stdin.write(`${masterPassword}\n${masterPassword}\n`);
-      await pwProc.stdin.end();
-      await pwProc.exited;
-      await $`chmod 0600 ${kasmpasswd}`.quiet().nothrow();
+      // KasmVNC native HTTP Basic Auth reads $VNC_HOME/.kasmpasswd. Provision it
+      // with the master password so the /vnc/ WS upgrade authenticates with the
+      // same credentials as code-server/selkies (KasmVNC owns its WS auth).
+      await ensureKasmPasswd(masterPassword);
     }
     // Patch every desktop group conf (one-shot sed; only files that exist).
     await $`sh -c "sed -i 's/autostart=false/autostart=true/g' /etc/supervisor/conf.d/desktop.conf /etc/supervisor/conf.d/vnc.conf 2>/dev/null || true"`

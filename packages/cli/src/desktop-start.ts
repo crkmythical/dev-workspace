@@ -7,7 +7,7 @@
  *   desktop-start selkies    start only the selkies stack (/desktop/)
  *   desktop-start vnc        start only the kasmvnc stack (/vnc/)
  */
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import {
   DESKTOP_CACHE_DIR,
   SELKIES_HOME,
@@ -17,6 +17,7 @@ import {
 import { $ } from "bun";
 import {
   type DesktopTarget,
+  ensureKasmPasswd,
   installedStacks,
   isDesktopRunning,
   startDesktop,
@@ -27,6 +28,18 @@ const URL_FOR: Record<DesktopTarget, string> = {
   selkies: "/desktop/",
   vnc: "/vnc/",
 };
+
+/**
+ * Read the master password from code-server's config (the runtime SSOT) so a
+ * manual `desktop-start vnc` can provision KasmVNC's .kasmpasswd if missing
+ * (the entrypoint already does this on auto-start). Returns "" if unavailable.
+ */
+function masterPasswordFromConfig(): string {
+  const csConfigPath = "/root/.config/code-server/config.yaml";
+  if (!existsSync(csConfigPath)) return "";
+  const m = readFileSync(csConfigPath, "utf-8").match(/^password:\s*(.+)$/m);
+  return m ? m[1].trim() : "";
+}
 
 const mountCheck = await $`mountpoint -q ${WORKSPACE_MOUNT}`.quiet().nothrow();
 if (mountCheck.exitCode !== 0) {
@@ -54,6 +67,11 @@ if (targets.includes("selkies")) {
 }
 if (targets.includes("vnc")) {
   mkdirSync(`${VNC_HOME}/.local/share/applications`, { recursive: true });
+  // Provision KasmVNC's native auth file if missing (entrypoint does this on
+  // auto-start; this covers a manual `desktop-start vnc`).
+  if (!existsSync(`${VNC_HOME}/.kasmpasswd`)) {
+    await ensureKasmPasswd(masterPasswordFromConfig());
+  }
 }
 
 for (const target of targets) {

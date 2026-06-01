@@ -104,7 +104,6 @@ export const DESTRUCT_RESPONSE_DELAY_MS = 200;
 
 // Remote desktop (Selkies stream)
 export const DESKTOP_HOME = "/workspace/.desktop";
-export const DESKTOP_CONFIG_DIR = "/workspace/.desktop/.config";
 export const DESKTOP_CACHE_DIR = "/tmp/.desktop-cache";
 export const DESKTOP_APPS_DIR = "/opt/desktop-apps";
 export const DESKTOP_APPS_REGISTRY = "/opt/desktop-apps/.registry.json";
@@ -130,6 +129,5 @@ export const SELKIES_HOME = DESKTOP_HOME; // /workspace/.desktop
 export const VNC_STREAM_PORT = 6081;
 export const VNC_DISPLAY = ":2";
 export const VNC_HOME = "/workspace/.desktop-vnc";
-export const VNC_CONFIG_DIR = "/workspace/.desktop-vnc/.config";
 /** Path where the static KasmVNC web client is served from (its own .deb). */
 export const VNC_WEB_ROOT = "/usr/share/kasmvnc/www";

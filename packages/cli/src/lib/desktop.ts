@@ -20,7 +20,7 @@
  * FUSE unmount (EBUSY safety).
  */
 import { existsSync, readFileSync } from "node:fs";
-import { SELKIES_STREAM_PORT, VNC_STREAM_PORT } from "@sdw/core/constants";
+import { SELKIES_STREAM_PORT, VNC_HOME, VNC_STREAM_PORT } from "@sdw/core/constants";
 import { $ } from "bun";
 
 /** A single desktop stack target. */
@@ -191,4 +191,28 @@ export async function waitForDesktopStream(
     await Bun.sleep(1000);
   }
   return false;
+}
+
+/**
+ * Write KasmVNC's native HTTP Basic Auth password file at $VNC_HOME/.kasmpasswd
+ * (user "user") from the given plaintext password. KasmVNC owns the /vnc/ and
+ * /websockify auth end-to-end (Caddy does not gate it — browsers won't replay
+ * Caddy creds to a JS WebSocket handshake), so this file must exist for the VNC
+ * desktop to authenticate. Idempotent: `kasmvncpasswd -w -r` overwrites cleanly.
+ *
+ * Shared by the entrypoint (auto-start path) and `desktop-start` (manual path)
+ * so the credential-provisioning logic lives in exactly one place.
+ */
+export async function ensureKasmPasswd(password: string): Promise<void> {
+  if (!password) return;
+  const kasmpasswd = `${VNC_HOME}/.kasmpasswd`;
+  const proc = Bun.spawn(["kasmvncpasswd", "-u", "user", "-w", "-r", kasmpasswd], {
+    stdin: "pipe",
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  proc.stdin.write(`${password}\n${password}\n`);
+  await proc.stdin.end();
+  await proc.exited;
+  await $`chmod 0600 ${kasmpasswd}`.quiet().nothrow();
 }

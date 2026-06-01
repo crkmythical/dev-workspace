@@ -828,3 +828,26 @@ use different auth realms with the SAME username/password. The browser therefore
 prompts for KasmVNC separately. Attempting to unify the realm by moving KasmVNC
 auth to Caddy breaks the WebSocket in Safari (point 4 above), so the separate
 prompt is the deliberate, correct trade-off for a working VNC stream.
+
+### Post-implementation refactor (2026-06-01)
+
+Cleanup pass after Task 15, keeping the dual-desktop behavior identical:
+
+- **`ensureKasmPasswd(password)` SSOT.** The KasmVNC `.kasmpasswd` provisioning
+  logic (write `$VNC_HOME/.kasmpasswd` via `kasmvncpasswd -u user -w -r`) was
+  duplicated in `entrypoint-main.ts` and `desktop-start.ts`. Extracted to a
+  single exported helper in `desktop.ts`. The entrypoint passes the master
+  password directly; `desktop-start` reads it from code-server's config (runtime
+  SSOT) only when the file is missing (manual `desktop-start vnc`).
+- **`desktop-install` writes to `/usr/share/applications`** (system-wide) instead
+  of a single stack's `$HOME/.local/share/applications`. Second-order fix: an app
+  installed while both desktops run must appear in BOTH XFCE menus (:1 and :2);
+  writing into one stack's HOME hid it from the other.
+- **Dead constants removed:** `DESKTOP_CONFIG_DIR`, `VNC_CONFIG_DIR` (declared,
+  never imported). The `SELKIES_*`/`DESKTOP_*` aliases are kept intentionally
+  (backward-compat for doctor/tests).
+- **Repo hygiene:** removed 262MB of unused offline-mode tarballs
+  (`image/{node-v20,zulu-jdk17,python312}.tar.gz`, untracked) and the orphaned
+  `Dockerfile.desktop-poc` + `docker-compose.desktop-poc.yml` PoC artifacts.
+  `Dockerfile.aliyun` (restricted-network base) and `Dockerfile.kasmvnc-test`
+  + its compose (debugging harness) are retained.
