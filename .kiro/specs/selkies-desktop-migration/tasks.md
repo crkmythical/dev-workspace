@@ -127,8 +127,10 @@ Key facts baked in (all PoC-verified):
       **Resolution: switch base image bookworm → trixie** (libva 2.22 native, matches the
       LSIO debiantrixie reference). Verified `.so` loads + "SUCCESS: Capture started" + live frames.
     - Note: latency over the Cloudflare tunnel is dominated by geographic RTT (CN client →
-      LAX edge ≈ 350ms/RT), NOT the encoder. localhost is ~4ms ("質的飛跃"). This is an
-      inherent property of the single-tunnel zero-inbound model, not a desktop-stack defect.
+      LAX edge ≈ 350ms/RT), NOT the encoder — this is an inherent property of the
+      single-tunnel zero-inbound model, not a desktop-stack defect. (localhost latency
+      was NOT benchmarked against KasmVNC; on loopback both are bottlenecked by the
+      encode/decode path, not the link — treat them as comparable until measured.)
   - [x] 11.5 FUSE safety: start desktop → lock-vault → unmount without EBUSY
     - Verified by design: stop order (xfce→selkies→xvfb) unchanged; tested in unit tests
   - [x] 11.6 Doctor reports all components correctly (up and down)
