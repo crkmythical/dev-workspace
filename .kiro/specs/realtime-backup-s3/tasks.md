@@ -19,52 +19,52 @@ Key design decisions baked in:
 
 ## Tasks
 
-- [ ] 1. Core pure logic (`packages/core/src/backup.ts`)
-  - [ ] 1.1 Create `packages/core/src/backup.ts` with all constants and pure functions
+- [x] 1. Core pure logic (`packages/core/src/backup.ts`)
+  - [x] 1.1 Create `packages/core/src/backup.ts` with all constants and pure functions
     - Constants: `BACKUP_DEBOUNCE_MS`, `BACKUP_FALLBACK_INTERVAL_MS`, `BACKUP_STATE_DIR`, `BACKUP_FAILURE_THRESHOLD`, `BACKUP_STALENESS_MS`, `BACKUP_MAX_RETRIES`, `BACKUP_BASE_BACKOFF_MS`, `BACKUP_KEEP_HOURLY`, `BACKUP_KEEP_DAILY`, `BACKUP_KEEP_WEEKLY`, `BACKUP_PRUNE_CADENCE_MS`, `BACKUP_EXCLUSION_SET`
     - Types: `DebounceDecision`, `DebounceState` (includes `consecutiveFailures` + `lastFailureMs` for backoff), `PruneDecision`, `PruneState`, `BackupGateEnv`, `GateResult`, `DoctorBackupStatus`, `DoctorBackupState`
     - Functions: `planDebounce`, `planPrune`, `backoffDelayMs`, `evaluateBackupGate`, `shouldNotify`, `planDoctorBackupStatus`, `isExcludedPath`
     - `planDebounce` logic: `backupInFlight` → `"coalesce"`; `lastTriggerMs === null` → `"trigger"` (immediate baseline); within backoff window (`consecutiveFailures > 0` AND `nowMs - lastFailureMs < backoffDelayMs(consecutiveFailures)`) → `"wait"`; fallback ≥ 5min → `"trigger"`; `lastEventMs === null` → `"wait"`; quiet ≥ 10s → `"trigger"`; else `"wait"`
     - `isExcludedPath` splits on `/` and checks ALL segments against `BACKUP_EXCLUSION_SET`
     - _Requirements: 1.6, 3.4, 6.3, 7.1, 13.4, 14.1, 15.1, 15.2, 15.3, 15.4_
-  - [ ] 1.2 Export from barrel (`packages/core/src/index.ts`)
+  - [x] 1.2 Export from barrel (`packages/core/src/index.ts`)
     - Add `export * from "./backup.ts"`
     - _Requirements: 15.3_
 
-- [ ] 2. Property-based tests (`packages/core/tests/backup.property.test.ts`)
-  - [ ] 2.1 Property 1: Debounce trigger correctness
+- [x] 2. Property-based tests (`packages/core/tests/backup.property.test.ts`)
+  - [x] 2.1 Property 1: Debounce trigger correctness
     - Generate random `DebounceState` with `backupInFlight=false`; assert trigger iff (`lastTriggerMs === null` OR (quiet ≥ 10s AND not in backoff) OR (fallback ≥ 5min AND not in backoff)); assert `"wait"` when within backoff window
     - **Property 1: Debounce trigger correctness**
     - **Validates: Requirements 1.1, 1.2, 1.7, 7.1**
-  - [ ] 2.2 Property 2: In-flight coalesce invariant
+  - [x] 2.2 Property 2: In-flight coalesce invariant
     - Generate random states with `backupInFlight=true`; assert always `"coalesce"`
     - **Property 2: In-flight coalesce invariant**
     - **Validates: Requirements 1.4, 1.5**
-  - [ ] 2.3 Property 3: Exclusion path filtering
+  - [x] 2.3 Property 3: Exclusion path filtering
     - Generate random paths with/without exclusion segments; assert correct classification; test nested paths (e.g. `project/node_modules/pkg/index.js`)
     - **Property 3: Exclusion path filtering**
     - **Validates: Requirements 3.1, 3.3**
-  - [ ] 2.4 Property 4: Retention plan schedule
+  - [x] 2.4 Property 4: Retention plan schedule
     - Generate random `PruneState`; assert `"prune-due"` iff `lastPruneMs === null` OR elapsed ≥ cadence
     - **Property 4: Retention plan schedule**
     - **Validates: Requirements 6.2**
-  - [ ] 2.5 Property 5: Exponential backoff computation
+  - [x] 2.5 Property 5: Exponential backoff computation
     - Generate random failure counts; assert `BACKUP_BASE_BACKOFF_MS * 2^min(n, 4)`
     - **Property 5: Exponential backoff computation**
     - **Validates: Requirements 7.1**
-  - [ ] 2.6 Property 6: Failure notification threshold
+  - [x] 2.6 Property 6: Failure notification threshold
     - Generate random failure counts; assert `shouldNotify` iff `n >= BACKUP_FAILURE_THRESHOLD`
     - **Property 6: Failure notification threshold**
     - **Validates: Requirements 7.5**
-  - [ ] 2.7 Property 7: Opt-in gate evaluation
+  - [x] 2.7 Property 7: Opt-in gate evaluation
     - Generate random env objects; assert dormant/misconfigured/enabled per spec
     - **Property 7: Opt-in gate evaluation**
     - **Validates: Requirements 10.2, 13.1, 13.3, 13.4**
-  - [ ] 2.8 Property 8: Doctor backup status
+  - [x] 2.8 Property 8: Doctor backup status
     - Generate random `DoctorBackupState`; assert status matches decision table
     - **Property 8: Doctor backup status**
     - **Validates: Requirements 14.1, 14.2, 14.3, 14.4**
-  - [ ] 2.9 Property 9: Backoff monotonically non-decreasing
+  - [x] 2.9 Property 9: Backoff monotonically non-decreasing
     - Generate pairs `a < b` (both ≤ 4); assert `backoffDelayMs(a) <= backoffDelayMs(b)`
     - **Property 9: Backoff is monotonically non-decreasing**
     - **Validates: Requirements 7.1**

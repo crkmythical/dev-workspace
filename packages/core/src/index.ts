@@ -1,5 +1,6 @@
 export * from "./types.ts";
 export * from "./constants.ts";
+export * from "./backup.ts";
 export * from "./aad.ts";
 export * from "./reconcile.ts";
 export * from "./replay-window.ts";
