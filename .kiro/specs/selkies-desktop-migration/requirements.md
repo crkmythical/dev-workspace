@@ -35,6 +35,9 @@ Each requirement carries a **Traceability** line mapping it back to the design's
 - **CODE_SERVER_PORT**: The code-server port **8082** (which is why Selkies cannot use its own 8082 default).
 - **DESKTOP_DISPLAY**: The shared X display `:1`.
 - **DESKTOP_STACK**: The build argument selecting the desktop stack (`selkies` default, or `kasmvnc` fallback).
+- **Adaptive_Resolution**: The behavior where the Selkies_Stream resizes the X display to match the client browser window. The client sends `r,<width>x<height>,<displayId>` over the WebSocket on window resize; the server's `reconfigure_displays()` synthesizes an xrandr modeline (via `cvt`) and applies it. Gated by `SELKIES_IS_MANUAL_RESOLUTION_MODE`.
+- **Selkies_Canvas**: The Xvfb `-screen` size for the selkies display. It is a HARD framebuffer ceiling that cannot grow at runtime; the client can only resize to sizes within it. Decoupled from DESKTOP_RESOLUTION and fixed at 3840x2160 (4K).
+- **cvt**: The CVT-timing modeline generator (apt package `xcvt`) that Selkies' `reconfigure_displays()` invokes to create xrandr modes for non-preset resolutions. Without it (or `gtf`), adaptive resize aborts.
 
 ## Requirements
 
@@ -263,3 +266,20 @@ Each requirement carries a **Traceability** line mapping it back to the design's
 7. KasmVNC is NOT in this branch (lives on `feat/dual-vault-pentest-env`). No fallback-removal gate applies; the Selkies implementation is the sole desktop stack.
 
 **Traceability:** design "Open Verification Items" and "Rollback / Transition Consideration"; CP2, CP5; P8, P10, P11, P14.
+
+### Requirement 16: Adaptive Resolution (Auto-Fit Browser Window)
+
+**User Story:** As a developer, I want the Selkies desktop to automatically resize to match my browser window (like KasmVNC's dynamic resolution), so that the desktop fills the viewport without manual configuration.
+
+#### Acceptance Criteria
+
+1. THE Selkies_Stream SHALL run with `SELKIES_IS_MANUAL_RESOLUTION_MODE="false"` so that client-driven resize requests are honored rather than ignored.
+2. WHEN the client sends a resize request (`r,<width>x<height>,<displayId>`) for a resolution not already present in the X mode list, THE Selkies_Stream SHALL synthesize an xrandr modeline using `cvt` and apply it.
+3. THE Build_System SHALL install the `cvt` binary (apt package `xcvt`) in the selkies stack, because `cvt` and `gtf` are otherwise both absent (`x11-xserver-utils` provides `xrandr` but NOT `cvt`); without either, `reconfigure_displays()` aborts the resize with `FATAL: Could not create extended mode`.
+4. THE Xvfb_Server for the selkies display SHALL use a FIXED virtual canvas of `3840x2160` (Selkies_Canvas), decoupled from DESKTOP_RESOLUTION.
+5. WHEN a client requests a resolution within the Selkies_Canvas, THE Selkies_Stream SHALL resize successfully without crashing.
+6. IF a client requests a resolution exceeding the Selkies_Canvas, THEN pixelflux's MIT-SHM capture SHALL read past the framebuffer and crash Selkies with `X Error BadMatch (X_ShmGetImage)`; therefore THE Selkies_Canvas SHALL be sized to cover all expected client windows (including HiDPI/`devicePixelRatio` physical-pixel requests).
+7. THE DESKTOP_RESOLUTION variable SHALL continue to drive the kasmvnc `Xkasmvnc -geometry` (kasmvnc has its own dynamic-resolution engine and is unaffected by the Selkies_Canvas change).
+8. WHEN the selkies desktop is opened in a real browser and the window is resized, THE Selkies_Stream SHALL track the window resolution (verified: live follow in Chrome, X `current` matching the window to within the /8 width alignment) while remaining RUNNING.
+
+**Traceability:** design Addendum (2026-06-01) #2; CP2 (Dockerfile xcvt), CP3 (supervisord Xvfb canvas + selkies env); selkies source `selkies.py::on_resize_handler` / `reconfigure_displays` / `display_utils.generate_xrandr_gtf_modeline`.

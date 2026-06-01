@@ -92,7 +92,7 @@ ARG DESKTOP_STACK
 RUN if [ "$DESKTOP_STACK" = "both" ] || [ "$DESKTOP_STACK" = "selkies" ]; then \
       set -e; \
       apt-get update && apt-get install -y --no-install-recommends \
-        libpulse0 pulseaudio xclip xdotool \
+        libpulse0 pulseaudio xclip xdotool xcvt \
         libva2 libva-drm2 libva-x11-2 libgbm1 libdrm2 libjpeg62-turbo \
         python3-dev python3-venv gcc pkg-config libxkbcommon-dev git libsrtp2-dev \
       && python3 -m venv /opt/selkies-venv \

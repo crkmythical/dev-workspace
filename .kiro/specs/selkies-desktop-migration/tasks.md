@@ -293,3 +293,48 @@ Key facts baked in (all PoC-verified):
   ~~The failure IS in: KasmVNC framebuffer encoder pipeline failing to engage~~
   ~~Possible root causes: Docker Desktop virtualization, arm64 NEON, 1.4.0 regression~~
 
+
+- [x] 16. Adaptive resolution (auto-fit browser window) — **DONE & browser-verified (2026-06-01)**
+  - **Context**: "KasmVNC adapts, selkies doesn't" was wrong. Selkies supports it; it was
+    disabled by config + missing a dep + capped by the Xvfb canvas. Verified end-to-end in
+    real Chrome incognito (window drag → live resolution follow, no black screen).
+  - [x] 16.1 Enable adaptive mode in `image/etc/supervisor/desktop-selkies.conf`
+    - `SELKIES_IS_MANUAL_RESOLUTION_MODE="false"` (was `"true"` with manual 1920x1080).
+    - When `true`, `on_resize_handler` returns on the first line and ignores all client resizes.
+    - _Requirements: R16.1_
+  - [x] 16.2 Install `cvt` (apt pkg `xcvt`) in the selkies Dockerfile layer
+    - Root cause: both `cvt` AND `gtf` were absent. `x11-xserver-utils` ships `xrandr` but not
+      `cvt`; Kali/Debian put `cvt` in `xcvt`, `gtf` in `xserver-xorg-core`. Without either,
+      `generate_xrandr_gtf_modeline` raises → `reconfigure_displays` logs
+      `FATAL: Could not create extended mode <WxH>: ... Aborting.` and the resize is dropped.
+      (Preset sizes already in the mode list could still set, masking the bug — only non-preset
+      sizes fail, which is most real windows after /8 alignment.)
+    - _Requirements: R16.2, R16.3_
+  - [x] 16.3 Fix Xvfb canvas: FIXED `3840x2160`, decoupled from `DESKTOP_RESOLUTION`
+    - The non-obvious fix. Xvfb `-screen` is a HARD framebuffer ceiling (= `xrandr maximum`),
+      cannot grow at runtime. Old `1920x1080` canvas + a wider client window (e.g. 2316px Chrome,
+      or any HiDPI physical-pixel request) → pixelflux MIT-SHM capture reads past the framebuffer
+      → `X Error BadMatch, X_ShmGetImage` → selkies crash → supervisord restart → browser
+      auto-reconnects + re-requests big size → **crash loop** (proxy symptom: repeated
+      `502 dial tcp 127.0.0.1:6080: connection refused`). 4K canvas covers virtually all windows;
+      client downsizes within it. Framebuffer cost ~33MB.
+    - DESKTOP_RESOLUTION still drives kasmvnc's `Xkasmvnc -geometry` (unaffected).
+    - _Requirements: R16.4, R16.5, R16.6, R16.7_
+  - [x] 16.4 Rebuild image + browser verification
+    - Rebuilt `dev-workspace:latest`; confirmed `cvt` present and `IS_MANUAL_RESOLUTION_MODE=false`
+      baked in. Real Chrome incognito: desktop fills window; resize live-follows (observed X
+      `current` tracking window: 2320x1218, 2224x1396, 3840x1926 — each /8-aligned width);
+      selkies stays RUNNING across resizes; 6080 listening; `/desktop/` → 200; kasmvnc `/vnc/`
+      unaffected in parallel.
+    - _Requirements: R16.8_
+  - **Guard rails (do-not-regress)**:
+    - Do NOT re-pin selkies to manual mode without also removing `xcvt` (they are a set).
+    - Do NOT shrink the selkies Xvfb `-screen` back to `DESKTOP_RESOLUTION` — re-introduces the
+      BadMatch crash loop for any window larger than that size.
+    - If 4K is ever insufficient (>4K client, or DPR>1 on a 4K panel requesting physical pixels),
+      grow the canvas to the largest expected `window×DPR`; the failure mode is a hard crash,
+      not a soft clamp.
+    - Operator caveat: restarting ONLY the supervisord `desktop` group via `reread/update` can
+      orphan the old `start-xfce.sh` dbus session → TWO XFCE sessions fight over `:1`
+      (symptom: mostly-black desktop + stray panel sliver). Full container restart → single clean
+      session. Not a code defect.

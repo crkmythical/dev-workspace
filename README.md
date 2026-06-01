@@ -41,7 +41,8 @@ docker compose up -d
 ## Features
 
 - **Dual Remote Desktop** — two independent desktops run in parallel:
-  - **Selkies** (`/desktop/`) — H.264/WebCodecs streaming, best for low-latency localhost
+  - **Selkies** (`/desktop/`) — H.264/WebCodecs streaming, best for low-latency localhost.
+    Auto-fits the browser window (adaptive resolution); no fixed size to configure.
   - **KasmVNC** (`/vnc/`) — VNC-over-WebSocket, robust over high-latency tunnels
 - **Code Server** — VS Code in browser
 - **Encrypted Vault** — gocryptfs auto-init/unlock
@@ -110,6 +111,6 @@ The tunnel auto-starts on macOS login via LaunchAgent. No port forwarding needed
 |----------|---------|-------------|
 | PASSWORD | (auto-generated) | Unified password for code-server, desktop, and vault |
 | CLASH_SUBSCRIPTION_URL | (required) | Clash proxy subscription URL |
-| DESKTOP_RESOLUTION | 1920x1080 | Desktop resolution |
+| DESKTOP_RESOLUTION | 1920x1080 | KasmVNC (`/vnc/`) geometry. Selkies (`/desktop/`) ignores this — it auto-fits the browser window (adaptive). |
 | DESKTOP_AUDIO | 1 | Enable PulseAudio (0 to disable) |
 | TUNNEL_HOST_PORT | 18080 | Host port mapping |

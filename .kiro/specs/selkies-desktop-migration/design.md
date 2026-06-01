@@ -749,7 +749,7 @@ These are explicitly **not** treated as solved. They are the known risk frontier
 2. ✅ **Static-client provisioning + subpath asset resolution.** RESOLVED by the no-NGINX PoC: Caddy serves the static client and assets resolve under `/desktop/assets/*` → 200, `/desktop/` → 200 HTML. The remaining implementation task is to **vendor the 5.9 MB client** (`image/selkies-web/`) at the matching `SELKIES_GIT_REF` and confirm in the real built image. Residual risk only if a future client build hardcodes absolute `/assets` paths (fallback: Caddy `rewrite`).
 3. ✅ **Exact Selkies CLI + ports.** RESOLVED: `--mode=websockets --port=6080 --addr=127.0.0.1`; default port is 8082 (collides with code-server → use 6080); `--control-port` 8083 loopback. Reconfirm against the pinned ref's `--help` at implementation (cheap).
 4. ✅ **Hard runtime deps.** RESOLVED: `libpulse0`, `xclip`, `xdotool`, `xrandr` are required (selkies crashes without them) — now in the apt list. Reconfirm none are missing on the chosen base.
-5. **Real-browser stream verification.** The headless client confirmed WS connect + pipeline start through Caddy(no-NGINX) but counted **0 frames on an empty openbox**. Frames-flowing must be confirmed in a **real browser on the real XFCE desktop** (prior whole-image PoC saw 357 frames). **OPEN — must verify in the built image.**
+5. ✅ **Real-browser stream verification.** RESOLVED (2026-06-01): selkies streams flowing H.264 in a real Chrome (incognito) on the real XFCE desktop through the authenticated Caddy path; kasmvnc `/vnc/` also verified working in parallel. See Addendum (2026-06-01) #2 for the adaptive-resolution fixes that were required to get a non-black, window-fitting desktop.
 6. **Audio (pulseaudio null-sink).** `libpulse0` is required regardless, but audio streaming is **off by default**. Wiring a null-sink (loopback-only, no ports) is a follow-up. **OPEN (optional feature).**
 7. **Build-time cost.** Compiling `av`/`cryptography`/`xkbcommon` increases build time (PoC rebuild ~4 min). Measure the actual delta and decide whether to vendor prebuilt wheels (mirroring the node/python/jdk `tar.gz` vendoring pattern). **OPEN.**
 
@@ -851,3 +851,72 @@ Cleanup pass after Task 15, keeping the dual-desktop behavior identical:
   `Dockerfile.desktop-poc` + `docker-compose.desktop-poc.yml` PoC artifacts.
   `Dockerfile.aliyun` (restricted-network base) and `Dockerfile.kasmvnc-test`
   + its compose (debugging harness) are retained.
+
+---
+
+## Addendum (2026-06-01) #2 — Adaptive Resolution (auto-fit browser window)
+
+**Context.** Goal: make selkies auto-fit the browser window like KasmVNC's dynamic
+resolution. The claim "KasmVNC adapts, selkies doesn't" turned out to be wrong —
+selkies DOES support it (the vendored client sends `r,<w>x<h>,<displayId>` on
+window resize; the server resizes the X display). It was simply (a) disabled by
+config and (b) missing a build dependency and (c) capped by the Xvfb canvas size.
+Verified end-to-end in real Chrome (incognito): window drag → live resolution
+follow, no black screen, selkies stable, kasmvnc unaffected.
+
+### Source-level model (websockets mode — the path this image actually runs)
+
+The WebRTC-mode `display_utils.resize_display()` is NOT the live path. Websockets
+mode uses, in `selkies.py`:
+
+```
+inbound WS "r,<res>,<displayId>"  (selkies.py ~2364)
+  └─ gate: await client_settings_received.wait()   # client must send SETTINGS first
+  └─ validate: 3 comma-parts; displayId registered in display_clients; target≠current
+  └─ on_resize_handler()  (selkies.py ~3363)
+       └─ if server is_manual_resolution_mode → return immediately (no resize)
+       └─ update client_info[width/height]
+       └─ reconfigure_displays()  (selkies.py ~2860)   ← the real work
+            • compute total canvas (width aligned to multiple of 8)
+            • if mode not in xrandr list: generate_xrandr_gtf_modeline() via `cvt`
+              (fallback `gtf`) → `xrandr --newmode` → `--addmode`
+            • `xrandr --fb <total> --output <screen> --mode <total>`
+            • `xrandr --setmonitor` per logical display
+```
+
+Each xrandr step is a separate short-lived `create_subprocess_exec`; that is fine
+because `--addmode` associates the mode to the output (persisted server-side) and
+the subsequent `--fb` references it.
+
+### Three fixes required (all landed, verified in the rebuilt image)
+
+| # | Fix | File | Why (verified failure mode without it) |
+|---|-----|------|----------------------------------------|
+| 1 | Install `cvt` (apt pkg **`xcvt`**) | `image/Dockerfile` (selkies conditional layer) | `cvt`/`gtf` were BOTH absent. `x11-xserver-utils` provides `xrandr` but NOT `cvt`; on Kali/Debian `cvt` ships in `xcvt`, `gtf` in `xserver-xorg-core`. Without either, `generate_xrandr_gtf_modeline` raises → `reconfigure_displays` logs `FATAL: Could not create extended mode <WxH>: ... Aborting.` and the resize is dropped. (Standard preset sizes that already exist in the mode list could still set, masking the bug — only NON-preset sizes fail, which is most real windows after the /8 alignment.) |
+| 2 | `SELKIES_IS_MANUAL_RESOLUTION_MODE="false"` | `desktop-selkies.conf` | When `true`, `on_resize_handler` returns on the first line — client resize requests are silently ignored and the display stays pinned to `SELKIES_MANUAL_WIDTH/HEIGHT`. This was the original (manual 1920x1080) config. |
+| 3 | Xvfb `-screen 0 **3840x2160**x24` (FIXED 4K canvas, NOT `DESKTOP_RESOLUTION`) | `desktop-selkies.conf` | **The non-obvious one.** Xvfb's `-screen` size is a HARD framebuffer ceiling (`xrandr maximum`); it cannot grow at runtime. With the old `1920x1080` canvas, a client window wider/taller than that (e.g. a 2316px-wide Chrome window, or any HiDPI/retina request) makes pixelflux's MIT-SHM capture read past the framebuffer → **`X Error BadMatch, X_ShmGetImage`** → selkies crashes. supervisord restarts it, the browser auto-reconnects and re-requests the big size → **crash loop** (symptom at the proxy: repeated `502 dial tcp 127.0.0.1:6080: connection refused`). A 4K canvas covers virtually all real windows; the client still downsizes within it. Framebuffer cost ≈ 3840·2160·4 ≈ 33 MB. `DESKTOP_RESOLUTION` still drives the **kasmvnc** `Xkasmvnc -geometry` in `desktop-vnc.conf` (kasmvnc has its own dynamic-resolution engine and is unaffected).
+
+### Guard rails / do-not-regress
+
+- Do NOT re-pin selkies to manual mode without also removing the `xcvt` dep and
+  reverting the canvas note (they are a set).
+- Do NOT shrink the Xvfb `-screen` back to `DESKTOP_RESOLUTION` for the **selkies**
+  display — that re-introduces the BadMatch crash loop for any window larger than
+  that size. The selkies canvas is intentionally decoupled from `DESKTOP_RESOLUTION`.
+- If 4K is ever insufficient (e.g. a >4K client or DPR>1 on a 4K panel requesting
+  physical pixels), the canvas must grow to the largest expected `window×DPR`;
+  the failure is again a hard `X_ShmGetImage BadMatch` crash, not a soft clamp.
+- Operational note: restarting ONLY the supervisord `desktop` group via
+  `reread/update` can orphan the old `start-xfce.sh` dbus session, leaving TWO
+  XFCE sessions fighting over `:1` (symptom: mostly-black desktop with a stray
+  panel sliver). A full container restart yields a single clean session. This is
+  an operator caveat, not a code defect.
+
+### Verified behavior
+
+- Real Chrome incognito on `/desktop/`: desktop fills the window; dragging the
+  window live-updates the X resolution (observed `current` tracking the window,
+  e.g. `2320x1218`, `2224x1396`, `3840x1926` — each aligned to /8 width).
+- selkies stays RUNNING across resizes (no BadMatch); 6080 listening; `/desktop/`
+  → 200 through Caddy basic_auth.
+- kasmvnc `/vnc/` works in parallel, unaffected by the selkies canvas change.

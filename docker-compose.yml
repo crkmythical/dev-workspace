@@ -37,6 +37,8 @@ services:
     mem_reservation: ${MEMORY_RESERVATION:-8g}
     env_file: .env
     environment:
+      # KasmVNC (/vnc/) geometry only; Selkies (/desktop/) auto-fits the browser
+      # window (adaptive) and ignores this. Selkies Xvfb canvas is a fixed 4K.
       - DESKTOP_RESOLUTION=${DESKTOP_RESOLUTION:-1920x1080}
       - DESKTOP_AUDIO=${DESKTOP_AUDIO:-0}
     ulimits:
