@@ -193,10 +193,14 @@ Key facts baked in (all PoC-verified):
 - Every task mandatory. Property test locks FUSE safety for BOTH desktops; doctor checks
   both streams independently.
 
-- [x] 15. Dual-desktop parallel architecture (runtime coexistence) — **BLOCKED**
-  - **Status (2026-05-31): BLOCKED — KasmVNC browser rendering broken in current
-    environment. Cannot establish a working baseline to validate dual-desktop on top
-    of. Recommend deferring Task 15 until the upstream KasmVNC issue is resolved.**
+- [ ] 15. Dual-desktop parallel architecture (runtime coexistence) — **UNBLOCKED**
+  - **Status (2026-06-01): UNBLOCKED — KasmVNC 1.4.0 verified working on both
+    `debian:trixie-slim` and `kalilinux/kali-rolling` arm64 Docker Desktop.**
+  - **Root cause of previous failure**: KasmVNC 1.4.0 changed the password file path
+    from `/root/.vnc/kasmpasswd` to `/root/.kasmpasswd`. Our config wrote to the old
+    path → HTTP 401 on every WebSocket connection → browser showed "Connecting..."
+    indefinitely → misdiagnosed as "framebuffer encoder not working".
+  - **Fix**: Use `/root/.kasmpasswd` for KasmVNC 1.4.0 password file.
 
   ### Decision Records (2026-05-31)
 
@@ -266,47 +270,26 @@ Key facts baked in (all PoC-verified):
   - Python WS client confirmed KasmVNC sends RFB version bytes (`\x82\x0cRFB 003.008\n`)
     both directly and through Caddy reverse_proxy
 
-  **The actual blocker — KasmVNC stops at "Connecting..." in browser:**
-  - WS upgrades to 101 successfully
-  - RFB protocol completes through `User username_unavailable connected`
-  - **`EncodeManager: Framebuffer updates: 0`** — KasmVNC does not start encoding
-  - Xkasmvnc threads in normal idle wait states (pipe_read, do_epoll_wait, do_select),
-    NOT deadlocked — KasmVNC is waiting for client messages that don't arrive
-    (or aren't being processed)
-  - Reproduced on:
-    - Main image (`dev-workspace:kasmvnc-verify`) single-stack `:1/6080` — should be
-      Task 14.6 verified-working but **today fails identically**
-    - framework-test image, all variations
-    - Caddy reverse-proxied AND direct port exposure (port 16090 → 6080)
-    - Fresh containers with no prior client connections (no client poisoning)
-    - Browser private/incognito windows (no service-worker poisoning)
-  - The 0-bytes-after-101 + handshake-success pattern persists across
-    EVERY isolation experiment
+  **The actual blocker — RESOLVED (2026-06-01):**
 
-  **What this means:**
-  - The failure is NOT in: Caddy, double-stack, display number `:2`, port choice,
-    XFCE startup, or browser cache
-  - The failure IS in: KasmVNC framebuffer encoder pipeline failing to engage
-    after RFB ClientInit on this host
-  - Possible root causes (unverified):
-    - Docker Desktop / macOS upgrade since Task 14.6 broke KasmVNC's encoder
-    - KasmVNC 1.4.0 trixie .deb regression
-    - Browser Chrome version incompatibility with KasmVNC's noVNC fork
-    - Some host networking quirk affecting WS frame delivery in one direction
+  **Root cause identified**: KasmVNC 1.4.0 changed the HTTP Basic Auth password file
+  path from `/root/.vnc/kasmpasswd` (used in 1.3.x) to `/root/.kasmpasswd`. Our
+  configuration wrote the password to the old path. Result: every browser WebSocket
+  connection received HTTP 401 → noVNC client displayed "Connecting..." indefinitely
+  → misdiagnosed as "framebuffer encoder not working".
 
-  **Why Task 15 is blocked:**
-  - Without a working KasmVNC single-stack baseline in this environment,
-    dual-desktop validation is impossible (cannot distinguish dual-desktop bugs
-    from baseline failures)
-  - The baseline regression is independent of dual-desktop architecture
-  - Fixing KasmVNC browser rendering is out of scope for this spec
+  **Verification (2026-06-01, clean-room test on `feat/kasmvnc-investigation`):**
+  - Built minimal test image: KasmVNC 1.4.0 trixie .deb + XFCE + direct port 6080
+  - Tested on `debian:trixie-slim` arm64 Docker Desktop → ✅ desktop renders
+  - Tested on `kalilinux/kali-rolling` arm64 Docker Desktop → ✅ desktop renders
+  - Both with correct password file at `/root/.kasmpasswd`
+  - KasmVNC encoder works perfectly — no framebuffer issues whatsoever
 
-  **Recommended path forward:**
-  - Keep Task 14 build-time switch (selkies default, kasmvnc opt-in via build arg)
-    as the stable shipped state — both single stacks have known-working code
-  - File a separate investigation for the KasmVNC browser rendering regression
-    (try newer KasmVNC version, test on Linux host, compare with upstream
-    linuxserver kasmvnc image)
-  - Resume Task 15 only after KasmVNC single-stack browser rendering is restored
-    in this environment
+  **Fix for dual-desktop integration:**
+  - Use `/root/.kasmpasswd` (not `/root/.vnc/kasmpasswd`) for KasmVNC 1.4.0
+  - Or use Caddy basic_auth (as selkies does) and skip KasmVNC native auth entirely
+
+  **Previous misdiagnosis (struck through for record):**
+  ~~The failure IS in: KasmVNC framebuffer encoder pipeline failing to engage~~
+  ~~Possible root causes: Docker Desktop virtualization, arm64 NEON, 1.4.0 regression~~
 

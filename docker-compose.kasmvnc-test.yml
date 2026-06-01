@@ -1,0 +1,15 @@
+services:
+  kasmvnc-test:
+    build:
+      context: .
+      dockerfile: image/Dockerfile.kasmvnc-test
+      args:
+        BASE_IMAGE: ${BASE_IMAGE:-debian:trixie-slim}
+        KASMVNC_VERSION: ${KASMVNC_VERSION:-1.4.0}
+        KASMVNC_DISTRO: ${KASMVNC_DISTRO:-trixie}
+    container_name: kasmvnc-test
+    ports:
+      - "127.0.0.1:6080:6080"
+    security_opt:
+      - seccomp:unconfined
+    restart: "no"

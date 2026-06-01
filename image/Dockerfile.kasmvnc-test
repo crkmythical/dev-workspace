@@ -1,0 +1,65 @@
+# Minimal KasmVNC 1.4.0 test image — arm64 Docker Desktop verification.
+# Zero project dependencies. Pure KasmVNC + XFCE.
+ARG BASE_IMAGE=debian:trixie-slim
+FROM ${BASE_IMAGE}
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Core deps only
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    procps \
+    x11-utils \
+    dbus-x11 \
+    xfce4 \
+    xfce4-terminal \
+    fonts-dejavu-core \
+    libgl1-mesa-dri \
+    netcat-openbsd \
+    strace \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install KasmVNC from GitHub releases
+ARG KASMVNC_VERSION=1.4.0
+ARG KASMVNC_DISTRO=trixie
+RUN ARCH=$(dpkg --print-architecture) && \
+    curl -fsSL "https://github.com/kasmtech/KasmVNC/releases/download/v${KASMVNC_VERSION}/kasmvncserver_${KASMVNC_DISTRO}_${KASMVNC_VERSION}_${ARCH}.deb" \
+    -o /tmp/kasmvnc.deb && \
+    apt-get update && apt-get install -y --no-install-recommends /tmp/kasmvnc.deb && \
+    rm -f /tmp/kasmvnc.deb && rm -rf /var/lib/apt/lists/*
+
+# KasmVNC config: listen on all interfaces, no SSL
+RUN mkdir -p /etc/kasmvnc && printf '%s\n' \
+    'network:' \
+    '  interface: 0.0.0.0' \
+    '  websocket_port: 6080' \
+    '  use_ipv4: true' \
+    '  ssl:' \
+    '    require_ssl: false' \
+    '  udp:' \
+    '    public_ip: 127.0.0.1' \
+    'desktop:' \
+    '  resolution:' \
+    '    width: 1920' \
+    '    height: 1080' \
+    '  allow_resize: true' \
+    'encoding:' \
+    '  max_frame_rate: 30' \
+    'security:' \
+    '  brute_force_protection:' \
+    '    blacklist_threshold: 0' \
+    > /etc/kasmvnc/kasmvnc.yaml
+
+# Create VNC user (password: testpass)
+RUN mkdir -p /root/.vnc && \
+    printf 'testpass\ntestpass\n' | kasmvncpasswd -u user -w -r /root/.vnc/kasmpasswd && \
+    chmod 0600 /root/.vnc/kasmpasswd
+
+# Startup script
+COPY image/scripts/start-kasmvnc-test.sh /usr/local/bin/start-kasmvnc-test.sh
+RUN chmod +x /usr/local/bin/start-kasmvnc-test.sh
+
+EXPOSE 6080
+
+CMD ["/usr/local/bin/start-kasmvnc-test.sh"]
