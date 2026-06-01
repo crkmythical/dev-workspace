@@ -1,25 +1,31 @@
 # Base image toggle.
-#   Default: debian:trixie-slim — REQUIRED for the Selkies desktop. pixelflux's
-#   prebuilt screen_capture_module.so links libavutil needing libva >=2.20
-#   (symbol vaMapBuffer2). bookworm ships libva 2.17 → the .so fails to load →
-#   the stream never starts ("Waiting for stream..."). trixie ships libva 2.22
-#   natively (matches the LSIO debiantrixie reference). Do NOT downgrade to
-#   bookworm without vendoring a newer libva.
-#   Production: build with `--build-arg BASE_IMAGE=kalilinux/kali-rolling`
-#               to get the full pentest toolchain available via apt.
+#   Default: kalilinux/kali-rolling — the production base, full pentest toolchain
+#   via apt. Kali tracks Debian testing, so it satisfies the Selkies desktop's
+#   libva >=2.20 requirement (pixelflux's prebuilt screen_capture_module.so links
+#   a libavutil needing symbol vaMapBuffer2; bookworm's libva 2.17 is too old and
+#   the .so fails to load → "Waiting for stream...").
+#   Alternative: build with `--build-arg BASE_IMAGE=debian:trixie-slim` for a
+#   leaner non-pentest base (also ships libva 2.22, matches the LSIO debiantrixie
+#   reference). Do NOT use bookworm without vendoring a newer libva.
 ARG BASE_IMAGE=kalilinux/kali-rolling
 FROM ${BASE_IMAGE}
 
-# Desktop streaming stack: Selkies (WebSocket + WebCodecs H.264).
-# Higher ceiling on low-RTT links; needs libva>=2.20 (hence trixie/kali base).
+# Desktop streaming stack selector (build-time):
+#   both    (default) — install AND run selkies (/desktop/) + kasmvnc (/vnc/) in parallel
+#   selkies           — selkies only (fallback)
+#   kasmvnc           — kasmvnc only (fallback)
+# Recorded in /etc/sdw-desktop-stack; read by desktop.ts SSOT at runtime.
+ARG DESKTOP_STACK=both
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=en_US.UTF-8
 ENV TZ=Asia/Shanghai
 
-# Apt sources: Kali uses official repos; Debian uses Aliyun mirrors for speed.
-RUN . /etc/os-release && rm -f /etc/apt/sources.list.d/* && \
+# Apt sources: Kali keeps its official repos (deb822 /etc/apt/sources.list.d/
+# kali.sources — do NOT delete it). Debian switches to Aliyun mirrors for speed.
+RUN . /etc/os-release && \
     if [ "$ID" != "kali" ]; then \
+      rm -f /etc/apt/sources.list.d/*; \
       CN="${VERSION_CODENAME:-trixie}"; \
       { echo "deb http://mirrors.aliyun.com/debian ${CN} main contrib non-free non-free-firmware"; \
         echo "deb http://mirrors.aliyun.com/debian ${CN}-updates main contrib non-free non-free-firmware"; \
@@ -78,34 +84,60 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     x11-xserver-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# --- Selkies desktop streaming (H.264/WebCodecs) ---
+# --- Selkies desktop streaming (H.264/WebCodecs) — installed for both|selkies ---
 # Install from pinned GitHub ref. pixelflux pins nvidia-cuda-nvrtc with a stale
 # hash, so install with --no-deps and list the full dependency tree.
 ARG SELKIES_GIT_REF=0d134b6e1ffe42a579bc66363b0e7159ab22aacc
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      libpulse0 pulseaudio xclip xdotool \
-      libva2 libva-drm2 libva-x11-2 libgbm1 libdrm2 libjpeg62-turbo \
-      python3-dev python3-venv gcc pkg-config libxkbcommon-dev git libsrtp2-dev \
-    && python3 -m venv /opt/selkies-venv \
-    && /opt/selkies-venv/bin/pip install --no-cache-dir setuptools wheel \
-    && /opt/selkies-venv/bin/pip install --no-cache-dir --no-deps \
-       "git+https://github.com/selkies-project/selkies.git@${SELKIES_GIT_REF}" \
-    && /opt/selkies-venv/bin/pip install --no-cache-dir --no-deps pixelflux pcmflux \
-    && /opt/selkies-venv/bin/pip install --no-cache-dir \
-       nvidia-cuda-nvrtc numpy \
-       "python-xlib @ https://github.com/selkies-project/python-xlib/archive/master.zip" \
-       aiofiles aiohttp aioice av cffi cryptography distro google-crc32c \
-       msgpack pasimple Pillow prometheus_client psutil pulsectl \
-       pyee pylibsrtp pyopenssl pynput watchdog websockets xkbcommon \
-       GPUtil typing_extensions \
-    && /opt/selkies-venv/bin/python -c "from selkies.__main__ import main" \
-    && /opt/selkies-venv/bin/python -c "import pixelflux, pcmflux" \
-    && apt-get purge -y python3-dev gcc pkg-config libxkbcommon-dev libsrtp2-dev \
-    && apt-get autoremove -y \
-    && rm -rf /var/lib/apt/lists/*
+ARG DESKTOP_STACK
+RUN if [ "$DESKTOP_STACK" = "both" ] || [ "$DESKTOP_STACK" = "selkies" ]; then \
+      set -e; \
+      apt-get update && apt-get install -y --no-install-recommends \
+        libpulse0 pulseaudio xclip xdotool \
+        libva2 libva-drm2 libva-x11-2 libgbm1 libdrm2 libjpeg62-turbo \
+        python3-dev python3-venv gcc pkg-config libxkbcommon-dev git libsrtp2-dev \
+      && python3 -m venv /opt/selkies-venv \
+      && /opt/selkies-venv/bin/pip install --no-cache-dir setuptools wheel \
+      && /opt/selkies-venv/bin/pip install --no-cache-dir --no-deps \
+         "git+https://github.com/selkies-project/selkies.git@${SELKIES_GIT_REF}" \
+      && /opt/selkies-venv/bin/pip install --no-cache-dir --no-deps pixelflux pcmflux \
+      && /opt/selkies-venv/bin/pip install --no-cache-dir \
+         nvidia-cuda-nvrtc numpy \
+         "python-xlib @ https://github.com/selkies-project/python-xlib/archive/master.zip" \
+         aiofiles aiohttp aioice av cffi cryptography distro google-crc32c \
+         msgpack pasimple Pillow prometheus_client psutil pulsectl \
+         pyee pylibsrtp pyopenssl pynput watchdog websockets xkbcommon \
+         GPUtil typing_extensions \
+      && /opt/selkies-venv/bin/python -c "from selkies.__main__ import main" \
+      && /opt/selkies-venv/bin/python -c "import pixelflux, pcmflux" \
+      && apt-get purge -y python3-dev gcc pkg-config libxkbcommon-dev libsrtp2-dev \
+      && apt-get autoremove -y \
+      && rm -rf /var/lib/apt/lists/*; \
+    else \
+      echo "Skipping selkies install (DESKTOP_STACK=$DESKTOP_STACK)"; \
+    fi
 
 ENV SELKIES_VENV=/opt/selkies-venv
 ENV PATH="/opt/selkies-venv/bin:${PATH}"
+
+# --- KasmVNC desktop streaming (integrated X + WebSocket VNC) — both|kasmvnc ---
+# Native trixie .deb (KasmVNC 1.4.0 has a trixie build; Kali is trixie-based and
+# installs it fine). Auth handled by Caddy (we run with -DisableBasicAuth), so no
+# kasmvncpasswd / /root/.kasmpasswd needed. Perl deps are KasmVNC's runtime reqs.
+ARG KASMVNC_VERSION=1.4.0
+RUN if [ "$DESKTOP_STACK" = "both" ] || [ "$DESKTOP_STACK" = "kasmvnc" ]; then \
+      set -e; \
+      KASM_DISTRO="trixie"; \
+      ARCH=$(dpkg --print-architecture); \
+      apt-get update; \
+      curl -fsSL "https://github.com/kasmtech/KasmVNC/releases/download/v${KASMVNC_VERSION}/kasmvncserver_${KASM_DISTRO}_${KASMVNC_VERSION}_${ARCH}.deb" \
+        -o /tmp/kasmvnc.deb; \
+      apt-get install -y --no-install-recommends /tmp/kasmvnc.deb \
+        libdatetime-perl libhash-merge-simple-perl libscalar-list-utils-perl \
+        libyaml-tiny-perl libtry-tiny-perl libswitch-perl; \
+      rm -f /tmp/kasmvnc.deb && rm -rf /var/lib/apt/lists/*; \
+    else \
+      echo "Skipping kasmvnc install (DESKTOP_STACK=$DESKTOP_STACK)"; \
+    fi
 
 # Install Caddy
 RUN curl -fsSL "https://caddyserver.com/api/download?os=linux&arch=$(dpkg --print-architecture)" -o /usr/bin/caddy \
@@ -173,9 +205,27 @@ COPY image/etc/cron.d/vault-sync /etc/cron.d/vault-sync
 COPY image/etc/cron.d/cleanup /etc/cron.d/cleanup
 RUN chmod 0644 /etc/cron.d/vault-sync /etc/cron.d/cleanup
 
-# Desktop process group + Caddy routing (selkies only).
-COPY image/etc/supervisor/desktop-selkies.conf /etc/supervisor/conf.d/desktop.conf
-COPY image/etc/caddy/desktop-selkies.caddy /etc/caddy/desktop.caddy
+# Desktop config snippets — staged, then provisioned per DESKTOP_STACK below.
+# supervisor: per-stack group conf → /etc/supervisor/conf.d/{desktop,vnc}.conf
+# caddy:      per-stack routing    → /etc/caddy/desktop.d/*.caddy (glob-imported)
+COPY image/etc/supervisor/desktop-selkies.conf /opt/desktop-conf/supervisor-selkies.conf
+COPY image/etc/supervisor/desktop-vnc.conf /opt/desktop-conf/supervisor-vnc.conf
+COPY image/etc/caddy/desktop-selkies.caddy /opt/desktop-conf/caddy-selkies.caddy
+COPY image/etc/caddy/desktop-vnc.caddy /opt/desktop-conf/caddy-vnc.caddy
+
+# Provision desktop topology + record the stack marker. "both" installs both
+# supervisor groups and both Caddy snippets; single-stack installs only one.
+ARG DESKTOP_STACK
+RUN mkdir -p /etc/supervisor/conf.d /etc/caddy/desktop.d && \
+    echo "${DESKTOP_STACK}" > /etc/sdw-desktop-stack && \
+    if [ "$DESKTOP_STACK" = "both" ] || [ "$DESKTOP_STACK" = "selkies" ]; then \
+      cp /opt/desktop-conf/supervisor-selkies.conf /etc/supervisor/conf.d/desktop.conf; \
+      cp /opt/desktop-conf/caddy-selkies.caddy /etc/caddy/desktop.d/desktop-selkies.caddy; \
+    fi && \
+    if [ "$DESKTOP_STACK" = "both" ] || [ "$DESKTOP_STACK" = "kasmvnc" ]; then \
+      cp /opt/desktop-conf/supervisor-vnc.conf /etc/supervisor/conf.d/vnc.conf; \
+      cp /opt/desktop-conf/caddy-vnc.caddy /etc/caddy/desktop.d/desktop-vnc.caddy; \
+    fi
 
 # Desktop default configs
 COPY image/etc/desktop/ /opt/workspace/image/etc/desktop/

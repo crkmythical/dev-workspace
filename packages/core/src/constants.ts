@@ -116,3 +116,20 @@ export const DESKTOP_DISPLAY = ":1";
 /** Path where the static Selkies web client is served from by Caddy. */
 export const DESKTOP_WEB_ROOT = "/usr/share/selkies/web";
 export const DESKTOP_DEFAULT_RESOLUTION = "1920x1080";
+
+// --- Dual-desktop (selkies + kasmvnc parallel) ---
+// Selkies stack: H.264/WebCodecs on display :1, served at /desktop/.
+// DESKTOP_STREAM_PORT/DESKTOP_DISPLAY/DESKTOP_HOME above are the selkies values
+// (kept as the canonical names for backward-compat with doctor/tests).
+export const SELKIES_STREAM_PORT = DESKTOP_STREAM_PORT; // 6080
+export const SELKIES_DISPLAY = DESKTOP_DISPLAY; // ":1"
+export const SELKIES_HOME = DESKTOP_HOME; // /workspace/.desktop
+
+// KasmVNC stack: integrated X+VNC server on display :2, served at /vnc/.
+// Independent HOME so its XFCE session never shares state with selkies'.
+export const VNC_STREAM_PORT = 6081;
+export const VNC_DISPLAY = ":2";
+export const VNC_HOME = "/workspace/.desktop-vnc";
+export const VNC_CONFIG_DIR = "/workspace/.desktop-vnc/.config";
+/** Path where the static KasmVNC web client is served from (its own .deb). */
+export const VNC_WEB_ROOT = "/usr/share/kasmvnc/www";

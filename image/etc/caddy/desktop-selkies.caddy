@@ -1,5 +1,6 @@
-# Desktop routing — SELKIES stack. Imported by the main Caddyfile via
-# `import /etc/caddy/desktop.caddy`. Selected at build time (DESKTOP_STACK=selkies).
+# Desktop routing — SELKIES stack. Provisioned at build time into
+# /etc/caddy/desktop.d/ and glob-imported by the main Caddyfile when
+# DESKTOP_STACK includes selkies. Owns /desktop/ (runs parallel to /vnc/).
 #
 # Selkies is WS-ONLY on :6080 (does NOT serve the web client). Caddy serves the
 # static client from /usr/share/selkies/web and reverse-proxies only the WebSocket.

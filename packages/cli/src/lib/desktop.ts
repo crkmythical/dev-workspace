@@ -1,92 +1,122 @@
 /**
  * Desktop service control — single source of truth for the remote-desktop
- * supervisord process group, across BOTH desktop stacks.
+ * supervisord process groups, across BOTH desktop stacks running in parallel.
  *
- * The active stack is fixed at image build time (DESKTOP_STACK build arg) and
+ * The image is built with DESKTOP_STACK={both|selkies|kasmvnc} (default both),
  * recorded in /etc/sdw-desktop-stack. This module reads that marker once and
  * exposes a stack-aware topology so every caller (desktop-start, desktop-stop,
- * lock-vault, destroy, doctor) sees the correct program group, start order, and
- * stop order without knowing which stack is installed.
+ * lock-vault, destroy, doctor) sees the correct program groups, start order,
+ * and stop order without knowing which stack(s) are installed.
  *
- *   selkies  — [desktop-xvfb, desktop-audio, desktop-selkies, desktop-xfce]
- *              standalone Xvfb + WS H.264 encoder + XFCE session
- *   kasmvnc  — [desktop-xvnc, desktop-xfce]
- *              integrated Xkasmvnc (X server + WS VNC) + XFCE session
+ *   selkies  — group "desktop": [desktop-xvfb, desktop-audio, desktop-selkies, desktop-xfce]
+ *              standalone Xvfb (:1) + WS H.264 encoder (6080) + XFCE session. Served at /desktop/.
+ *   kasmvnc  — group "vnc":     [desktop-xvnc, desktop-xfce-vnc]
+ *              integrated Xkasmvnc (:2, X server + WS VNC on 6081) + XFCE session. Served at /vnc/.
  *
- * Both stacks use XFCE as the desktop session. Stop order is always the exact
- * reverse of start order. XFCE (the primary HOME-fd holder on the gocryptfs
- * mount) is always stopped first, guaranteeing no process holds
- * /workspace/.desktop fds before FUSE unmount (EBUSY safety).
- * Both stacks bind the WebSocket on DESKTOP_STREAM_PORT (6080).
+ * In "both" mode both groups exist and run simultaneously on independent
+ * displays with independent HOME dirs. Stop order is always the exact reverse
+ * of start order, with XFCE (the primary HOME-fd holder on the gocryptfs mount)
+ * stopped first, guaranteeing no process holds /workspace/.desktop* fds before
+ * FUSE unmount (EBUSY safety).
  */
 import { existsSync, readFileSync } from "node:fs";
-import { DESKTOP_STREAM_PORT } from "@sdw/core/constants";
+import { SELKIES_STREAM_PORT, VNC_STREAM_PORT } from "@sdw/core/constants";
 import { $ } from "bun";
 
-export type DesktopStack = "selkies" | "kasmvnc";
+/** A single desktop stack target. */
+export type DesktopTarget = "selkies" | "vnc";
 
 /** Path to the build-time stack marker written by the Dockerfile. */
 const STACK_MARKER_PATH = "/etc/sdw-desktop-stack";
 
+/** Per-target supervisord group name. */
+const GROUP: Record<DesktopTarget, string> = {
+  selkies: "desktop",
+  vnc: "vnc",
+};
+
+/** Per-target WebSocket stream port (for readiness probes). */
+const STREAM_PORT: Record<DesktopTarget, number> = {
+  selkies: SELKIES_STREAM_PORT,
+  vnc: VNC_STREAM_PORT,
+};
+
 /**
- * The desktop stack baked into this image. Reads /etc/sdw-desktop-stack once;
- * defaults to "selkies" if the marker is absent (selkies is the default build).
+ * Program members per stack, in START order (group-qualified for supervisorctl).
+ * Stop order is the exact reverse. XFCE is always last to start / first to stop.
  */
-export function desktopStack(): DesktopStack {
+const STACK_PROGRAMS: Record<DesktopTarget, readonly string[]> = {
+  // X server → audio (optional, exits if disabled) → stream encoder → session.
+  selkies: [
+    "desktop:desktop-xvfb",
+    "desktop:desktop-audio",
+    "desktop:desktop-selkies",
+    "desktop:desktop-xfce",
+  ],
+  // Integrated X/VNC server (:2) → session. Xkasmvnc is both X server and WS server.
+  vnc: ["vnc:desktop-xvnc", "vnc:desktop-xfce-vnc"],
+};
+
+/**
+ * Which stacks are installed in this image. Reads /etc/sdw-desktop-stack:
+ *   "both"    → ["selkies", "vnc"]
+ *   "selkies" → ["selkies"]
+ *   "kasmvnc" → ["vnc"]
+ * Defaults to ["selkies"] if the marker is absent (selkies-only legacy images).
+ */
+export function installedStacks(): readonly DesktopTarget[] {
   try {
     if (existsSync(STACK_MARKER_PATH)) {
       const v = readFileSync(STACK_MARKER_PATH, "utf-8").trim();
-      if (v === "kasmvnc") return "kasmvnc";
+      if (v === "both") return ["selkies", "vnc"];
+      if (v === "kasmvnc") return ["vnc"];
+      if (v === "selkies") return ["selkies"];
     }
   } catch {
     // fall through to default
   }
-  return "selkies";
+  return ["selkies"];
 }
 
-export const DESKTOP_GROUP = "desktop";
-
-/** Program members per stack (group-qualified names for supervisorctl). */
-const STACK_PROGRAMS: Record<DesktopStack, readonly string[]> = {
-  // Start order: X server → audio (optional, exits if disabled) → stream encoder → session.
-  selkies: [
-    `${DESKTOP_GROUP}:desktop-xvfb`,
-    `${DESKTOP_GROUP}:desktop-audio`,
-    `${DESKTOP_GROUP}:desktop-selkies`,
-    `${DESKTOP_GROUP}:desktop-xfce`,
-  ],
-  // Start order: integrated X/VNC server → session.
-  // Xkasmvnc is both X server and WS server (no separate Xvfb needed).
-  kasmvnc: [
-    `${DESKTOP_GROUP}:desktop-xvnc`,
-    `${DESKTOP_GROUP}:desktop-xfce`,
-  ],
-};
-
-/** Group-qualified name of the base program (the X server) for the active stack. */
-export function desktopAnchor(stack: DesktopStack = desktopStack()): string {
-  return STACK_PROGRAMS[stack][0];
+/** Resolve a caller target argument to the concrete list of stacks to act on. */
+function resolveTargets(target?: DesktopTarget): readonly DesktopTarget[] {
+  const installed = installedStacks();
+  if (!target) return installed;
+  return installed.includes(target) ? [target] : [];
 }
 
-/** Start order for the active stack (base/X server first). */
-export function desktopStartOrder(stack: DesktopStack = desktopStack()): readonly string[] {
-  return STACK_PROGRAMS[stack];
+/** Group-qualified name of the base program (X server) for a stack. */
+export function desktopAnchor(target: DesktopTarget): string {
+  return STACK_PROGRAMS[target][0];
 }
 
-/** Stop order for the active stack: exact reverse of start order. */
-export function desktopStopOrder(stack: DesktopStack = desktopStack()): readonly string[] {
-  return [...STACK_PROGRAMS[stack]].reverse();
+/** Start order for a stack (base/X server first). */
+export function desktopStartOrder(target: DesktopTarget): readonly string[] {
+  return STACK_PROGRAMS[target];
 }
 
-/** Whether the desktop X server (base of the dependency chain) is RUNNING. */
-export async function isDesktopRunning(): Promise<boolean> {
-  const r = await $`supervisorctl status ${desktopAnchor()}`.quiet().nothrow();
+/** Stop order for a stack: exact reverse of start order. */
+export function desktopStopOrder(target: DesktopTarget): readonly string[] {
+  return [...STACK_PROGRAMS[target]].reverse();
+}
+
+/** Whether a specific stack's X server (base of the chain) is RUNNING. */
+export async function isDesktopRunning(target: DesktopTarget): Promise<boolean> {
+  const r = await $`supervisorctl status ${desktopAnchor(target)}`.quiet().nothrow();
   return r.exitCode === 0 && r.text().includes("RUNNING");
 }
 
-/** Start the desktop group in dependency order. Caller handles readiness. */
-export async function startDesktop(): Promise<void> {
-  const order = desktopStartOrder();
+/** Whether ANY installed stack is currently running. */
+export async function isAnyDesktopRunning(): Promise<boolean> {
+  for (const t of installedStacks()) {
+    if (await isDesktopRunning(t)) return true;
+  }
+  return false;
+}
+
+/** Start one stack in dependency order. Caller handles readiness. */
+async function startStack(target: DesktopTarget): Promise<void> {
+  const order = desktopStartOrder(target);
   await $`supervisorctl start ${order[0]}`.quiet().nothrow();
   await Bun.sleep(2000);
   for (let i = 1; i < order.length; i++) {
@@ -94,27 +124,69 @@ export async function startDesktop(): Promise<void> {
   }
 }
 
-/** Stop the entire desktop group. Safe to call when not running. */
-export async function stopDesktop(): Promise<void> {
-  const order = desktopStopOrder();
+/**
+ * Start desktop(s). With no argument, starts every installed stack (default
+ * for "both" mode). Pass a target to start only that stack.
+ */
+export async function startDesktop(target?: DesktopTarget): Promise<void> {
+  for (const t of resolveTargets(target)) {
+    await startStack(t);
+  }
+}
+
+/** Stop one stack (reverse dependency order). Safe when not running. */
+async function stopStack(target: DesktopTarget): Promise<void> {
+  const order = desktopStopOrder(target);
   await $`supervisorctl stop ${order.join(" ")}`.quiet().nothrow();
 }
 
-/** Names of any desktop programs still RUNNING (for post-stop verification). */
-export async function runningDesktopPrograms(): Promise<string[]> {
-  const r = await $`supervisorctl status ${DESKTOP_GROUP}:*`.quiet().nothrow();
-  return r
-    .text()
-    .split("\n")
-    .filter((l) => l.includes("RUNNING"))
-    .map((l) => l.split(/\s+/)[0])
-    .filter(Boolean);
+/**
+ * Stop desktop(s). With no argument, stops every installed stack. Pass a target
+ * to stop only that stack.
+ */
+export async function stopDesktop(target?: DesktopTarget): Promise<void> {
+  for (const t of resolveTargets(target)) {
+    await stopStack(t);
+  }
 }
 
-/** Poll until the desktop WebSocket port accepts TCP connections, or timeout. */
-export async function waitForDesktopStream(timeoutSec = 30): Promise<boolean> {
+/**
+ * Stop ALL desktop stacks before a FUSE unmount (lock-vault / destroy).
+ * Critical for EBUSY safety: every XFCE session holding a HOME fd on the
+ * gocryptfs mount must exit first.
+ */
+export async function stopAllDesktops(): Promise<void> {
+  for (const t of installedStacks()) {
+    await stopStack(t);
+  }
+}
+
+/** Names of any desktop programs still RUNNING across all groups (post-stop check). */
+export async function runningDesktopPrograms(): Promise<string[]> {
+  const groups = [...new Set(installedStacks().map((t) => GROUP[t]))];
+  const running: string[] = [];
+  for (const g of groups) {
+    const r = await $`supervisorctl status ${g}:*`.quiet().nothrow();
+    running.push(
+      ...r
+        .text()
+        .split("\n")
+        .filter((l) => l.includes("RUNNING"))
+        .map((l) => l.split(/\s+/)[0])
+        .filter(Boolean),
+    );
+  }
+  return running;
+}
+
+/** Poll until a stack's WebSocket port accepts TCP connections, or timeout. */
+export async function waitForDesktopStream(
+  target: DesktopTarget,
+  timeoutSec = 30,
+): Promise<boolean> {
+  const port = STREAM_PORT[target];
   for (let i = 0; i < timeoutSec; i++) {
-    const probe = await $`nc -z 127.0.0.1 ${DESKTOP_STREAM_PORT}`.quiet().nothrow();
+    const probe = await $`nc -z 127.0.0.1 ${port}`.quiet().nothrow();
     if (probe.exitCode === 0) return true;
     await Bun.sleep(1000);
   }

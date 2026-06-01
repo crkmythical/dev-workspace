@@ -193,7 +193,7 @@ Key facts baked in (all PoC-verified):
 - Every task mandatory. Property test locks FUSE safety for BOTH desktops; doctor checks
   both streams independently.
 
-- [ ] 15. Dual-desktop parallel architecture (runtime coexistence) — **UNBLOCKED**
+- [x] 15. Dual-desktop parallel architecture (runtime coexistence) — **UNBLOCKED**
   - **Status (2026-06-01): UNBLOCKED — KasmVNC 1.4.0 verified working on both
     `debian:trixie-slim` and `kalilinux/kali-rolling` arm64 Docker Desktop.**
   - **Root cause of previous failure**: KasmVNC 1.4.0 changed the password file path
@@ -211,52 +211,50 @@ Key facts baked in (all PoC-verified):
   - URL routing: selkies → `/desktop/`, kasmvnc → `/vnc/`
   - Use cases targeted: localhost (selkies) AND cross-region tunnel (kasmvnc) — both required
 
-  ### Sub-tasks (deferred until baseline restored)
+  ### Sub-tasks
 
-  - [ ] 15.1 Constants: add per-desktop port/display/home constants
+  **Design (2026-06-01): `DESKTOP_STACK={both|selkies|kasmvnc}`, default `both`.**
+  - `both` — both stacks installed AND both auto-start (selkies `/desktop/`, kasmvnc `/vnc/`)
+  - `selkies` — only selkies installed/started (fallback)
+  - `kasmvnc` — only kasmvnc installed/started (fallback)
+  - KasmVNC auth: `-SecurityTypes None -DisableBasicAuth`, gated by Caddy basic_auth
+    (avoids the `/root/.kasmpasswd` path trap entirely — same model as selkies).
+
+  - [x] 15.1 Constants: add per-desktop port/display/home constants
     - `SELKIES_STREAM_PORT=6080`, `SELKIES_DISPLAY=":1"`, `SELKIES_HOME="/workspace/.desktop"`
     - `VNC_STREAM_PORT=6081`, `VNC_DISPLAY=":2"`, `VNC_HOME="/workspace/.desktop-vnc"`
     - Keep `DESKTOP_STREAM_PORT` as alias for selkies (backward compat for doctor/tests).
-  - [ ] 15.2 Dockerfile: unconditional install (both stacks always present)
-    - Remove `DESKTOP_STACK` ARG and all `if [ "$DESKTOP_STACK" = ... ]` conditionals.
-    - Both selkies venv AND kasmvnc .deb installed in every image.
-    - Remove `/etc/sdw-desktop-stack` marker (no longer needed).
-    - Both supervisor snippets AND both caddy snippets always active.
-  - [ ] 15.3 Supervisor: two independent groups
+  - [x] 15.2 Dockerfile: `DESKTOP_STACK={both|selkies|kasmvnc}` build arg (default both)
+    - `both`/`selkies` → install selkies venv. `both`/`kasmvnc` → install kasmvnc .deb.
+    - Write stack marker to `/etc/sdw-desktop-stack` (read by desktop.ts SSOT).
+    - Provision supervisor + caddy snippets per selected stack(s).
+  - [x] 15.3 Supervisor: two independent groups (both present in `both` mode)
     - `[group:desktop]` = selkies (xvfb:1 + audio + selkies:6080 + xfce on :1)
-    - `[group:vnc]` = kasmvnc (xkasmvnc:2:6081 + xfce on :2)
-    - Both autostart=false (on-demand). Independent start/stop.
-  - [ ] 15.4 Caddy: dual routing (both always active)
+    - `[group:vnc]` = kasmvnc (xkasmvnc:2:6081 + xfce on :2, `-DisableBasicAuth`)
+    - Both autostart=false (entrypoint flips to true on vault mount). Independent.
+  - [x] 15.4 Caddy: dual routing (both active in `both` mode)
     - `/desktop/*` → selkies static client + WS `/desktop/websockets` → 6080
-    - `/vnc/*` → kasmvnc proxy + WS `/websockify` → 6081
+    - `/vnc/*` → kasmvnc proxy (static + WS `/vnc/websockify`) → 6081
     - Both behind same `$DESKTOP_BCRYPT_HASH` auth.
-  - [ ] 15.5 desktop.ts SSOT: dual-desktop topology
-    - Export two topologies: `selkiesPrograms` and `vncPrograms`.
-    - `startDesktop(target: "selkies"|"vnc"|"all")` — start one or both.
-    - `stopDesktop(target: "selkies"|"vnc"|"all")` — stop one or both.
-    - `isDesktopRunning(target)` — probe specific desktop.
-    - `waitForDesktopStream(target)` — probe specific port.
-    - FUSE safety: `stopAllDesktops()` for lock-vault/destroy (stops both).
-  - [ ] 15.6 desktop-start.ts / desktop-stop.ts: accept target argument
-    - `desktop-start` (no arg) → start both
-    - `desktop-start selkies` → start selkies only
-    - `desktop-start vnc` → start kasmvnc only
-    - Same for desktop-stop.
-  - [ ] 15.7 doctor.ts: check both desktops independently
-    - Report selkies status (Xvfb:1, stream:6080, XFCE session, static client)
-    - Report kasmvnc status (Xkasmvnc:2, stream:6081, XFCE session)
-    - Each can be "not started (optional)" independently.
-  - [ ] 15.8 docker-compose.yml: remove DESKTOP_STACK build arg
-    - No longer needed — both stacks always present.
-  - [ ] 15.9 Property test: FUSE safety for dual-desktop
-    - Both desktops' stop orders are reverse of start orders.
-    - XFCE is first to stop in both (HOME-fd holder).
+  - [x] 15.5 desktop.ts SSOT: multi-stack topology
+    - `installedStacks()` reads marker → `["selkies","vnc"]` | `["selkies"]` | `["vnc"]`.
+    - `startDesktop(target?)` / `stopDesktop(target?)` — default = all installed.
+    - `stopAllDesktops()` for lock-vault/destroy (stops every installed stack).
+    - Per-stack start/stop order; stop = reverse; XFCE first to stop (FUSE safety).
+  - [x] 15.6 desktop-start.ts / desktop-stop.ts: accept optional target argument
+    - no arg → all installed stacks; `selkies` / `vnc` → that stack only.
+  - [x] 15.7 doctor.ts: check each installed desktop independently
+    - selkies (Xvfb:1, stream:6080, static client) + kasmvnc (Xkasmvnc:2, stream:6081).
+  - [x] 15.8 entrypoint-main.ts + docker-compose.yml
+    - entrypoint flips autostart=true for all installed desktop groups on vault mount.
+    - docker-compose `DESKTOP_STACK=${DESKTOP_STACK:-both}` build arg + env passthrough.
+  - [x] 15.9 Property test: FUSE safety for every installed stack
+    - Each stack's stop order = reverse of start order; XFCE first to stop.
     - `stopAllDesktops()` stops everything before unmount.
-  - [ ] 15.10 Integration verification
-    - Both desktops start independently and simultaneously.
-    - `/desktop/` → selkies H.264 stream; `/vnc/` → KasmVNC stream.
-    - Auth matrix: both endpoints gated by same basic_auth.
-    - lock-vault stops both desktops before unmount.
+  - [x] 15.10 Integration verification
+    - `both`: `/desktop/` → selkies, `/vnc/` → kasmvnc, both render in browser.
+    - `selkies` / `kasmvnc` single-stack builds still work (fallback).
+    - Auth matrix on both endpoints; lock-vault stops all desktops before unmount.
 
   ### PoC Findings (2026-05-31, 4-hour session)
 

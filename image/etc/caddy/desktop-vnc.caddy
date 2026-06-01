@@ -1,0 +1,46 @@
+# Desktop routing — KASMVNC stack. Provisioned at build time into
+# /etc/caddy/desktop.d/ and glob-imported by the main Caddyfile when
+# DESKTOP_STACK includes kasmvnc. Owns /vnc/ (runs parallel to /desktop/).
+#
+# KasmVNC serves BOTH the static noVNC client AND the WebSocket from its own
+# httpd on 127.0.0.1:6081 (-httpd /usr/share/kasmvnc/www).
+#
+# AUTH MODEL — KasmVNC NATIVE auth (verified working in Safari + Chrome):
+#   Xkasmvnc runs with -SecurityTypes None (disables the RFB/VNC-protocol auth;
+#   without it the client gets "No password configured for VNC Auth") but KEEPS
+#   its native HTTP Basic Auth (do NOT pass -DisableBasicAuth). The password
+#   lives at $HOME/.kasmpasswd (= /workspace/.desktop-vnc/.kasmpasswd), written
+#   by the entrypoint to the master password.
+#
+#   Caddy does NOT add its own basic_auth here — KasmVNC owns the auth
+#   END-TO-END including the /websockify WebSocket upgrade. This is REQUIRED:
+#   Safari (and other browsers) do NOT replay Caddy basic-auth credentials to a
+#   JS-initiated WebSocket handshake, so a Caddy gate on /websockify + a
+#   -DisableBasicAuth KasmVNC → WS upgrades 101 but auth fails → "Connecting..."
+#   forever. KasmVNC's own auth runs INSIDE the WS endpoint and works correctly.
+#
+#   Trade-off: KasmVNC uses its own realm ("Websockify"), so the browser prompts
+#   for credentials separately from the selkies /desktop/ realm ("restricted").
+#   Same username/password, just one extra prompt. This is the price of a
+#   working VNC stream and is acceptable.
+#
+# WS PATH QUIRK: the noVNC client hardcodes its WebSocket path to "websockify"
+# and builds ws://<host>/websockify (host = location.hostname, no /vnc/ prefix).
+# So the WS upgrade lands at the ROOT /websockify. We route that to KasmVNC.
+# No collision: selkies uses /desktop/websockets, code-server never uses it.
+
+# (1) WebSocket — client connects to ROOT /websockify (see quirk above).
+@vnc_ws path /websockify
+handle @vnc_ws {
+	reverse_proxy 127.0.0.1:6081 {
+		flush_interval -1
+	}
+}
+
+# (2) Static client + everything else under /vnc/ → KasmVNC (its own auth).
+handle_path /vnc/* {
+	reverse_proxy 127.0.0.1:6081
+}
+handle /vnc {
+	redir /vnc/ permanent
+}

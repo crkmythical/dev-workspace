@@ -217,8 +217,8 @@ if (bcryptHash) {
 
 // 8b. Auto-vault: init (if needed) + unlock (if not mounted) using masterPassword
 import { initVault, isInitialized, mountVault } from "./lib/vault.ts";
-import { VAULT_CIPHER_DIR, WORKSPACE_MOUNT } from "@sdw/core/constants";
-import { startDesktop, waitForDesktopStream } from "./lib/desktop.ts";
+import { VAULT_CIPHER_DIR, WORKSPACE_MOUNT, SELKIES_HOME, VNC_HOME } from "@sdw/core/constants";
+import { installedStacks } from "./lib/desktop.ts";
 
 const vaultInitialized = isInitialized(VAULT_CIPHER_DIR);
 if (!vaultInitialized) {
@@ -232,11 +232,35 @@ if (mountCheck.exitCode !== 0 && (vaultInitialized || isInitialized(VAULT_CIPHER
   const { ok } = await mountVault(VAULT_CIPHER_DIR, WORKSPACE_MOUNT, masterPassword);
   if (ok) {
     console.log("Vault unlocked.");
-    // 8c. Auto-start desktop: enable autostart so supervisord starts it automatically
-    mkdirSync(`${WORKSPACE_MOUNT}/.desktop/.local/share/applications`, { recursive: true });
+    // 8c. Auto-start desktop(s): create per-stack HOME dirs + flip autostart=true
+    // on every installed desktop group's supervisor conf so supervisord starts
+    // them automatically. "both" mode → both desktop.conf and vnc.conf present.
     mkdirSync("/tmp/.desktop-cache", { recursive: true });
-    // Patch supervisor desktop config to autostart=true (one-shot sed)
-    await $`sed -i 's/autostart=false/autostart=true/g' /etc/supervisor/conf.d/desktop.conf`.quiet().nothrow();
+    const stacks = installedStacks();
+    if (stacks.includes("selkies")) {
+      mkdirSync(`${SELKIES_HOME}/.local/share/applications`, { recursive: true });
+    }
+    if (stacks.includes("vnc")) {
+      mkdirSync(`${VNC_HOME}/.local/share/applications`, { recursive: true });
+      // KasmVNC native HTTP Basic Auth reads $HOME/.kasmpasswd. Write the master
+      // password there (user "user") so the /vnc/ WS upgrade authenticates with
+      // the same credentials as code-server/selkies. KasmVNC owns its WS auth;
+      // Caddy does NOT gate /vnc/ (browsers don't replay Caddy creds to the WS).
+      const kasmpasswd = `${VNC_HOME}/.kasmpasswd`;
+      const pwProc = Bun.spawn(["kasmvncpasswd", "-u", "user", "-w", "-r", kasmpasswd], {
+        stdin: "pipe",
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      pwProc.stdin.write(`${masterPassword}\n${masterPassword}\n`);
+      await pwProc.stdin.end();
+      await pwProc.exited;
+      await $`chmod 0600 ${kasmpasswd}`.quiet().nothrow();
+    }
+    // Patch every desktop group conf (one-shot sed; only files that exist).
+    await $`sh -c "sed -i 's/autostart=false/autostart=true/g' /etc/supervisor/conf.d/desktop.conf /etc/supervisor/conf.d/vnc.conf 2>/dev/null || true"`
+      .quiet()
+      .nothrow();
   } else {
     console.warn("WARNING: Vault unlock failed (password mismatch?). Run 'unlock-vault' manually.");
   }
@@ -244,13 +268,19 @@ if (mountCheck.exitCode !== 0 && (vaultInitialized || isInitialized(VAULT_CIPHER
 
 // 9. exec supervisord (explicitly pass the current environment so Caddy, a
 // supervisord child, sees DESKTOP_BCRYPT_HASH for its basic_auth directive).
+const stacks = installedStacks();
 console.log("");
 console.log("╔══════════════════════════════════════════════════╗");
 console.log("║          Secure Dev Workspace Ready             ║");
 console.log("╠══════════════════════════════════════════════════╣");
 console.log(`║  Password:  ${masterPassword.padEnd(36)}║`);
 console.log(`║  Code:      http://localhost:18080               ║`);
-console.log(`║  Desktop:   http://localhost:18080/desktop/      ║`);
+if (stacks.includes("selkies")) {
+  console.log(`║  Desktop:   http://localhost:18080/desktop/      ║`);
+}
+if (stacks.includes("vnc")) {
+  console.log(`║  VNC:       http://localhost:18080/vnc/          ║`);
+}
 console.log(`║  Auth:      user / ${masterPassword.padEnd(29)}║`);
 console.log("╚══════════════════════════════════════════════════╝");
 console.log("");

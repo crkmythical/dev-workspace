@@ -1,15 +1,32 @@
 #!/usr/bin/env bun
 /**
- * desktop-start — Start the on-demand remote desktop.
+ * desktop-start — Start the on-demand remote desktop(s).
+ *
+ * Usage:
+ *   desktop-start            start every installed stack (selkies + vnc in "both" mode)
+ *   desktop-start selkies    start only the selkies stack (/desktop/)
+ *   desktop-start vnc        start only the kasmvnc stack (/vnc/)
  */
 import { mkdirSync } from "node:fs";
 import {
   DESKTOP_CACHE_DIR,
-  DESKTOP_HOME,
+  SELKIES_HOME,
+  VNC_HOME,
   WORKSPACE_MOUNT,
 } from "@sdw/core/constants";
 import { $ } from "bun";
-import { isDesktopRunning, startDesktop, waitForDesktopStream } from "./lib/desktop.ts";
+import {
+  type DesktopTarget,
+  installedStacks,
+  isDesktopRunning,
+  startDesktop,
+  waitForDesktopStream,
+} from "./lib/desktop.ts";
+
+const URL_FOR: Record<DesktopTarget, string> = {
+  selkies: "/desktop/",
+  vnc: "/vnc/",
+};
 
 const mountCheck = await $`mountpoint -q ${WORKSPACE_MOUNT}`.quiet().nothrow();
 if (mountCheck.exitCode !== 0) {
@@ -17,19 +34,38 @@ if (mountCheck.exitCode !== 0) {
   process.exit(1);
 }
 
-if (await isDesktopRunning()) {
-  console.log("Desktop already running. Access at: /desktop/");
-  process.exit(0);
+// Resolve which stacks to start from the CLI arg (default: all installed).
+const arg = process.argv[2] as DesktopTarget | undefined;
+if (arg && arg !== "selkies" && arg !== "vnc") {
+  console.error(`ERROR: unknown target '${arg}'. Use 'selkies' or 'vnc'.`);
+  process.exit(1);
+}
+const installed = installedStacks();
+if (arg && !installed.includes(arg)) {
+  console.error(`ERROR: stack '${arg}' is not installed in this image.`);
+  process.exit(1);
+}
+const targets = arg ? [arg] : installed;
+
+// Shared cache dir + per-stack HOME dirs.
+mkdirSync(DESKTOP_CACHE_DIR, { recursive: true });
+if (targets.includes("selkies")) {
+  mkdirSync(`${SELKIES_HOME}/.local/share/applications`, { recursive: true });
+}
+if (targets.includes("vnc")) {
+  mkdirSync(`${VNC_HOME}/.local/share/applications`, { recursive: true });
 }
 
-mkdirSync(`${DESKTOP_HOME}/.local/share/applications`, { recursive: true });
-mkdirSync(DESKTOP_CACHE_DIR, { recursive: true });
-
-console.log("Starting desktop...");
-await startDesktop();
-
-if (await waitForDesktopStream(30)) {
-  console.log("\n✓ Desktop ready. Access at: /desktop/\n");
-} else {
-  console.warn("⚠ Desktop started but stream port not ready after 30s. Check logs.");
+for (const target of targets) {
+  if (await isDesktopRunning(target)) {
+    console.log(`Desktop [${target}] already running. Access at: ${URL_FOR[target]}`);
+    continue;
+  }
+  console.log(`Starting desktop [${target}]...`);
+  await startDesktop(target);
+  if (await waitForDesktopStream(target, 30)) {
+    console.log(`✓ Desktop [${target}] ready. Access at: ${URL_FOR[target]}`);
+  } else {
+    console.warn(`⚠ Desktop [${target}] started but stream port not ready after 30s.`);
+  }
 }

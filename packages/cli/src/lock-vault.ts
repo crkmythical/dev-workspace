@@ -4,7 +4,7 @@ import { STATE_SOCKET_PATH, WORKSPACE_MOUNT } from "@sdw/core/constants";
  * lock-vault — Unmount the gocryptfs vault
  */
 import { $ } from "bun";
-import { isDesktopRunning, stopDesktop } from "./lib/desktop.ts";
+import { isAnyDesktopRunning, stopAllDesktops } from "./lib/desktop.ts";
 import { planLock } from "./lib/vault-lifecycle.ts";
 
 // 1. Check if mounted
@@ -15,10 +15,10 @@ if (lockPlan.action === "noop") {
   process.exit(lockPlan.exitCode);
 }
 
-// 2. Stop desktop if running (before unmount to avoid FUSE EBUSY)
-if (await isDesktopRunning()) {
-  console.log("Stopping desktop session...");
-  await stopDesktop();
+// 2. Stop all desktops if running (before unmount to avoid FUSE EBUSY)
+if (await isAnyDesktopRunning()) {
+  console.log("Stopping desktop session(s)...");
+  await stopAllDesktops();
 }
 
 // 3. Unmount

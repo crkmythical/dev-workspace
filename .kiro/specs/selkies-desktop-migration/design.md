@@ -763,3 +763,68 @@ Selkies proves unsatisfactory after integration, switch branches. No build-arg
 gate, no conditional Dockerfile paths, no dual supervisord/Caddyfile variants.
 This keeps the implementation maximally clean and eliminates an entire class of
 conditional complexity.
+
+---
+
+## Addendum (2026-06-01) — Dual-Desktop Parallel Architecture (Task 15)
+
+The earlier "KasmVNC not retained" decision was superseded. KasmVNC 1.4.0 was
+proven to work on arm64 Docker Desktop (the previous "framebuffer encoder
+broken" diagnosis was wrong — see below). Both stacks now run **in parallel**.
+
+### Stack selector
+
+`DESKTOP_STACK` build arg, default **`both`**:
+
+| Value | Installed | Auto-started | Routes |
+|-------|-----------|--------------|--------|
+| `both` (default) | selkies + kasmvnc | both | `/desktop/` + `/vnc/` |
+| `selkies` | selkies only | selkies | `/desktop/` |
+| `kasmvnc` | kasmvnc only | kasmvnc | `/vnc/` |
+
+Recorded in `/etc/sdw-desktop-stack`; read by `desktop.ts` SSOT (`installedStacks()`).
+
+### Topology (both mode)
+
+- **selkies** — supervisord group `desktop`: Xvfb `:1` + audio + selkies `:6080` + XFCE.
+  HOME `/workspace/.desktop`. Served at `/desktop/`. Caddy serves the static client
+  and reverse-proxies the WS `/desktop/websockets`. Auth: Caddy basic_auth (realm
+  `restricted`).
+- **kasmvnc** — supervisord group `vnc`: Xkasmvnc `:2` (integrated X + WS on `:6081`)
+  + XFCE. HOME `/workspace/.desktop-vnc`. Served at `/vnc/`. KasmVNC's own httpd
+  serves the client + WS. Auth: KasmVNC NATIVE basic auth (realm `Websockify`).
+
+Two independent X displays, two independent XFCE sessions, two HOME dirs. Each
+group's stop order is the exact reverse of its start order, XFCE first (FUSE
+safety). `stopAllDesktops()` stops every installed group before vault unmount.
+
+### KasmVNC root-cause findings (corrects the Task 15 "BLOCKED" misdiagnosis)
+
+KasmVNC 1.4.0 streams correctly on arm64 Docker Desktop. The prior failure was a
+chain of **configuration** issues, not an encoder/virtualization bug:
+
+1. **Password file path.** KasmVNC 1.4.0 reads `$HOME/.kasmpasswd` (HOME-relative),
+   not a fixed `/root/.kasmpasswd`. With HOME=`/workspace/.desktop-vnc`, the file
+   must be at `/workspace/.desktop-vnc/.kasmpasswd`. The entrypoint writes it
+   (user `user`, master password) via `kasmvncpasswd -u user -w -r`.
+2. **`-SecurityTypes None` is REQUIRED.** Without it the RFB/VNC-protocol layer
+   demands a VNC password → client error "No password configured for VNC Auth".
+3. **Do NOT pass `-DisableBasicAuth`.** KasmVNC must own its HTTP Basic Auth so it
+   can authenticate the `/websockify` WebSocket upgrade itself.
+4. **Caddy must NOT add its own basic_auth to `/vnc/`.** Browsers (notably Safari)
+   do NOT replay Caddy basic-auth credentials to a JS-initiated WebSocket
+   handshake. If Caddy gates `/websockify` and KasmVNC runs `-DisableBasicAuth`,
+   the WS upgrades 101 but auth fails → "Connecting..." forever. Letting KasmVNC
+   own auth end-to-end makes the stream start.
+5. **WS path quirk.** The noVNC client hardcodes its WS path to `websockify` and
+   builds `ws://<host>/websockify` (host = `location.hostname`, no `/vnc/`
+   prefix). So the upgrade lands at the ROOT `/websockify`; Caddy routes that to
+   `:6081`. No collision (selkies uses `/desktop/websockets`).
+
+### Auth UX trade-off (accepted)
+
+selkies (`/desktop/`, realm `restricted`) and kasmvnc (`/vnc/`, realm `Websockify`)
+use different auth realms with the SAME username/password. The browser therefore
+prompts for KasmVNC separately. Attempting to unify the realm by moving KasmVNC
+auth to Caddy breaks the WebSocket in Safari (point 4 above), so the separate
+prompt is the deliberate, correct trade-off for a working VNC stream.

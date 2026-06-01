@@ -7,6 +7,10 @@ services:
       args:
         # Base image: Kali (default) or Debian trixie
         # Override: docker compose build --build-arg BASE_IMAGE=debian:trixie-slim
+        BASE_IMAGE: ${BASE_IMAGE:-kalilinux/kali-rolling}
+        # Desktop stack: both (default) | selkies | kasmvnc
+        # both → selkies (/desktop/) + kasmvnc (/vnc/) run in parallel
+        DESKTOP_STACK: ${DESKTOP_STACK:-both}
     container_name: dev-workspace
     cap_add:
       - SYS_ADMIN

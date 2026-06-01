@@ -1,10 +1,12 @@
 :8080 {
-	# --- Remote desktop (stack-specific routing) ---
-	# The desktop block is provisioned at build time based on DESKTOP_STACK:
-	#   selkies  → Caddy serves static client + reverse-proxies WS /desktop/websockets
-	#   kasmvnc  → Caddy reverse-proxies everything under /desktop to KasmVNC
-	# Both bind 127.0.0.1:6080 and sit behind the shared $DESKTOP_BCRYPT_HASH auth.
-	import /etc/caddy/desktop.caddy
+	# --- Remote desktop(s) (stack-specific routing) ---
+	# Per-stack snippets are provisioned at build time into /etc/caddy/desktop.d/
+	# based on DESKTOP_STACK:
+	#   selkies  → desktop-selkies.caddy  (serves /desktop/, WS /desktop/websockets)
+	#   kasmvnc  → desktop-vnc.caddy      (serves /vnc/,     WS /vnc/websockify)
+	#   both     → both snippets active simultaneously
+	# All bind 127.0.0.1 and sit behind the shared $DESKTOP_BCRYPT_HASH auth.
+	import /etc/caddy/desktop.d/*.caddy
 
 	# --- Sync service ---
 	handle /sync/* {
