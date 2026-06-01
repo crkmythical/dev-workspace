@@ -4,9 +4,9 @@
 
 ```
 packages/
-├── core/       Shared pure logic (types, constants, AAD, reconcile, ReplayWindow)
+├── core/       Shared pure logic (types, constants, AAD, reconcile, ReplayWindow, backup decisions)
 ├── server/     Hono + Bun.serve() sync service (upload, download, doctor, WebSocket)
-├── cli/        Container CLI tools (init-vault, unlock-vault, lock-vault, vault-sync, doctor, setup)
+├── cli/        Container CLI tools (init-vault, unlock-vault, lock-vault, vault-sync, backup-watcher, doctor, setup)
 └── spa/        Browser file sync SPA (File System Access API + E2E encryption)
 ```
 
@@ -18,6 +18,7 @@ packages/
 - **Selkies + KasmVNC** — Two parallel browser-accessible remote desktops (on-demand, autostart=false). See "Remote Desktop: Selkies vs KasmVNC" below.
 - **Clash/mihomo** — Encrypted egress proxy
 - **gocryptfs** — Disk encryption (AES-256, 4KB blocks)
+- **restic** — Realtime backup to S3 (client-side encryption, dedup, snapshots; opt-in via `RESTIC_REPOSITORY`)
 - **supervisord** — Process management
 - **Zulu JDK 17** — Java runtime (via mise)
 
@@ -37,6 +38,7 @@ L1: Clash proxy (VLESS+WS+TLS)                  ← Traffic obfuscation
 Browser → Cloudflare Tunnel → Caddy(:8080) → code-server(:8082) / sync-service(:8081)
 Container egress → Clash(:7890) → Proxy nodes → Internet
 Vault sync → git push (via Clash) → GitHub (encrypted ciphertext)
+Realtime backup → restic (via Clash) → S3 (restic-encrypted, deduplicated snapshots)
 ```
 
 ## Key Design Decisions
@@ -47,6 +49,20 @@ Vault sync → git push (via Clash) → GitHub (encrypted ciphertext)
 4. PNG camouflage on sync wire (DLP evasion)
 5. Replay protection (ring buffer nonce tracking)
 6. LaunchAgent for tunnel (no sudo, auto-start on login)
+7. Dual persistence: vault-sync (git, 30min cron, ciphertext) + restic (S3, event-driven 10s, plaintext→restic-encrypted)
+
+## Persistence Model
+
+Two independent backup chains coexist:
+
+| Chain | Source | Trigger | Backend | Encryption | Purpose |
+|-------|--------|---------|---------|------------|---------|
+| vault-sync | `/vault/cipher` (gocryptfs ciphertext) | cron (30 min) | GitHub (git push) | gocryptfs (at-rest) | Slow secondary off-site |
+| backup-watcher | `/workspace` (plaintext FUSE) | inotify + 10s debounce | S3 (restic) | restic client-side | Fast primary backup |
+
+Both are opt-in (`VAULT_GIT_REPO` / `RESTIC_REPOSITORY`). Neither blocks the other.
+The backup-watcher holds inotify watches on `/workspace` and must be stopped before
+`fusermount -u` (handled by `lock-vault` and `destroy`).
 
 ## Remote Desktop: Selkies vs KasmVNC
 

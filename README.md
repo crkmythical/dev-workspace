@@ -67,14 +67,15 @@ docker compose build --build-arg BASE_IMAGE=debian:trixie-slim
 ## Commands (inside container)
 
 ```bash
-doctor              # Health check (reports both desktops)
+doctor              # Health check (reports both desktops + backup)
 noproxy <cmd>       # Run command bypassing proxy (direct network)
-lock-vault          # Lock the encrypted workspace (stops all desktops first)
+lock-vault          # Lock the encrypted workspace (stops desktops + backup first)
 unlock-vault        # Unlock with password
 desktop-start       # Start all installed desktops
 desktop-start vnc   # Start only the KasmVNC desktop
 desktop-stop        # Stop all desktops
 desktop-stop selkies # Stop only the Selkies desktop
+backup-init         # Initialize restic repo (auto-runs on first boot if configured)
 ```
 
 ## Authentication
@@ -114,3 +115,7 @@ The tunnel auto-starts on macOS login via LaunchAgent. No port forwarding needed
 | DESKTOP_RESOLUTION | 1920x1080 | KasmVNC (`/vnc/`) geometry. Selkies (`/desktop/`) ignores this — it auto-fits the browser window (adaptive). |
 | DESKTOP_AUDIO | 1 | Enable PulseAudio (0 to disable) |
 | TUNNEL_HOST_PORT | 18080 | Host port mapping |
+| RESTIC_REPOSITORY | (empty) | S3 backup repo URL. Presence enables realtime backup. |
+| RESTIC_PASSWORD | (empty) | Backup repo encryption password |
+| AWS_ACCESS_KEY_ID | (empty) | S3 credentials for backup |
+| AWS_SECRET_ACCESS_KEY | (empty) | S3 credentials for backup |
