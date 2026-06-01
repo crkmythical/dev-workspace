@@ -69,8 +69,8 @@ Key design decisions baked in:
     - **Property 9: Backoff is monotonically non-decreasing**
     - **Validates: Requirements 7.1**
 
-- [ ] 3. Unit tests (`packages/core/tests/backup.test.ts`)
-  - [ ] 3.1 Write unit tests for all pure functions
+- [x] 3. Unit tests (`packages/core/tests/backup.test.ts`)
+  - [x] 3.1 Write unit tests for all pure functions
     - `planDebounce`: trigger after 10s quiet, wait during quiet, coalesce when in-flight, fallback after 5min, immediate trigger when `lastTriggerMs === null`, **wait when within backoff window** (consecutiveFailures > 0 AND nowMs - lastFailureMs < backoffDelay)
     - `planPrune`: prune-due when never pruned, prune-due after cadence, skip before cadence
     - `backoffDelayMs`: correct exponential values (5s, 10s, 20s, 40s, 80s), cap at failure count 4+
@@ -80,7 +80,7 @@ Key design decisions baked in:
     - `shouldNotify`: threshold boundary (2 → false, 3 → true)
     - _Requirements: 1.6, 3.4, 6.3, 7.1, 13.4, 14.1, 15.1, 15.4_
 
-- [ ] 4. Checkpoint — `bun test` green for core backup logic
+- [x] 4. Checkpoint — `bun test` green for core backup logic
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 5. CLI: Backup watcher (`packages/cli/src/backup-watcher.ts`)
