@@ -170,19 +170,19 @@ Key design decisions baked in:
 - [x] 14. Checkpoint — full build + `bun test` green
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 15. Integration verification
-  - [ ] 15.1 Opt-in gate: container without `RESTIC_REPOSITORY` → backup-watcher not running, no errors
+- [x] 15. Integration verification
+  - [x] 15.1 Opt-in gate: container without `RESTIC_REPOSITORY` → backup-watcher not running, no errors
     - _Requirements: 13.1, 13.2_
-  - [ ] 15.2 Start on mount: unlock vault with `RESTIC_REPOSITORY` set → backup-watcher starts, repo auto-initialized
+  - [x] 15.2 Start on mount: unlock vault with `RESTIC_REPOSITORY` set → backup-watcher starts, repo auto-initialized
     - _Requirements: 4.3, 10.2_
-  - [ ] 15.3 FUSE safety: start backup-watcher → `lock-vault` → watcher stopped, unmount succeeds (no EBUSY)
+  - [x] 15.3 FUSE safety: start backup-watcher → `lock-vault` → watcher stopped, unmount succeeds (no EBUSY)
     - _Requirements: 8.2, 8.3_
-  - [ ] 15.4 Coexistence: both backup-watcher and vault-sync-cron running simultaneously without interference
+  - [x] 15.4 Coexistence: both backup-watcher and vault-sync-cron running simultaneously without interference
     - _Requirements: 9.1, 9.2, 9.3_
-  - [ ] 15.5 Doctor reporting: verify doctor output includes backup component in all states (ok, warn, fail, not-configured)
+  - [x] 15.5 Doctor reporting: verify doctor output includes backup component in all states (ok, warn, fail, not-configured)
     - _Requirements: 14.1-14.4_
 
-- [ ] 16. Final checkpoint — all tests pass, image builds, end-to-end confirmed
+- [x] 16. Final checkpoint — all tests pass, image builds, end-to-end confirmed
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes
