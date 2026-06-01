@@ -53,6 +53,7 @@ export async function destroyCore(opts: DestroyOptions): Promise<void> {
   // Phase 1: Unmount vaults
   log(opts, "[Phase 1] Unmounting vaults...");
   await stopAllDesktops();
+  await $`supervisorctl stop backup-watcher`.quiet().nothrow();
   await unmountVault(WORKSPACE_MOUNT);
   await unmountVault(PENTEST_MOUNT);
 

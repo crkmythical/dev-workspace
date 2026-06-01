@@ -251,6 +251,29 @@ if (mountCheck.exitCode !== 0 && (vaultInitialized || isInitialized(VAULT_CIPHER
     await $`sh -c "sed -i 's/autostart=false/autostart=true/g' /etc/supervisor/conf.d/desktop.conf /etc/supervisor/conf.d/vnc.conf 2>/dev/null || true"`
       .quiet()
       .nothrow();
+
+    // 8d. Auto-start backup watcher (if configured via RESTIC_REPOSITORY)
+    if (process.env.RESTIC_REPOSITORY) {
+      // Auto-init repo if not yet initialized (idempotent).
+      const initCheck = await $`restic snapshots --no-lock`.quiet().nothrow();
+      if (initCheck.exitCode !== 0) {
+        const stderr = (await new Response(initCheck.stderr).text()).toLowerCase();
+        if (stderr.includes("wrong password") || stderr.includes("unable to open config")) {
+          console.warn("WARNING: Backup repo exists but RESTIC_PASSWORD does not match. Check .env.");
+        } else {
+          const initResult = await $`restic init`.quiet().nothrow();
+          if (initResult.exitCode === 0) {
+            console.log("Backup repo initialized.");
+          } else {
+            console.warn("WARNING: Backup repo init failed (will retry on next start).");
+          }
+        }
+      }
+      // Flip autostart so supervisord starts the watcher
+      await $`sed -i 's/autostart=false/autostart=true/' /etc/supervisor/conf.d/backup-watcher.conf`
+        .quiet()
+        .nothrow();
+    }
   } else {
     console.warn("WARNING: Vault unlock failed (password mismatch?). Run 'unlock-vault' manually.");
   }

@@ -199,6 +199,47 @@ if (existsSync(`${PENTEST_CIPHER_DIR}/gocryptfs.conf`)) {
   results.push({ component: "Pentest vault", status: "ok", detail: "not initialized (optional)" });
 }
 
+// 8. Backup (S3/restic)
+import {
+  evaluateBackupGate,
+  planDoctorBackupStatus,
+  BACKUP_STATE_DIR,
+} from "@sdw/core";
+
+const backupGate = evaluateBackupGate(process.env);
+const backupLastSuccessFile = `${BACKUP_STATE_DIR}/last-success`;
+const backupFailuresFile = `${BACKUP_STATE_DIR}/consecutive-failures`;
+const backupLastSuccess = existsSync(backupLastSuccessFile)
+  ? readFileSync(backupLastSuccessFile, "utf-8").trim()
+  : null;
+const backupFailures = existsSync(backupFailuresFile)
+  ? parseInt(readFileSync(backupFailuresFile, "utf-8").trim(), 10) || 0
+  : 0;
+
+const backupStatus = planDoctorBackupStatus({
+  gateResult: backupGate,
+  lastSuccessMs: backupLastSuccess ? new Date(backupLastSuccess).getTime() : null,
+  consecutiveFailures: backupFailures,
+  nowMs: Date.now(),
+});
+
+const backupDetail =
+  backupStatus === "not-configured"
+    ? "not configured (optional)"
+    : backupStatus === "ok"
+      ? `last: ${backupLastSuccess}`
+      : backupStatus === "warn"
+        ? backupLastSuccess
+          ? `last: ${backupLastSuccess} (stale)`
+          : "no backup recorded"
+        : `${backupFailures} consecutive failures`;
+
+results.push({
+  component: "Backup (S3/restic)",
+  status: backupStatus === "not-configured" ? "ok" : backupStatus,
+  detail: backupDetail,
+});
+
 // Output
 console.log("=== Workspace Health Check ===");
 let hasFailure = false;

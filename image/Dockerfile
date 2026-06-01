@@ -143,6 +143,12 @@ RUN if [ "$DESKTOP_STACK" = "both" ] || [ "$DESKTOP_STACK" = "kasmvnc" ]; then \
 RUN curl -fsSL "https://caddyserver.com/api/download?os=linux&arch=$(dpkg --print-architecture)" -o /usr/bin/caddy \
     && chmod +x /usr/bin/caddy
 
+# Install restic (realtime backup to S3) — single static binary, no runtime deps.
+ARG RESTIC_VERSION=0.17.3
+RUN curl -fsSL "https://github.com/restic/restic/releases/download/v${RESTIC_VERSION}/restic_${RESTIC_VERSION}_linux_$(dpkg --print-architecture).bz2" \
+    | bunzip2 > /usr/local/bin/restic \
+    && chmod +x /usr/local/bin/restic
+
 # Install mise (runtime version manager) — retry on network failure
 RUN for i in 1 2 3; do curl -fsSL https://mise.jdx.dev/install.sh | bash && break || sleep 5; done
 ENV PATH="/root/.local/bin:${PATH}"
@@ -227,6 +233,9 @@ RUN mkdir -p /etc/supervisor/conf.d /etc/caddy/desktop.d && \
       cp /opt/desktop-conf/caddy-vnc.caddy /etc/caddy/desktop.d/desktop-vnc.caddy; \
     fi
 
+# Backup watcher supervisor config (always installed; feature is opt-in via env)
+COPY image/etc/supervisor/backup-watcher.conf /etc/supervisor/conf.d/backup-watcher.conf
+
 # Desktop default configs
 COPY image/etc/desktop/ /opt/workspace/image/etc/desktop/
 
@@ -252,7 +261,7 @@ RUN for cmd in init-vault unlock-vault lock-vault vault-sync doctor setup; do \
       printf '#!/bin/bash\nexec bun run /opt/workspace/packages/cli/src/%s.ts "$@"\n' "$cmd" > /usr/local/bin/$cmd; \
       chmod +x /usr/local/bin/$cmd; \
     done && \
-    for cmd in init-pentest unlock-pentest lock-pentest pentest-bootstrap self-destruct desktop-start desktop-stop desktop-install; do \
+    for cmd in init-pentest unlock-pentest lock-pentest pentest-bootstrap self-destruct desktop-start desktop-stop desktop-install backup-init; do \
       printf '#!/bin/bash\nexec bun run /opt/workspace/packages/cli/src/%s.ts "$@"\n' "$cmd" > /usr/local/bin/$cmd; \
       chmod +x /usr/local/bin/$cmd; \
     done && \

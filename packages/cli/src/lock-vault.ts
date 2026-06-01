@@ -21,6 +21,9 @@ if (await isAnyDesktopRunning()) {
   await stopAllDesktops();
 }
 
+// 2b. Stop backup-watcher if running (holds inotify watches + read fds on /workspace)
+await $`supervisorctl stop backup-watcher`.quiet().nothrow();
+
 // 3. Unmount
 console.log("Locking vault...");
 const umount = await $`fusermount -u ${WORKSPACE_MOUNT}`.quiet().nothrow();

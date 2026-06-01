@@ -83,8 +83,8 @@ Key design decisions baked in:
 - [x] 4. Checkpoint — `bun test` green for core backup logic
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 5. CLI: Backup watcher (`packages/cli/src/backup-watcher.ts`)
-  - [ ] 5.1 Create `packages/cli/src/backup-watcher.ts`
+- [x] 5. CLI: Backup watcher (`packages/cli/src/backup-watcher.ts`)
+  - [x] 5.1 Create `packages/cli/src/backup-watcher.ts`
     - Pre-flight: evaluate gate (exit 0 if dormant, exit 1 if misconfigured), verify mount (`mountpoint -q /workspace`)
     - Create state dir (`/var/run/backup-state`)
     - State variables: `lastEventMs`, `lastTriggerMs` (null initially), `backupInFlight`, `pendingDuringFlight`, `consecutiveFailures`, `lastFailureMs` (null initially), `stopping`, `resticProc`
@@ -94,32 +94,32 @@ Key design decisions baked in:
     - On success: (1) check `pendingDuringFlight` → if true, set `lastEventMs = Date.now()` (re-enter debounce for accumulated events), (2) clear `pendingDuringFlight = false`, (3) record `last-success` ISO timestamp, (4) reset `consecutiveFailures` to 0, clear `lastFailureMs`, (5) call `planPrune` → optionally spawn `restic forget --prune`
     - On failure: set `lastFailureMs = Date.now()`, increment `consecutiveFailures`, write state, check `shouldNotify` → write `/workspace/.notifications/backup-failure.md` (never log secrets)
     - _Requirements: 1.1-1.7, 2.1-2.4, 3.1-3.2, 4.1-4.2, 5.1-5.2, 6.1-6.4, 7.1-7.5, 8.1, 10.3, 12.1-12.2_
-  - [ ] 5.2 Graceful shutdown handler
+  - [x] 5.2 Graceful shutdown handler
     - On SIGTERM/SIGINT: set `stopping=true`, clear interval, SIGTERM restic subprocess (5s grace → SIGKILL), close watcher, exit 0
     - Ensures all inotify watches and read fds released before exit
     - _Requirements: 8.2-8.5_
 
-- [ ] 6. CLI: Backup init (`packages/cli/src/backup-init.ts`)
-  - [ ] 6.1 Create `packages/cli/src/backup-init.ts`
+- [x] 6. CLI: Backup init (`packages/cli/src/backup-init.ts`)
+  - [x] 6.1 Create `packages/cli/src/backup-init.ts`
     - Evaluate gate (exit if dormant/misconfigured)
     - Spawn `restic init` with proxy env and restic env vars
     - Handle "already initialized" (exit 0) vs real failure (exit 1)
     - This is a manual fallback/diagnostic tool; entrypoint handles auto-init
     - _Requirements: 4.3, 4.4_
 
-- [ ] 7. Checkpoint — CLI compiles, diagnostics clean
+- [x] 7. Checkpoint — CLI compiles, diagnostics clean
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 8. Container: Dockerfile restic installation (`image/Dockerfile`)
-  - [ ] 8.1 Add restic binary installation layer
+- [x] 8. Container: Dockerfile restic installation (`image/Dockerfile`)
+  - [x] 8.1 Add restic binary installation layer
     - `ARG RESTIC_VERSION=0.17.3`
     - Download from GitHub releases, bunzip2 to `/usr/local/bin/restic`, chmod +x
     - Architecture-aware: `dpkg --print-architecture`
     - Place immediately after the Caddy install layer (both are "download single static binary"; after selkies/kasmvnc layers for cache efficiency)
     - _Requirements: 4.1 (dependency)_
 
-- [ ] 9. Container: Supervisor configuration
-  - [ ] 9.1 Create `image/etc/supervisor/backup-watcher.conf`
+- [x] 9. Container: Supervisor configuration
+  - [x] 9.1 Create `image/etc/supervisor/backup-watcher.conf`
     - `[program:backup-watcher]`
     - `command=/root/.bun/bin/bun run /opt/workspace/packages/cli/src/backup-watcher.ts`
     - `autostart=false` (on-demand, started by entrypoint/unlock-vault)
@@ -128,29 +128,29 @@ Key design decisions baked in:
     - stdout/stderr to fd/1 and fd/2
     - _Requirements: 10.1, 10.2_
 
-- [ ] 10. Container: Entrypoint auto-init and watcher start
-  - [ ] 10.1 Modify `packages/cli/src/entrypoint-main.ts`
+- [x] 10. Container: Entrypoint auto-init and watcher start
+  - [x] 10.1 Modify `packages/cli/src/entrypoint-main.ts`
     - After vault auto-unlock succeeds, if `RESTIC_REPOSITORY` is set:
       1. Check if repo exists: `restic snapshots --no-lock` (quiet, nothrow)
       2. If exit ≠ 0: inspect stderr — if "wrong password"/"unable to open config" → log "WARNING: Backup repo exists but RESTIC_PASSWORD does not match"; otherwise → run `restic init` (quiet, nothrow); log success or warning
       3. Flip `autostart=false` → `autostart=true` in `/etc/supervisor/conf.d/backup-watcher.conf` via sed
     - This eliminates the manual `backup-init` step for normal flow; distinguishes "repo not found" from "password mismatch" to avoid misleading logs
     - _Requirements: 4.3, 10.2, 13.1, 13.3_
-  - [ ] 10.2 Modify `packages/cli/src/unlock-vault.ts`
+  - [x] 10.2 Modify `packages/cli/src/unlock-vault.ts`
     - After successful mount, if `RESTIC_REPOSITORY` is set: `supervisorctl start backup-watcher`
     - _Requirements: 10.2, 10.4_
 
-- [ ] 11. Lifecycle: Stop before unmount
-  - [ ] 11.1 Modify `packages/cli/src/lock-vault.ts`
+- [x] 11. Lifecycle: Stop before unmount
+  - [x] 11.1 Modify `packages/cli/src/lock-vault.ts`
     - Add `await $\`supervisorctl stop backup-watcher\`.quiet().nothrow()` before the FUSE unmount step
     - Place after desktop stop, before `fusermount -u`
     - _Requirements: 8.2, 8.3, 10.4_
-  - [ ] 11.2 Modify `packages/cli/src/lib/destroy.ts`
+  - [x] 11.2 Modify `packages/cli/src/lib/destroy.ts`
     - Same addition: stop backup-watcher before unmount in the destroy sequence
     - _Requirements: 8.2, 8.3_
 
-- [ ] 12. Doctor health reporting
-  - [ ] 12.1 Modify `packages/cli/src/doctor.ts`
+- [x] 12. Doctor health reporting
+  - [x] 12.1 Modify `packages/cli/src/doctor.ts`
     - Import `evaluateBackupGate`, `planDoctorBackupStatus`, `BACKUP_STATE_DIR` from `@sdw/core`
     - Read state files: `last-success`, `consecutive-failures`
     - Call `planDoctorBackupStatus` with gate result, last success, failures, now
@@ -158,16 +158,16 @@ Key design decisions baked in:
     - When dormant: report "not configured (optional)" without fail status
     - _Requirements: 14.1-14.4_
 
-- [ ] 13. Configuration surface
-  - [ ] 13.1 Update `.env.example`
+- [x] 13. Configuration surface
+  - [x] 13.1 Update `.env.example`
     - Add backup configuration section with `RESTIC_REPOSITORY`, `RESTIC_PASSWORD`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, optional `AWS_DEFAULT_REGION`
     - Comment explaining opt-in gate (presence of `RESTIC_REPOSITORY` enables feature)
     - _Requirements: 12.1, 13.1, 13.3_
-  - [ ] 13.2 Update `packages/cli/package.json`
+  - [x] 13.2 Update `packages/cli/package.json`
     - Add `backup-watcher` and `backup-init` to bin/scripts if applicable
     - _Requirements: (housekeeping)_
 
-- [ ] 14. Checkpoint — full build + `bun test` green
+- [x] 14. Checkpoint — full build + `bun test` green
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 15. Integration verification

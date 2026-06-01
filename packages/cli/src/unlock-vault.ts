@@ -106,3 +106,8 @@ if (existsSync(`${WORKSPACE_MOUNT}/.mise.toml`)) {
 }
 
 console.log("\n✓ Vault unlocked. Workspace available at /workspace\n");
+
+// 5f. Start backup watcher if configured (on-demand; entrypoint handles auto-start on boot)
+if (process.env.RESTIC_REPOSITORY) {
+  await $`supervisorctl start backup-watcher`.quiet().nothrow();
+}
