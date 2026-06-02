@@ -5,7 +5,7 @@ build:
 	docker compose build
 
 image-export:
-	docker save dev-workspace -o workspace.tar
+	docker save dev-workspace:$${WORKSPACE_VARIANT:-latest} -o workspace.tar
 
 image-import:
 	docker load -i workspace.tar

@@ -1,56 +1,46 @@
+x-workspace: &workspace-base
+  cap_add:
+    - SYS_ADMIN
+  security_opt:
+    # Required for XFCE desktop (glycin/bwrap sandbox needs pivot_root)
+    - seccomp:unconfined
+  devices:
+    - "/dev/fuse"
+  volumes:
+    - vault-data:/vault/cipher
+    - cache-data:/pentest/cipher
+    - clash-config:/etc/clash
+    - destruct-state:/var/run/self-destruct
+  ports:
+    - "127.0.0.1:${TUNNEL_HOST_PORT:-18080}:8080"
+  restart: unless-stopped
+  mem_reservation: ${MEMORY_RESERVATION:-8g}
+  env_file: .env
+  environment:
+    - DESKTOP_RESOLUTION=${DESKTOP_RESOLUTION:-1920x1080}
+    - DESKTOP_AUDIO=${DESKTOP_AUDIO:-0}
+  ulimits:
+    core: 0
+    nofile:
+      soft: 65536
+      hard: 65536
+  logging:
+    driver: local
+    options:
+      max-size: "10m"
+      max-file: "3"
+
 services:
   workspace:
-    image: dev-workspace:latest
+    <<: *workspace-base
+    image: dev-workspace:${WORKSPACE_VARIANT:-trixie}
     build:
       context: .
       dockerfile: image/Dockerfile
       args:
-        # Base image: Kali (default) or Debian trixie
-        # Override: docker compose build --build-arg BASE_IMAGE=debian:trixie-slim
-        BASE_IMAGE: ${BASE_IMAGE:-kalilinux/kali-rolling}
-        # Desktop stack: both (default) | selkies | kasmvnc
-        # both → selkies (/desktop/) + kasmvnc (/vnc/) run in parallel
+        BASE_IMAGE: ${BASE_IMAGE:-debian:trixie-slim}
         DESKTOP_STACK: ${DESKTOP_STACK:-both}
     container_name: dev-workspace
-    cap_add:
-      - SYS_ADMIN
-    security_opt:
-      # Required for the XFCE desktop on Kali. Kali's gdk-pixbuf (>=2.44) routes
-      # SVG icon loading through glycin, which renders inside a bubblewrap (bwrap)
-      # sandbox. bwrap needs pivot_root + user namespaces, which Docker's default
-      # seccomp profile blocks (pivot_root -> EPERM). Without this, the XFCE panel
-      # aborts (SIGABRT) on first SVG icon and the desktop comes up black.
-      # Verified: no glycin env var / config disables its sandbox in this version,
-      # and the classic librsvg gdk-pixbuf loader is bypassed by GTK's SVG path.
-      # code-server / vault / sync do NOT need this; it is purely for the desktop.
-      - seccomp:unconfined
-    devices:
-      - "/dev/fuse"
-    volumes:
-      - vault-data:/vault/cipher
-      - cache-data:/pentest/cipher
-      - clash-config:/etc/clash
-      - destruct-state:/var/run/self-destruct
-    ports:
-      - "127.0.0.1:${TUNNEL_HOST_PORT:-18080}:8080"
-    restart: unless-stopped
-    mem_reservation: ${MEMORY_RESERVATION:-8g}
-    env_file: .env
-    environment:
-      # KasmVNC (/vnc/) geometry only; Selkies (/desktop/) auto-fits the browser
-      # window (adaptive) and ignores this. Selkies Xvfb canvas is a fixed 4K.
-      - DESKTOP_RESOLUTION=${DESKTOP_RESOLUTION:-1920x1080}
-      - DESKTOP_AUDIO=${DESKTOP_AUDIO:-0}
-    ulimits:
-      core: 0
-      nofile:
-        soft: 65536
-        hard: 65536
-    logging:
-      driver: local
-      options:
-        max-size: "10m"
-        max-file: "3"
 
 volumes:
   vault-data:

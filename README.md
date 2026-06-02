@@ -64,34 +64,34 @@ DESKTOP_STACK=selkies docker compose build   # 仅 selkies
 DESKTOP_STACK=kasmvnc docker compose build   # 仅 kasmvnc
 ```
 
-### 切换基础镜像（Kali / Debian）
+### 基础镜像切换
 
-Dockerfile 已支持 `BASE_IMAGE` 作为 build-arg（默认 `kalilinux/kali-rolling`），无需改动任何文件，构建时传参即可切换：
+通过 `.env` 中的 `BASE_IMAGE` 和 `WORKSPACE_VARIANT` 控制：
 
 ```bash
-# 构建 Debian trixie 版本（覆盖默认 tag）
-docker compose build --build-arg BASE_IMAGE=debian:trixie-slim
+# Kali（默认）— 自带渗透测试工具 apt 源
+BASE_IMAGE=kalilinux/kali-rolling
+WORKSPACE_VARIANT=latest
 
-# 或通过环境变量
-BASE_IMAGE=debian:trixie-slim docker compose build
+# Debian trixie — 更精简，适合纯开发
+BASE_IMAGE=debian:trixie-slim
+WORKSPACE_VARIANT=trixie
 ```
 
-如需两个版本共存，用不同 tag 区分：
+修改后重新构建即可：
 
 ```bash
-# Kali 版本
-docker build -t dev-workspace:kali -f image/Dockerfile .
+docker compose build
+docker compose up -d
+```
 
-# Debian trixie 版本
+也可以不改 `.env`，直接命令行覆盖构建另一个 tag：
+
+```bash
 docker build -t dev-workspace:trixie -f image/Dockerfile --build-arg BASE_IMAGE=debian:trixie-slim .
 ```
 
-也可以先用 compose 构建再手动打 tag：
-
-```bash
-BASE_IMAGE=debian:trixie-slim docker compose build
-docker tag dev-workspace:latest dev-workspace:trixie
-```
+两个镜像除 OS 标识外工具链完全一致（Bun、Node、Java、Selkies、KasmVNC 等）。
 
 ## 容器内命令
 
@@ -124,18 +124,26 @@ backup-init         # 初始化 restic 仓库（配置后首次启动自动执�
 # 一次性配置（在宿主机执行，非容器内）
 ./scripts/setup-cloudflared.sh
 
+# 启动 tunnel（LaunchAgent，开机自启 + 崩溃自动重启）
+launchctl load ~/Library/LaunchAgents/com.cloudflare.tunnel.plist
+
+# 停止 tunnel
+launchctl unload ~/Library/LaunchAgents/com.cloudflare.tunnel.plist
+
 # 从任何地方访问：
 # https://workspace.cicd.dpdns.org
 # https://workspace.cicd.dpdns.org/desktop/   (Selkies)
 # https://workspace.cicd.dpdns.org/vnc/        (KasmVNC)
 ```
 
-Tunnel 通过 macOS LaunchAgent 开机自启，无需端口转发。
+`setup-cloudflared.sh` 会自动安装 cloudflared、登录 Cloudflare、创建 tunnel、配置 DNS 并安装 macOS LaunchAgent。
 
 ## 环境变量 (.env)
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
+| BASE_IMAGE | kalilinux/kali-rolling | 构建基础镜像（`debian:trixie-slim` 可选） |
+| WORKSPACE_VARIANT | latest | 镜像 tag 后缀（Kali 用 `latest`，Debian 用 `trixie`） |
 | PASSWORD | (自动生成) | 统一密码，用于 code-server、桌面和 vault |
 | CLASH_SUBSCRIPTION_URL | (必填) | Clash 代理订阅地址 |
 | DESKTOP_RESOLUTION | 1920x1080 | KasmVNC (`/vnc/`) 分辨率。Selkies (`/desktop/`) 忽略此项（自适应）。 |
