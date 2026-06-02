@@ -163,6 +163,13 @@ if (ready) {
   if (!providerLoaded) {
     console.warn("WARNING: Provider did not load nodes within 30s (will retry via interval).");
   }
+
+  // Point GLOBAL to auto-select (GLOBAL defaults to DIRECT which bypasses proxy)
+  await fetch(`http://127.0.0.1:${CLASH_CONTROLLER_PORT}/proxies/GLOBAL`, {
+    method: "PUT",
+    body: JSON.stringify({ name: "auto-select" }),
+    headers: { "Content-Type": "application/json" },
+  }).catch(() => {});
 }
 
 // 7. Egress probe (after node selection, give Clash a moment to establish connection)

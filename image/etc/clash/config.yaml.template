@@ -37,6 +37,7 @@ proxy-groups:
     type: url-test
     include-all: true
     exclude-type: direct
+    exclude-filter: "优选域名|IPv6优选"
     url: http://www.gstatic.com/generate_204
     interval: 180
     tolerance: 100
