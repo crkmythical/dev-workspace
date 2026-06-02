@@ -205,6 +205,7 @@ RUN echo 'export http_proxy=http://127.0.0.1:7890' >> /etc/profile.d/proxy.sh &&
 # Copy baked configs
 COPY image/supervisord.conf /etc/supervisor/supervisord.conf
 COPY image/etc/clash/config.yaml /etc/clash/config.yaml
+COPY image/etc/clash/config.yaml.template /etc/clash/config.yaml.template
 COPY image/etc/clash/rules.yaml /etc/clash/rules.yaml
 COPY image/etc/caddy/Caddyfile /etc/caddy/Caddyfile
 COPY image/etc/README-UNLOCK.md /workspace/README-UNLOCK.md

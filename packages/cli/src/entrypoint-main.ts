@@ -2,19 +2,20 @@
 import {
   CLASH_CONTROLLER_PORT,
   CLASH_HTTP_PORT,
-  CLASH_SOCKS_PORT,
   DESKTOP_DEFAULT_RESOLUTION,
 } from "@sdw/core/constants";
 /**
  * entrypoint-main — Container startup logic (called from entrypoint.sh)
  *
  * 1. Cleanup stale FUSE mounts
- * 2. Fetch Clash subscription
+ * 2. Generate Clash config from template + seed provider file
  * 3. Configure git globals
  * 4. Tune inotify
  * 5. Start Clash and wait for readiness
- * 6. Probe egress
- * 7. exec supervisord
+ * 6. Wait for provider to load (url-test auto-selects fastest node)
+ * 7. Probe egress
+ * 8. Generate auth + vault + desktop + backup
+ * 9. exec supervisord
  */
 import { $ } from "bun";
 import { envValidationError, findMissingRequiredEnv } from "./lib/env-validate.ts";
@@ -42,10 +43,23 @@ if (!process.env.DESKTOP_RESOLUTION) {
 await cleanupStaleMount("/workspace");
 await cleanupStaleMount("/pentest/rootfs");
 
-// 2. Fetch subscription (must bypass proxy since Clash isn't ready yet)
+// 2. Generate Clash config from template + seed provider file
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 const subUrl = process.env.CLASH_SUBSCRIPTION_URL;
 if (subUrl) {
-  const fetchProc = Bun.spawn(
+  // 2a. Generate config.yaml from template (inject subscription URL)
+  const templatePath = "/etc/clash/config.yaml.template";
+  if (existsSync(templatePath)) {
+    const template = readFileSync(templatePath, "utf-8");
+    const config = template.replace("{{CLASH_SUBSCRIPTION_URL}}", subUrl);
+    writeFileSync("/etc/clash/config.yaml", config);
+    console.log("Clash config generated from template.");
+  }
+
+  // 2b. Seed the provider file so Clash has nodes immediately on first start.
+  //     Download the full subscription and extract the proxies section.
+  mkdirSync("/etc/clash/providers", { recursive: true });
+  const seedProc = Bun.spawn(
     [
       "curl",
       "-fsSL",
@@ -55,7 +69,7 @@ if (subUrl) {
       "30",
       subUrl,
       "-o",
-      "/etc/clash/config.yaml.new",
+      "/tmp/subscription-full.yaml",
     ],
     {
       stdout: "pipe",
@@ -71,15 +85,30 @@ if (subUrl) {
       },
     },
   );
-  const fetchExit = await fetchProc.exited;
-  if (fetchExit === 0) {
-    await $`mv /etc/clash/config.yaml.new /etc/clash/config.yaml`.quiet();
-    // Force global mode in the config file (survives Clash restarts)
-    await $`sed -i 's/^mode:.*/mode: global/' /etc/clash/config.yaml`.quiet().nothrow();
-    console.log("Clash subscription updated.");
+  const seedExit = await seedProc.exited;
+  if (seedExit === 0) {
+    // Extract proxies section from full config for the provider file
+    const fullConfig = readFileSync("/tmp/subscription-full.yaml", "utf-8");
+    const lines = fullConfig.split("\n");
+    const proxiesIdx = lines.findIndex((l) => /^proxies:/.test(l));
+    if (proxiesIdx !== -1) {
+      // Find next top-level key after proxies
+      let endIdx = lines.length;
+      for (let i = proxiesIdx + 1; i < lines.length; i++) {
+        if (/^\S/.test(lines[i]) && !lines[i].startsWith("#")) {
+          endIdx = i;
+          break;
+        }
+      }
+      const proxiesYaml = lines.slice(proxiesIdx, endIdx).join("\n");
+      writeFileSync("/etc/clash/providers/subscription.yaml", proxiesYaml);
+      console.log("Provider seed file written.");
+    }
+    await $`rm -f /tmp/subscription-full.yaml`.quiet();
   } else {
-    console.warn("WARNING: Subscription fetch failed, using cached config.");
-    await $`rm -f /etc/clash/config.yaml.new`.quiet();
+    console.warn(
+      "WARNING: Subscription seed fetch failed; Clash will retry via provider interval.",
+    );
   }
 }
 
@@ -111,57 +140,29 @@ for (let i = 0; i < 30; i++) {
 }
 console.log(ready ? "Clash ready." : "WARNING: Clash not ready after 30s.");
 
-// 6. Set global mode + auto-select proxy node
+// 6. Wait for provider to load nodes (url-test auto-selects fastest)
 if (ready) {
-  // Switch to global mode: ALL traffic goes through the selected proxy node
-  await fetch(`http://127.0.0.1:${CLASH_CONTROLLER_PORT}/configs`, {
-    method: "PATCH",
-    body: JSON.stringify({ mode: "global" }),
-    headers: { "Content-Type": "application/json" },
-  }).catch(() => {});
-
-  try {
-    const resp = await fetch(`http://127.0.0.1:${CLASH_CONTROLLER_PORT}/proxies`);
-    if (resp.ok) {
-      const data = (await resp.json()) as any;
-      const selector = data.proxies?.["🚀 节点选择"];
-      if (selector && selector.now === "🎯 全球直连" && selector.all?.length > 1) {
-        const autoGroup = selector.all.find(
-          (n: string) => n.includes("自动") || n.includes("auto") || n.includes("url-test"),
-        );
-        // Prefer real proxy nodes with region identifiers over generic "优选域名" nodes
-        const regionNode = selector.all.find(
-          (n: string) =>
-            (n.includes("HKG") || n.includes("SGP") || n.includes("US") || n.includes("JP") ||
-             n.includes("香港") || n.includes("新加坡") || n.includes("美国") || n.includes("日本") ||
-             n.includes("移动") || n.includes("联通") || n.includes("电信")) &&
-            !n.includes("直连") && !n.includes("DIRECT"),
-        );
-        const proxyNode =
-          autoGroup ||
-          regionNode ||
-          selector.all.find(
-            (n: string) =>
-              !n.includes("直连") &&
-              !n.includes("DIRECT") &&
-              !n.includes("拦截") &&
-              !n.includes("REJECT") &&
-              !n.includes("净化") &&
-              !n.includes("漏网"),
-          );
-        if (proxyNode) {
-          await fetch(
-            `http://127.0.0.1:${CLASH_CONTROLLER_PORT}/proxies/%F0%9F%9A%80%20%E8%8A%82%E7%82%B9%E9%80%89%E6%8B%A9`,
-            {
-              method: "PUT",
-              body: JSON.stringify({ name: proxyNode }),
-            },
-          );
-          console.log(`Proxy auto-selected: ${proxyNode}`);
+  let providerLoaded = false;
+  for (let i = 0; i < 15; i++) {
+    try {
+      const resp = await fetch(
+        `http://127.0.0.1:${CLASH_CONTROLLER_PORT}/providers/proxies/subscription`,
+      );
+      if (resp.ok) {
+        const data = (await resp.json()) as any;
+        const nodeCount = Object.keys(data.proxies || {}).length;
+        if (nodeCount > 0) {
+          providerLoaded = true;
+          console.log(`Provider loaded: ${nodeCount} nodes (url-test auto-selecting fastest).`);
+          break;
         }
       }
-    }
-  } catch {}
+    } catch {}
+    await Bun.sleep(2000);
+  }
+  if (!providerLoaded) {
+    console.warn("WARNING: Provider did not load nodes within 30s (will retry via interval).");
+  }
 }
 
 // 7. Egress probe (after node selection, give Clash a moment to establish connection)
@@ -178,10 +179,11 @@ for (let i = 0; i < 3; i++) {
   }
   await Bun.sleep(3000);
 }
-console.log(egress ? "Egress confirmed." : "WARNING: Egress probe failed (proxy nodes may be down).");
+console.log(
+  egress ? "Egress confirmed." : "WARNING: Egress probe failed (proxy nodes may be down).",
+);
 
 // 8. Generate auth for desktop and code-server
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 const csConfigPath = "/root/.config/code-server/config.yaml";
 const envPassword = process.env.PASSWORD;
 let masterPassword: string;
@@ -215,10 +217,10 @@ if (bcryptHash) {
   console.log(`Auth configured (user: user, password: ${masterPassword}).`);
 }
 
+import { SELKIES_HOME, VAULT_CIPHER_DIR, VNC_HOME, WORKSPACE_MOUNT } from "@sdw/core/constants";
+import { ensureKasmPasswd, installedStacks } from "./lib/desktop.ts";
 // 8b. Auto-vault: init (if needed) + unlock (if not mounted) using masterPassword
 import { initVault, isInitialized, mountVault } from "./lib/vault.ts";
-import { VAULT_CIPHER_DIR, WORKSPACE_MOUNT, SELKIES_HOME, VNC_HOME } from "@sdw/core/constants";
-import { ensureKasmPasswd, installedStacks } from "./lib/desktop.ts";
 
 const vaultInitialized = isInitialized(VAULT_CIPHER_DIR);
 if (!vaultInitialized) {
@@ -259,7 +261,9 @@ if (mountCheck.exitCode !== 0 && (vaultInitialized || isInitialized(VAULT_CIPHER
       if (initCheck.exitCode !== 0) {
         const stderr = (await new Response(initCheck.stderr).text()).toLowerCase();
         if (stderr.includes("wrong password") || stderr.includes("unable to open config")) {
-          console.warn("WARNING: Backup repo exists but RESTIC_PASSWORD does not match. Check .env.");
+          console.warn(
+            "WARNING: Backup repo exists but RESTIC_PASSWORD does not match. Check .env.",
+          );
         } else {
           const initResult = await $`restic init`.quiet().nothrow();
           if (initResult.exitCode === 0) {
@@ -287,12 +291,12 @@ console.log("╔═════════════════════�
 console.log("║          Secure Dev Workspace Ready             ║");
 console.log("╠══════════════════════════════════════════════════╣");
 console.log(`║  Password:  ${masterPassword.padEnd(36)}║`);
-console.log(`║  Code:      http://localhost:18080               ║`);
+console.log("║  Code:      http://localhost:18080               ║");
 if (stacks.includes("selkies")) {
-  console.log(`║  Desktop:   http://localhost:18080/desktop/      ║`);
+  console.log("║  Desktop:   http://localhost:18080/desktop/      ║");
 }
 if (stacks.includes("vnc")) {
-  console.log(`║  VNC:       http://localhost:18080/vnc/          ║`);
+  console.log("║  VNC:       http://localhost:18080/vnc/          ║");
 }
 console.log(`║  Auth:      user / ${masterPassword.padEnd(29)}║`);
 console.log("╚══════════════════════════════════════════════════╝");

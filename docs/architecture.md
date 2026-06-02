@@ -16,7 +16,7 @@ packages/
 - **Hono** — HTTP framework (12,640 req/s)
 - **Caddy** — Reverse proxy (code-server + sync-service + dual desktops on single port)
 - **Selkies + KasmVNC** — Two parallel browser-accessible remote desktops (on-demand, autostart=false). See "Remote Desktop: Selkies vs KasmVNC" below.
-- **Clash/mihomo** — Encrypted egress proxy
+- **Clash/mihomo** — Encrypted egress proxy (proxy-providers + url-test auto-selection, 1h subscription refresh, 3min health-check)
 - **gocryptfs** — Disk encryption (AES-256, 4KB blocks)
 - **restic** — Realtime backup to S3 (client-side encryption, dedup, snapshots; opt-in via `RESTIC_REPOSITORY`)
 - **supervisord** — Process management

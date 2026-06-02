@@ -49,7 +49,7 @@ docker compose up -d
   - **KasmVNC** (`/vnc/`) — VNC-over-WebSocket，高延迟隧道下更稳定
 - **Code Server** — 浏览器中的 VS Code
 - **加密 Vault** — gocryptfs 自动初始化/解锁
-- **代理** — Clash 全局模式（所有流量走代理）
+- **代理** — Clash 全局模式（自动测速选最快节点，每小时刷新订阅，3 分钟健康检查）
 - **音频** — PulseAudio null-sink 桌面音频流
 - **基础系统** — Kali Linux（可通过 apt 安装渗透测试工具）
 
