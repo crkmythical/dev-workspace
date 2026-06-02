@@ -8,7 +8,7 @@ import {
  * entrypoint-main — Container startup logic (called from entrypoint.sh)
  *
  * 1. Cleanup stale FUSE mounts
- * 2. Generate Clash config from template + seed provider file
+ * 2. Generate Clash config from template
  * 3. Configure git globals
  * 4. Tune inotify
  * 5. Start Clash and wait for readiness
@@ -43,72 +43,17 @@ if (!process.env.DESKTOP_RESOLUTION) {
 await cleanupStaleMount("/workspace");
 await cleanupStaleMount("/pentest/rootfs");
 
-// 2. Generate Clash config from template + seed provider file
+// 2. Generate Clash config from template
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 const subUrl = process.env.CLASH_SUBSCRIPTION_URL;
 if (subUrl) {
-  // 2a. Generate config.yaml from template (inject subscription URL)
   const templatePath = "/etc/clash/config.yaml.template";
   if (existsSync(templatePath)) {
     const template = readFileSync(templatePath, "utf-8");
     const config = template.replace("{{CLASH_SUBSCRIPTION_URL}}", subUrl);
+    mkdirSync("/etc/clash/providers", { recursive: true });
     writeFileSync("/etc/clash/config.yaml", config);
     console.log("Clash config generated from template.");
-  }
-
-  // 2b. Seed the provider file so Clash has nodes immediately on first start.
-  //     Download the full subscription and extract the proxies section.
-  mkdirSync("/etc/clash/providers", { recursive: true });
-  const seedProc = Bun.spawn(
-    [
-      "curl",
-      "-fsSL",
-      "--noproxy",
-      "*",
-      "--max-time",
-      "30",
-      subUrl,
-      "-o",
-      "/tmp/subscription-full.yaml",
-    ],
-    {
-      stdout: "pipe",
-      stderr: "pipe",
-      env: {
-        ...process.env,
-        http_proxy: "",
-        https_proxy: "",
-        all_proxy: "",
-        HTTP_PROXY: "",
-        HTTPS_PROXY: "",
-        ALL_PROXY: "",
-      },
-    },
-  );
-  const seedExit = await seedProc.exited;
-  if (seedExit === 0) {
-    // Extract proxies section from full config for the provider file
-    const fullConfig = readFileSync("/tmp/subscription-full.yaml", "utf-8");
-    const lines = fullConfig.split("\n");
-    const proxiesIdx = lines.findIndex((l) => /^proxies:/.test(l));
-    if (proxiesIdx !== -1) {
-      // Find next top-level key after proxies
-      let endIdx = lines.length;
-      for (let i = proxiesIdx + 1; i < lines.length; i++) {
-        if (/^\S/.test(lines[i]) && !lines[i].startsWith("#")) {
-          endIdx = i;
-          break;
-        }
-      }
-      const proxiesYaml = lines.slice(proxiesIdx, endIdx).join("\n");
-      writeFileSync("/etc/clash/providers/subscription.yaml", proxiesYaml);
-      console.log("Provider seed file written.");
-    }
-    await $`rm -f /tmp/subscription-full.yaml`.quiet();
-  } else {
-    console.warn(
-      "WARNING: Subscription seed fetch failed; Clash will retry via provider interval.",
-    );
   }
 }
 
