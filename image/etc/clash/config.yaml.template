@@ -11,6 +11,9 @@ external-controller: 127.0.0.1:9090
 unified-delay: true
 tcp-concurrent: true
 
+profile:
+  store-selected: true
+
 dns:
   enable: true
   listen: 0.0.0.0:53
