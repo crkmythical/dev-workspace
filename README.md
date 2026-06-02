@@ -62,9 +62,35 @@ docker compose build
 # 单栈（备选）
 DESKTOP_STACK=selkies docker compose build   # 仅 selkies
 DESKTOP_STACK=kasmvnc docker compose build   # 仅 kasmvnc
+```
 
-# 使用 Debian trixie 替代 Kali 作为基础镜像
+### 切换基础镜像（Kali / Debian）
+
+Dockerfile 已支持 `BASE_IMAGE` 作为 build-arg（默认 `kalilinux/kali-rolling`），无需改动任何文件，构建时传参即可切换：
+
+```bash
+# 构建 Debian trixie 版本（覆盖默认 tag）
 docker compose build --build-arg BASE_IMAGE=debian:trixie-slim
+
+# 或通过环境变量
+BASE_IMAGE=debian:trixie-slim docker compose build
+```
+
+如需两个版本共存，用不同 tag 区分：
+
+```bash
+# Kali 版本
+docker build -t dev-workspace:kali -f image/Dockerfile .
+
+# Debian trixie 版本
+docker build -t dev-workspace:trixie -f image/Dockerfile --build-arg BASE_IMAGE=debian:trixie-slim .
+```
+
+也可以先用 compose 构建再手动打 tag：
+
+```bash
+BASE_IMAGE=debian:trixie-slim docker compose build
+docker tag dev-workspace:latest dev-workspace:trixie
 ```
 
 ## 容器内命令
