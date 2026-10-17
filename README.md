@@ -20,8 +20,8 @@ docker compose up -d
 
 # 3. 访问
 # Code:    http://localhost:18080
-# 桌面:    http://localhost:18080/desktop/   (Selkies, H.264)
-# VNC:     http://localhost:18080/vnc/        (KasmVNC)
+# 桌面:    http://localhost:18080/vnc/        (KasmVNC，默认)
+# Selkies: http://localhost:18080/desktop/   (仅 DESKTOP_STACK=selkies|both 的镜像)
 # 认证:    user / <你的 PASSWORD>
 ```
 
@@ -44,9 +44,9 @@ docker compose up -d
 
 ## 功能
 
-- **双远程桌面** — 两个独立桌面并行运行：
-  - **Selkies** (`/desktop/`) — H.264/WebCodecs 流式传输，低延迟本地访问最佳。自适应浏览器窗口大小，无需配置分辨率。
-  - **KasmVNC** (`/vnc/`) — VNC-over-WebSocket，高延迟隧道下更稳定
+- **远程桌面** — 默认只装 KasmVNC；Selkies 为可选栈，两者可并行（见「构建选项」）：
+  - **KasmVNC** (`/vnc/`，默认) — VNC-over-WebSocket，高延迟隧道下更稳定，镜像小、构建快
+  - **Selkies** (`/desktop/`，`DESKTOP_STACK=selkies|both`) — H.264/WebCodecs 流式传输，低延迟本地访问最佳。自适应浏览器窗口大小，无需配置分辨率
 - **Code Server** — 浏览器中的 VS Code
 - **加密 Vault** — gocryptfs 自动初始化/解锁
 - **代理** — Clash 全局模式（自动测速选最快节点，每小时刷新订阅，3 分钟健康检查）。尽力而为、不强制：读取代理环境变量的工具走 Clash，`noproxy` 或忽略代理设置的进程会直连。启动横幅、`doctor`、`/var/run/egress-status` 会显示出口状态（confirmed / degraded / down），出口异常不会阻止工作区启动
@@ -56,12 +56,16 @@ docker compose up -d
 ## 构建选项
 
 ```bash
-# 双桌面（默认）— selkies + kasmvnc 并行
+# 默认 — 仅 KasmVNC（.deb 约 8 MB，构建很快）
 docker compose build
 
-# 单栈（备选）
-DESKTOP_STACK=selkies docker compose build   # 仅 selkies
-DESKTOP_STACK=kasmvnc docker compose build   # 仅 kasmvnc
+# 其它桌面栈
+DESKTOP_STACK=selkies docker compose build   # 仅 Selkies（venv 约 420 MB，该层约 12 分钟）
+DESKTOP_STACK=both docker compose build      # Selkies + KasmVNC 并行
+
+# CI 预构建镜像：默认镜像 = KasmVNC；带 -full 后缀的镜像 = both
+#   ghcr.io/<owner>/dev-workspace:<tag>        KasmVNC
+#   ghcr.io/<owner>/dev-workspace:<tag>-full   Selkies + KasmVNC
 ```
 
 ### 基础镜像切换
@@ -85,6 +89,8 @@ docker compose build
 docker compose up -d
 ```
 
+受限网络（例如需要镜像仓库）：把 `BASE_IMAGE` 指向可达的镜像地址即可，Debian 系基础镜像会自动改用 Aliyun apt 源。
+
 也可以不改 `.env`，直接命令行覆盖构建另一个 tag：
 
 ```bash
@@ -96,7 +102,7 @@ docker build -t dev-workspace:trixie -f image/Dockerfile --build-arg BASE_IMAGE=
 ## 容器内命令
 
 ```bash
-doctor              # 健康检查（出口 / 双桌面 / 备份状态）
+doctor              # 健康检查（出口 / 已安装的桌面 / 备份状态）
 noproxy <cmd>       # 绕过代理直连执行命令
 lock-vault          # 锁定加密工作区（先停止桌面和备份）
 unlock-vault        # 输入密码解锁

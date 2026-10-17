@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { existsSync } from "node:fs";
 import { WORKSPACE_MOUNT } from "@sdw/core/shared/layout";
-import { VAULT_CIPHER_DIR, decide } from "@sdw/core/vault";
+import { VAULT_CIPHER_DIR, VAULT_GITATTRIBUTES, VAULT_GITIGNORE, decide } from "@sdw/core/vault";
 import { loadConfig } from "@sdw/core/workspace";
 /**
  * init-vault — One-time gocryptfs vault initialization
@@ -32,29 +32,9 @@ await $`git config --global user.email "${git.userEmail ?? "vault@local"}"`.quie
 await $`git config --global user.name "${git.userName ?? "Vault"}"`.quiet();
 await $`cd ${VAULT_CIPHER_DIR} && git init -b main`.quiet();
 
-// Write .gitignore
-const gitignore = `node_modules/
-target/
-build/
-dist/
-.cache/
-**/*.log
-.idea/
-.vscode/
-__pycache__/
-.DS_Store
-*.tmp
-*.swp
-shared/
-`;
-await Bun.write(`${VAULT_CIPHER_DIR}/.gitignore`, gitignore);
-
-// Write .gitattributes
-await Bun.write(
-  `${VAULT_CIPHER_DIR}/.gitattributes`,
-  "*.bin filter=lfs diff=lfs merge=lfs -text\n*.jar filter=lfs diff=lfs merge=lfs -text\n",
-);
-
+// Write .gitignore and .gitattributes
+await Bun.write(`${VAULT_CIPHER_DIR}/.gitignore`, VAULT_GITIGNORE);
+await Bun.write(`${VAULT_CIPHER_DIR}/.gitattributes`, VAULT_GITATTRIBUTES);
 // Initial commit
 await $`cd ${VAULT_CIPHER_DIR} && git add -A && git commit -q -m "init vault"`.quiet();
 

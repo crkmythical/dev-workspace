@@ -12,8 +12,7 @@ import {
   DESTRUCT_STATE_DIR,
   type DestroyDeps,
   type DestroyEffects,
-  PENTEST_VAULT,
-  WORKSPACE_VAULT,
+  type VaultSpec,
 } from "@sdw/core/vault";
 import { $ } from "bun";
 import { gocryptfsVolume } from "./gocryptfs.ts";
@@ -62,13 +61,19 @@ export function createDestroyEffects(opts: DestroyOptions = {}): DestroyEffects 
   };
 }
 
-/** Wire every port to its production adapter. */
+/**
+ * Wire every port to its production adapter.
+ *
+ * `specs` is every encrypted volume of the build (core's ALL_VAULTS). It is required
+ * on purpose: a caller that forgot a plugin's vault would silently leave its key behind.
+ */
 export function createDestroyDeps(
+  specs: readonly VaultSpec[],
   log: (message: string) => void,
   opts: DestroyOptions = {},
 ): DestroyDeps {
   return {
-    specs: [WORKSPACE_VAULT, PENTEST_VAULT],
+    specs,
     volume: gocryptfsVolume,
     holders: supervisorHolders,
     shredder: fileShredder,

@@ -11,11 +11,11 @@ ARG BASE_IMAGE=kalilinux/kali-rolling
 FROM ${BASE_IMAGE}
 
 # Desktop streaming stack selector (build-time):
-#   both    (default) — install AND run selkies (/desktop/) + kasmvnc (/vnc/) in parallel
-#   selkies           — selkies only (fallback)
-#   kasmvnc           — kasmvnc only (fallback)
+#   kasmvnc (default) — KasmVNC only (/vnc/): an ~8 MB .deb, builds in seconds
+#   selkies           — Selkies only (/desktop/): H.264/WebCodecs, ~420 MB venv, ~12 min layer
+#   both              — Selkies + KasmVNC in parallel (published as the `-full` image)
 # Recorded in /etc/sdw-desktop-stack; read by desktop.ts SSOT at runtime.
-ARG DESKTOP_STACK=both
+ARG DESKTOP_STACK=kasmvnc
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=en_US.UTF-8
@@ -297,17 +297,9 @@ RUN bun install --frozen-lockfile 2>/dev/null || bun install
 # Build SPA
 RUN cd packages/spa && bunx vite build
 
-# Symlink CLI commands onto PATH
-RUN for cmd in init-vault unlock-vault lock-vault vault-sync doctor setup; do \
-      printf '#!/bin/bash\nexec bun run /opt/workspace/packages/cli/src/%s.ts "$@"\n' "$cmd" > /usr/local/bin/$cmd; \
-      chmod +x /usr/local/bin/$cmd; \
-    done && \
-    for cmd in init-pentest unlock-pentest lock-pentest pentest-bootstrap self-destruct destruct-passphrase desktop-start desktop-stop desktop-install backup-init; do \
-      printf '#!/bin/bash\nexec bun run /opt/workspace/packages/cli/src/%s.ts "$@"\n' "$cmd" > /usr/local/bin/$cmd; \
-      chmod +x /usr/local/bin/$cmd; \
-    done && \
-    printf '#!/bin/bash\nexec bun run /opt/workspace/packages/cli/src/pentest-enter.ts "$@"\n' > /usr/local/bin/pentest && \
-    chmod +x /usr/local/bin/pentest
+# Put a launcher for every command in packages/cli/package.json's `bin` map on PATH.
+# That map is the only list of commands (add one there, never here).
+RUN bun run /opt/workspace/packages/cli/scripts/install-bins.ts /usr/local/bin
 
 # Copy entrypoint (minimal shell → exec bun)
 COPY scripts/entrypoint.sh /usr/local/lib/workspace/entrypoint.sh

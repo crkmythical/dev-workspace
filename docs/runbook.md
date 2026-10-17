@@ -95,7 +95,7 @@ bash scripts/host-watcher.sh --install    # 安装 LaunchAgent
 bash scripts/host-watcher.sh --uninstall  # 卸载
 ```
 
-## Remote Desktop (KasmVNC)
+## Remote Desktop
 
 桌面环境按需启动，不影响容器空闲时的资源占用。
 
@@ -106,7 +106,7 @@ docker exec -it dev-workspace desktop-start   # 启动，等待 KasmVNC 就绪
 docker exec -it dev-workspace desktop-stop    # 停止所有桌面进程
 ```
 
-启动后通过浏览器访问: `https://workspace.cicd.dpdns.org/desktop/`
+启动后通过浏览器访问: `/vnc/`（KasmVNC，默认）；`DESKTOP_STACK=selkies|both` 的镜像另有 `/desktop/`（Selkies）
 
 ### 安装 GUI 应用
 

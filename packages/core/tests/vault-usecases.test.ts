@@ -8,7 +8,7 @@ import {
   unlockVault,
 } from "../src/vault/index.ts";
 import {
-  PENTEST,
+  SECOND,
   SPECS,
   WORKSPACE,
   fakeEffects,
@@ -100,16 +100,16 @@ describe("lockVault", () => {
     expect(calls).toEqual(["holders.stopAll", "unmount:workspace:lazy"]);
   });
 
-  it("works for the pentest vault too (a second VaultSpec, same use case)", async () => {
+  it("works for any further vault too (a second VaultSpec, same use case)", async () => {
     const calls: string[] = [];
     const noHolders = { stopAll: async () => {} };
     const result = await lockVault(
-      PENTEST,
+      SECOND,
       { volume: fakeVolume("unlocked", calls), holders: noHolders },
       { mode: "escalate" },
     );
     expect(result).toEqual({ status: "locked" });
-    expect(calls).toEqual(["unmount:pentest:escalate"]);
+    expect(calls).toEqual(["unmount:second:escalate"]);
   });
 });
 
@@ -251,11 +251,11 @@ describe("destroyWorkspace", () => {
       "effects.quiesce",
       "holders.stopAll",
       "unmount:workspace:escalate",
-      "unmount:pentest:escalate",
+      "unmount:second:escalate",
       "shred:/c/ws/gocryptfs.conf:3",
-      "shred:/c/pt/gocryptfs.conf:3",
+      "shred:/c/2nd/gocryptfs.conf:3",
       "effects.shredTree:/c/ws",
-      "effects.shredTree:/c/pt",
+      "effects.shredTree:/c/2nd",
       "effects.scrubCredentials",
       "effects.clearHistory",
       `effects.marker:${NOW}`,
@@ -274,7 +274,7 @@ describe("destroyWorkspace", () => {
     await destroyWorkspace(makeDeps(calls, []), plain);
     const at = (needle: string) => calls.findIndex((c) => c.startsWith(needle));
     expect(at("holders.stopAll")).toBeLessThan(at("unmount:workspace"));
-    expect(at("unmount:pentest")).toBeLessThan(at("shred:"));
+    expect(at("unmount:second")).toBeLessThan(at("shred:"));
     expect(at("shred:")).toBeLessThan(at("effects.shredTree"));
     expect(at("effects.marker")).toBe(calls.length - 1);
   });

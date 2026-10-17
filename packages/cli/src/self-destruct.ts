@@ -4,6 +4,7 @@
  *
  * Usage: self-destruct [--force] [--skip-shred] [--remote]
  */
+import { ALL_VAULTS } from "@sdw/core/plugins";
 import { destroyWorkspace } from "@sdw/core/vault";
 import { loadConfig } from "@sdw/core/workspace";
 import { createDestroyDeps } from "@sdw/infra";
@@ -24,7 +25,7 @@ if (!force) {
 
 const { git } = loadConfig(process.env);
 const report = await destroyWorkspace(
-  createDestroyDeps(console.log, { vaultRepo: git.vaultRepo }),
+  createDestroyDeps(ALL_VAULTS, console.log, { vaultRepo: git.vaultRepo }),
   { skipShred, remote },
 );
 

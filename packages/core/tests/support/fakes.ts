@@ -19,8 +19,9 @@ export const WORKSPACE: VaultSpec = {
   cipherDir: "/c/ws",
   mountPoint: "/m/ws",
 };
-export const PENTEST: VaultSpec = { id: "pentest", cipherDir: "/c/pt", mountPoint: "/m/pt" };
-export const SPECS: readonly VaultSpec[] = [WORKSPACE, PENTEST];
+/** Any further encrypted volume (a plugin's): the use cases treat every VaultSpec alike. */
+export const SECOND: VaultSpec = { id: "second", cipherDir: "/c/2nd", mountPoint: "/m/2nd" };
+export const SPECS: readonly VaultSpec[] = [WORKSPACE, SECOND];
 
 export interface FakeVolumeOptions {
   mountOk?: boolean;

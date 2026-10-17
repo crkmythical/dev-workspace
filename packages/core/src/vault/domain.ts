@@ -7,9 +7,10 @@
  * explicit VaultState. planSync (ciphertext replication gate) lives here too.
  */
 
-export type VaultId = "workspace" | "pentest";
+/** "workspace" for the main vault; a plugin that owns a volume picks its own id. */
+export type VaultId = string;
 
-/** One encrypted volume. workspace and pentest are two instances of the same model. */
+/** One encrypted volume. The workspace and each plugin's volume are instances of one model. */
 export interface VaultSpec {
   id: VaultId;
   cipherDir: string;
@@ -72,6 +73,30 @@ export function decide(state: VaultState, cmd: VaultCommand): Decision {
 
 /** Consecutive failed pushes before a notification is written. */
 export const SYNC_FAILURE_THRESHOLD = 3;
+
+/**
+ * The .gitignore written into the ciphertext repository when a vault is created. One
+ * definition for every command that creates it; the vault-sync exclusion tests run
+ * against THIS text, not a copy of it.
+ */
+export const VAULT_GITIGNORE = `node_modules/
+target/
+build/
+dist/
+.cache/
+**/*.log
+.idea/
+.vscode/
+__pycache__/
+.DS_Store
+*.tmp
+*.swp
+shared/
+`;
+
+/** Large binaries go through git-lfs in the ciphertext repository. */
+export const VAULT_GITATTRIBUTES =
+  "*.bin filter=lfs diff=lfs merge=lfs -text\n*.jar filter=lfs diff=lfs merge=lfs -text\n";
 
 export interface SyncState {
   /** Is the workspace mount present? */

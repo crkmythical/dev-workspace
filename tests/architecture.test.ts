@@ -14,13 +14,18 @@
  *   R5  cross-package imports use @sdw/* specifiers, never relative paths
  *   R6  infra depends only on core
  *   R7  inside core: domain <- ports <- usecases
- *   R8  process.env is read only at entry points (cli/src/*.ts, server/src/index.ts)
+ *   R8  process.env is read only at entry points (cli/src/*.ts, cli/src/plugins/<id>/commands/*.ts,
+ *       server/src/index.ts)
  *   R9  absolute path literals live only in layout.ts modules
  *   R10 no hub imports: "@sdw/core" and "@sdw/core/constants" no longer exist
  *   R11 core and infra never call console.*: they log through an injected function
+ *   R12 a plugin is self-contained: nothing outside its own folders (and the registry)
+ *       mentions its name; the rest of the code iterates the registry
  */
 import { describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 const ROOT = path.resolve(import.meta.dir, "..");
@@ -49,22 +54,9 @@ interface Source {
 
 /**
  * Existing violations. A new one fails the build; so does fixing one without
- * deleting its entry here. The pentest rootfs paths disappear when the pentest
- * plugin gets its own layout module.
+ * deleting its entry here. Empty: every rule currently holds everywhere.
  */
-const KNOWN_VIOLATIONS = new Set<string>([
-  // Phase 5: these are paths INSIDE the pentest rootfs (and its bashrc template). They move
-  // into the pentest plugin's own layout module when pentest becomes a self-contained plugin.
-  "R9-absolute-paths-live-in-layout-modules packages/cli/src/lib/pentest-config.ts -> /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/tools/bin",
-  "R9-absolute-paths-live-in-layout-modules packages/cli/src/pentest-bootstrap.ts -> /etc/apt/apt.conf.d/90proxy",
-  "R9-absolute-paths-live-in-layout-modules packages/cli/src/pentest-bootstrap.ts -> /etc/hostname",
-  "R9-absolute-paths-live-in-layout-modules packages/cli/src/pentest-bootstrap.ts -> /etc/proxychains4.conf",
-  "R9-absolute-paths-live-in-layout-modules packages/cli/src/pentest-bootstrap.ts -> /etc/resolv.conf",
-  "R9-absolute-paths-live-in-layout-modules packages/cli/src/pentest-bootstrap.ts -> /etc/tor/torrc",
-  "R9-absolute-paths-live-in-layout-modules packages/cli/src/pentest-bootstrap.ts -> /opt/tools/install-kali-tools.sh",
-  "R9-absolute-paths-live-in-layout-modules packages/cli/src/pentest-bootstrap.ts -> /root/.bashrc",
-  "R9-absolute-paths-live-in-layout-modules packages/cli/src/pentest-enter.ts -> /tmp/.pentest-enter.sh",
-]);
+const KNOWN_VIOLATIONS = new Set<string>([]);
 
 // ── source loading ──────────────────────────────────────────────────────────
 
@@ -141,11 +133,27 @@ function readsProcessEnv(code: string): boolean {
 }
 
 const isEntryPoint = (file: string) =>
-  /^packages\/cli\/src\/[^/]+\.ts$/.test(file) || file === "packages/server/src/index.ts";
+  /^packages\/cli\/src\/(plugins\/[^/]+\/commands\/)?[^/]+\.ts$/.test(file) ||
+  file === "packages/server/src/index.ts";
 
 // ── rules ───────────────────────────────────────────────────────────────────
 
-function violationsOf(sources: Source[]): string[] {
+/** Plugins are the folders under packages/core/src/plugins (each has an index.ts). */
+function discoverPluginIds(
+  dir: string = path.join(ROOT, "packages", "core", "src", "plugins"),
+): string[] {
+  if (!existsSync(dir)) return [];
+  return [...new Bun.Glob("*/index.ts").scanSync({ cwd: dir })].map((p) => path.dirname(p)).sort();
+}
+
+const PLUGIN_REGISTRY = "packages/core/src/plugins/index.ts";
+
+/** Whether `file` may mention plugin `id`: its own folders, or the registry. */
+function mayMentionPlugin(file: string, id: string): boolean {
+  return file === PLUGIN_REGISTRY || file.includes(`/plugins/${id}/`);
+}
+
+function violationsOf(sources: Source[], pluginIds: string[] = discoverPluginIds()): string[] {
   const found = new Set<string>();
   const add = (rule: string, file: string, detail: string) =>
     found.add(`${rule} ${file} -> ${detail}`);
@@ -184,6 +192,11 @@ function violationsOf(sources: Source[]): string[] {
   }
 
   for (const s of sources) {
+    for (const id of pluginIds) {
+      if (new RegExp(id, "i").test(s.code) && !mayMentionPlugin(s.file, id)) {
+        add("R12-plugins-are-self-contained", s.file, id);
+      }
+    }
     if (readsProcessEnv(s.code) && !isEntryPoint(s.file)) {
       add("R8-process-env-only-at-entrypoints", s.file, "process.env");
     }
@@ -295,10 +308,65 @@ describe("architecture: text rules", () => {
   });
 
   test("entry points are the cli's top-level files and the server index only", () => {
+    expect(isEntryPoint("packages/cli/src/plugins/acme/commands/init.ts")).toBe(true);
+    expect(isEntryPoint("packages/cli/src/plugins/acme/templates.ts")).toBe(false);
+    expect(isEntryPoint("packages/cli/src/plugins/acme/commands/sub/x.ts")).toBe(false);
     expect(isEntryPoint("packages/cli/src/doctor.ts")).toBe(true);
     expect(isEntryPoint("packages/server/src/index.ts")).toBe(true);
     expect(isEntryPoint("packages/cli/src/lib/passphrase.ts")).toBe(false);
     expect(isEntryPoint("packages/server/src/routes/upload.ts")).toBe(false);
     expect(isEntryPoint("packages/infra/src/destroy.ts")).toBe(false);
+  });
+});
+
+describe("architecture: plugin isolation (R12)", () => {
+  const src = (file: string, code: string): Source => ({
+    file,
+    pkg: file.split("/")[1] as Pkg,
+    code,
+  });
+
+  test("a plugin may mention itself in its own folders and the registry", () => {
+    const sources = [
+      src("packages/core/src/plugins/acme/index.ts", "const id = 'acme';"),
+      src("packages/cli/src/plugins/acme/commands/init.ts", "console.log('acme');"),
+      src(PLUGIN_REGISTRY, "import { acmePlugin } from './acme/index.ts';"),
+    ];
+    expect(violationsOf(sources, ["acme"]).filter((v) => v.startsWith("R12"))).toEqual([]);
+  });
+
+  test("anywhere else it is a violation, whatever the casing or the identifier", () => {
+    const sources = [
+      src("packages/infra/src/destroy.ts", "const specs = [ACME_VAULT];"),
+      src("packages/cli/src/doctor.ts", "label = 'Acme vault';"),
+      src("packages/server/src/app.ts", "const clean = 1;"),
+    ];
+    expect(violationsOf(sources, ["acme"]).filter((v) => v.startsWith("R12"))).toEqual([
+      "R12-plugins-are-self-contained packages/cli/src/doctor.ts -> acme",
+      "R12-plugins-are-self-contained packages/infra/src/destroy.ts -> acme",
+    ]);
+  });
+
+  test("a different plugin's folder is not an exemption", () => {
+    const sources = [src("packages/core/src/plugins/other/index.ts", "const x = 'acme';")];
+    expect(violationsOf(sources, ["acme", "other"]).filter((v) => v.startsWith("R12"))).toEqual([
+      "R12-plugins-are-self-contained packages/core/src/plugins/other/index.ts -> acme",
+    ]);
+  });
+
+  test("plugins are the folders with an index.ts under core/src/plugins", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "sdw-plugins-"));
+    try {
+      for (const id of ["beta", "alpha"]) {
+        mkdirSync(path.join(dir, id));
+        writeFileSync(path.join(dir, id, "index.ts"), "");
+      }
+      mkdirSync(path.join(dir, "not-a-plugin"));
+      writeFileSync(path.join(dir, "index.ts"), ""); // the registry itself
+      expect(discoverPluginIds(dir)).toEqual(["alpha", "beta"]);
+      expect(discoverPluginIds(path.join(dir, "missing"))).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

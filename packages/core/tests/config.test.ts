@@ -12,7 +12,6 @@ describe("loadConfig", () => {
     expect(loadConfig({})).toEqual({
       clashSubscriptionUrl: "",
       password: undefined,
-      pentestVaultPassword: undefined,
       desktopResolution: "1920x1080",
       git: { userName: undefined, userEmail: undefined, vaultRepo: undefined },
       backup: {
@@ -36,7 +35,6 @@ describe("loadConfig", () => {
     const cfg = loadConfig({
       CLASH_SUBSCRIPTION_URL: "https://example.test/sub",
       PASSWORD: "s3cret",
-      PENTEST_VAULT_PASSWORD: "p3ntest",
       DESKTOP_RESOLUTION: "1280x720",
       GIT_USER_NAME: "Ada",
       GIT_USER_EMAIL: "ada@example.test",
@@ -50,7 +48,6 @@ describe("loadConfig", () => {
     });
     expect(cfg.clashSubscriptionUrl).toBe("https://example.test/sub");
     expect(cfg.password).toBe("s3cret");
-    expect(cfg.pentestVaultPassword).toBe("p3ntest");
     expect(cfg.desktopResolution).toBe("1280x720");
     expect(cfg.git).toEqual({
       userName: "Ada",

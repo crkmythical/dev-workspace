@@ -8,10 +8,11 @@ Hexagonal: `core` holds the rules and use cases, `infra` implements core's ports
 ```
 packages/
 ├── core/    Pure rules + use cases, one folder per bounded context. No node:/bun imports.
-│            shared/ vault/ sync/ backup/ desktop/ egress/ workspace/
+│            shared/ vault/ sync/ backup/ desktop/ egress/ workspace/ plugins/
 ├── infra/   Adapters for core's ports: gocryptfs, supervisorctl, Clash, restic helpers,
 │            sync crypto/store, notifications, shred, ...
-├── cli/     Container commands (init-vault, unlock-vault, doctor, ...) and entrypoint-main
+├── cli/     Container commands (init-vault, unlock-vault, doctor, ...), entrypoint-main,
+│            and plugins/<id>/commands for each plugin's own commands
 ├── server/  Hono sync service: thin routes over core's sync use cases
 └── spa/     Browser sync page (File System Access API + WebCrypto), shares core's client
 ```
@@ -23,6 +24,30 @@ other; `process.env` is read only in entry points (`loadConfig`); absolute paths
 only in each context's `layout.ts`.
 
 Inside core the dependency points inward: `domain` <- `ports` <- `usecases`.
+
+## Plugins
+
+Optional features sit behind a deliberately tiny contract (`core/src/plugins`): a plugin
+owns encrypted volumes. Everything that treats "all the volumes" alike (destroy, stale
+mount cleanup at boot, `doctor`) iterates the registry (`PLUGINS`, `ALL_VAULTS`) and
+never names a plugin. Rule R12 in `tests/architecture.test.ts` enforces that: nothing
+outside a plugin's own folders (and the registry line) may mention its name.
+
+`pentest` is the only plugin. It is not built-in: sync and remote self-destruct are
+built-in features, off unless `SYNC_ENABLED` / `REMOTE_DESTRUCT_ENABLED` is set.
+
+To drop pentest: delete `core/src/plugins/pentest/`, `cli/src/plugins/pentest/` and
+`core/tests/plugins/pentest.test.ts`, remove its line from `core/src/plugins/index.ts`,
+and its five entries from the `bin` map in `cli/package.json`. Leftovers that do not
+affect the build: `PENTEST_VAULT_PASSWORD` in `.env.example`, the `cache-data` volume in
+`docker-compose.yml`, and `debootstrap` plus the `/pentest` directories in the
+Dockerfile. A drill in a throwaway copy (two files edited, two directories deleted)
+passed biome, the type check, the full test suite and bundling of every entry point,
+with no mention of pentest left under `packages/`.
+
+Commands are declared once, in `cli/package.json`'s `bin` map; the image build installs
+a launcher for each (`cli/scripts/install-bins.ts`), and a test fails when an entry file
+is neither declared there nor a known service.
 
 ## Start-up
 
@@ -58,7 +83,7 @@ it failed) or `down` (proxy not listening). It is reported in the start-up banne
 - **Bun** — TypeScript runtime (replaces Node.js)
 - **Hono** — HTTP framework (12,640 req/s)
 - **Caddy** — Reverse proxy (code-server + sync-service + dual desktops on single port)
-- **Selkies + KasmVNC** — Two parallel browser-accessible remote desktops (on-demand, autostart=false). See "Remote Desktop: Selkies vs KasmVNC" below.
+- **KasmVNC (default) / Selkies (optional)** — Browser-accessible remote desktop; the image holds one or both, chosen at build time. See "Remote Desktop: Selkies vs KasmVNC" below.
 - **Clash/mihomo** — Encrypted egress proxy (proxy-providers + url-test auto-selection, 1h subscription refresh, 3min health-check)
 - **gocryptfs** — Disk encryption (AES-256, 4KB blocks)
 - **restic** — Realtime backup to S3 (client-side encryption, dedup, snapshots; opt-in via `RESTIC_REPOSITORY`)
@@ -109,8 +134,10 @@ The backup-watcher holds inotify watches on `/workspace` and must be stopped bef
 
 ## Remote Desktop: Selkies vs KasmVNC
 
-Two desktops run in parallel (default `DESKTOP_STACK=both`), each on an
-independent X display, WS port, and HOME, behind one Caddy port:
+The image contains one or both desktops, chosen at build time with `DESKTOP_STACK`
+(default `kasmvnc`; `selkies` and `both` are supported, and CI publishes `both` as the
+`-full` image). When both are installed they run in parallel, each on an independent X
+display, WS port, and HOME, behind one Caddy port:
 
 - **Selkies** → `/desktop/` — display `:1`, WS `:6080`, HOME `/workspace/.desktop`
 - **KasmVNC** → `/vnc/` — display `:2`, WS `:6081`, HOME `/workspace/.desktop-vnc`
@@ -193,8 +220,8 @@ These are structural facts (verifiable from config/code), not performance claims
 
 ### Recommendation
 
-Keep `both` as the default — it avoids betting on one stack up front. Use
-`/desktop/` (Selkies) for the audio-capable minimal stream and `/vnc/` (KasmVNC)
-when you need its features or an older browser. Single-stack builds
-(`DESKTOP_STACK=selkies|kasmvnc`) exist as fallbacks to save image size/build
-time if only one is ever used.
+The default is `kasmvnc`: a 7.8 MB package against Selkies' 420 MB venv and ~12 minute
+build layer, and it works on browsers without WebCodecs. Selkies stays fully supported
+for its audio and H.264 stream: build with `DESKTOP_STACK=selkies` or `both`, or pull
+the `-full` image. CI builds `both` on every release so the Selkies path cannot rot.
+An image that predates the stack marker is treated as Selkies-only.

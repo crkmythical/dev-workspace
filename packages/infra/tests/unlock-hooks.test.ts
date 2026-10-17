@@ -2,9 +2,12 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { PENTEST_VAULT, WORKSPACE_VAULT } from "@sdw/core/vault";
+import { type VaultSpec, WORKSPACE_VAULT } from "@sdw/core/vault";
 import { deriveDestructKey, destructKeyToPassphrase } from "../src/destruct-key.ts";
 import { remoteDestructKeyHook, syncCredentialHook } from "../src/unlock-hooks.ts";
+
+/** Some other vault (a plugin's): these hooks only ever apply to the workspace. */
+const OTHER_VAULT: VaultSpec = { id: "other", cipherDir: "/c/other", mountPoint: "/m/other" };
 
 /**
  * The two feature-gated unlock hooks, run against real files in a temp dir.
@@ -68,7 +71,7 @@ describe("syncCredentialHook", () => {
   it("only applies to the workspace vault", async () => {
     const target = path.join(dir, "sync-passphrase");
     await syncCredentialHook({ enabled: true, path: target }).run({
-      spec: PENTEST_VAULT,
+      spec: OTHER_VAULT,
       passphrase: "irrelevant",
     });
     expect(existsSync(target)).toBe(false);
@@ -136,7 +139,7 @@ describe("remoteDestructKeyHook", () => {
 
   it("only applies to the workspace vault", async () => {
     const messages: string[] = [];
-    await makeHook(true, messages).run({ spec: PENTEST_VAULT, passphrase: "vault-passphrase" });
+    await makeHook(true, messages).run({ spec: OTHER_VAULT, passphrase: "vault-passphrase" });
     expect(existsSync(hashFile())).toBe(false);
     expect(messages).toEqual([]);
   });

@@ -21,8 +21,8 @@ import {
   bringUpEgress,
   renderClashConfig,
 } from "@sdw/core/egress";
-import { WORKSPACE_MOUNT } from "@sdw/core/shared/layout";
-import { PENTEST_MOUNT, VAULT_CIPHER_DIR, WORKSPACE_VAULT, unlockVault } from "@sdw/core/vault";
+import { ALL_VAULTS } from "@sdw/core/plugins";
+import { VAULT_CIPHER_DIR, WORKSPACE_VAULT, unlockVault } from "@sdw/core/vault";
 import {
   BOOT_PLAN,
   type BootState,
@@ -86,8 +86,7 @@ const steps: BootStepImpls = {
   },
 
   async "cleanup-stale-mounts"() {
-    await cleanupStaleMount(WORKSPACE_MOUNT);
-    await cleanupStaleMount(PENTEST_MOUNT);
+    for (const vault of ALL_VAULTS) await cleanupStaleMount(vault.mountPoint);
   },
 
   async "render-clash-config"() {

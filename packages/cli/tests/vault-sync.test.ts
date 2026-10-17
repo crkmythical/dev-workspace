@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { planSync } from "@sdw/core/vault";
+import { VAULT_GITIGNORE, planSync } from "@sdw/core/vault";
 import fc from "fast-check";
-import { isIgnored, parseGitignore } from "../src/lib/gitignore-match.ts";
+import { isIgnored, parseGitignore } from "./support/gitignore-match.ts";
 
 /**
  * Property tests for vault-sync (task 4.3).
@@ -15,22 +15,6 @@ import { isIgnored, parseGitignore } from "../src/lib/gitignore-match.ts";
  * bats harness (tests/property/vault-sync.bats) cross-checks the same paths
  * against git's own `check-ignore` to confirm semantic agreement.
  */
-
-// The exact .gitignore body written by init-vault.ts.
-const VAULT_GITIGNORE = `node_modules/
-target/
-build/
-dist/
-.cache/
-**/*.log
-.idea/
-.vscode/
-__pycache__/
-.DS_Store
-*.tmp
-*.swp
-shared/
-`;
 
 const rules = parseGitignore(VAULT_GITIGNORE);
 

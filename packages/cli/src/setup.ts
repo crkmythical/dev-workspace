@@ -1,10 +1,16 @@
 #!/usr/bin/env bun
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { CLASH_BIN, CLASH_CONFIG_PATH, CLASH_DIR, CLASH_SOCKS_PORT } from "@sdw/core/egress";
-import { CREDENTIALS_DIR, WORKSPACE_MOUNT } from "@sdw/core/shared/layout";
-import { SYNC_PASSPHRASE_PATH } from "@sdw/core/sync/layout";
-import { VAULT_CIPHER_DIR } from "@sdw/core/vault";
+import {
+  CLASH_CONFIG_PATH,
+  CLASH_PROVIDERS_DIR,
+  CLASH_TEMPLATE_PATH,
+  bringUpEgress,
+  describeEgress,
+  renderClashConfig,
+} from "@sdw/core/egress";
+import { VAULT_CIPHER_DIR, VAULT_GITATTRIBUTES, VAULT_GITIGNORE } from "@sdw/core/vault";
 import { loadConfig } from "@sdw/core/workspace";
+import { clashEgressPorts } from "@sdw/infra";
 /**
  * setup — Interactive or automated workspace configuration
  *
@@ -38,32 +44,8 @@ function askSecret(question: string): string {
   return answer?.trim() || "";
 }
 
-async function testClashUrl(url: string): Promise<boolean> {
-  try {
-    const r = await $`curl -fsSL --max-time 10 "${url}" -o /dev/null`.quiet().nothrow();
-    return r.exitCode === 0;
-  } catch {
-    return false;
-  }
-}
-
-async function testProxy(): Promise<boolean> {
-  try {
-    const r =
-      await $`curl -s --proxy socks5://127.0.0.1:${CLASH_SOCKS_PORT} --max-time 10 https://www.google.com -o /dev/null`
-        .quiet()
-        .nothrow();
-    return r.exitCode === 0;
-  } catch {
-    return false;
-  }
-}
-
-const DEFAULT_CLASH_URL =
-  "https://cfnew.cicd.dpdns.org/372074d4-385f-4205-9071-7e61186dffd4/sub?target=clash";
-const DEFAULT_TUNNEL_HOSTNAME = "workspace.cicd.dpdns.org";
-const DEFAULT_TUNNEL_NAME = "dev-workspace";
-const DEFAULT_TUNNEL_PORT = "18080";
+// Where the local web UI listens on the host (docker-compose maps it; see TUNNEL_HOST_PORT).
+const LOCAL_PORT = "18080";
 
 // --- Main ---
 console.log("\n=== Secure Dev Workspace Setup ===\n");
@@ -71,31 +53,28 @@ console.log("\n=== Secure Dev Workspace Setup ===\n");
 // Step 1: Clash subscription
 console.log("[1/4] Clash 代理订阅");
 let clashUrl = getArg("--clash-url") || config.clashSubscriptionUrl;
-if (!clashUrl && !isAuto) {
-  clashUrl = ask("  Clash 订阅链接 (回车使用默认)", DEFAULT_CLASH_URL);
-}
-if (!clashUrl) clashUrl = DEFAULT_CLASH_URL;
+if (!clashUrl && !isAuto) clashUrl = ask("  Clash 订阅链接 (回车跳过)");
 if (clashUrl) {
-  // Write subscription directly (don't test — network may not be available yet)
-  const fetchResult = await $`curl -fsSL --max-time 15 "${clashUrl}" -o ${CLASH_CONFIG_PATH}.new`
-    .quiet()
-    .nothrow();
-  if (fetchResult.exitCode === 0) {
-    await $`mv ${CLASH_CONFIG_PATH}.new ${CLASH_CONFIG_PATH}`.quiet();
+  // Rendered from the same template as the container start-up: the template defines the
+  // url-test group, DNS and rules, and the subscription is only its provider URL.
+  if (!existsSync(CLASH_TEMPLATE_PATH)) {
+    console.log(`  ✗ 找不到 Clash 模板 ${CLASH_TEMPLATE_PATH}`);
+  } else {
+    mkdirSync(CLASH_PROVIDERS_DIR, { recursive: true });
+    const template = readFileSync(CLASH_TEMPLATE_PATH, "utf-8");
+    writeFileSync(CLASH_CONFIG_PATH, renderClashConfig(template, clashUrl));
     console.log("  ✓ 订阅配置已更新");
-    // Restart clash
     await $`pkill -x clash`.quiet().nothrow();
     await Bun.sleep(1000);
-    Bun.spawn([CLASH_BIN, "-d", CLASH_DIR], { stdout: "ignore", stderr: "ignore" });
-    await Bun.sleep(3000);
-    if (await testProxy()) {
-      console.log("  ✓ 代理连接正常");
-    } else {
-      console.log("  ⚠ 代理已启动（连接测试未通过，可能需要等待节点就绪）");
-    }
-  } else {
-    console.log("  ⚠ 订阅拉取失败（使用默认配置）");
+    const report = await bringUpEgress(clashEgressPorts(() => {}));
+    console.log(
+      report.status === "confirmed"
+        ? "  ✓ 代理连接正常"
+        : `  ⚠ 代理已启动，出口未确认: ${describeEgress(report)}`,
+    );
   }
+} else {
+  console.log("  跳过 — 设置 CLASH_SUBSCRIPTION_URL，或使用 --clash-url");
 }
 
 // Step 2: Vault
@@ -125,13 +104,8 @@ if (existsSync(`${VAULT_CIPHER_DIR}/gocryptfs.conf`)) {
     await $`git config --global user.email "${config.git.userEmail ?? "vault@local"}"`.quiet();
     await $`git config --global user.name "${config.git.userName ?? "Vault"}"`.quiet();
     await $`cd ${VAULT_CIPHER_DIR} && git init -b main`.quiet();
-    const gitignore =
-      "node_modules/\ntarget/\nbuild/\ndist/\n.cache/\n**/*.log\n.idea/\n.vscode/\n__pycache__/\n.DS_Store\n*.tmp\n*.swp\nshared/\n";
-    writeFileSync(`${VAULT_CIPHER_DIR}/.gitignore`, gitignore);
-    writeFileSync(
-      `${VAULT_CIPHER_DIR}/.gitattributes`,
-      "*.bin filter=lfs diff=lfs merge=lfs -text\n",
-    );
+    writeFileSync(`${VAULT_CIPHER_DIR}/.gitignore`, VAULT_GITIGNORE);
+    writeFileSync(`${VAULT_CIPHER_DIR}/.gitattributes`, VAULT_GITATTRIBUTES);
     await $`cd ${VAULT_CIPHER_DIR} && git add -A && git commit -q -m "init vault"`
       .quiet()
       .nothrow();
@@ -175,9 +149,10 @@ console.log(`  ✓ ${gitName || "Developer"} <${gitEmail || "dev@local"}>`);
 
 // Done
 console.log("\n=== 配置完成 ===");
-console.log(`  code-server: http://localhost:${DEFAULT_TUNNEL_PORT}`);
-console.log(`  远程访问:    https://${DEFAULT_TUNNEL_HOSTNAME}`);
-console.log(`  文件同步:    https://${DEFAULT_TUNNEL_HOSTNAME}/sync/`);
+console.log(`  code-server: http://localhost:${LOCAL_PORT}`);
+console.log(
+  "  远程访问:    经 Cloudflare Tunnel 暴露的域名（宿主机 scripts/setup-cloudflared.sh 配置）",
+);
 console.log("  健康检查:    docker exec dev-workspace doctor");
 if (existsSync(`${VAULT_CIPHER_DIR}/gocryptfs.conf`)) {
   console.log("  解锁 vault:  docker exec -it dev-workspace unlock-vault");

@@ -11,16 +11,12 @@ import {
   desktopAnchor,
 } from "@sdw/core/desktop";
 import { CLASH_HTTP_PORT, egressHealth, egressStatus } from "@sdw/core/egress";
+import { PLUGINS } from "@sdw/core/plugins";
 import { WORKSPACE_MOUNT } from "@sdw/core/shared/layout";
 import { SYNC_SERVICE_PORT } from "@sdw/core/sync/layout";
-import {
-  PENTEST_CIPHER_DIR,
-  PENTEST_MOUNT,
-  VAULT_CIPHER_DIR,
-  VAULT_SYNC_STATE_DIR,
-} from "@sdw/core/vault";
+import { VAULT_CIPHER_DIR, VAULT_SYNC_STATE_DIR } from "@sdw/core/vault";
 import { CODE_SERVER_PORT, type DoctorResult, loadConfig } from "@sdw/core/workspace";
-import { installedStacks, observeEgress, readEgressStatus } from "@sdw/infra";
+import { gocryptfsVolume, installedStacks, observeEgress, readEgressStatus } from "@sdw/infra";
 /**
  * doctor — Workspace health check
  */
@@ -211,18 +207,20 @@ if (await isAnyAnchorRunning()) {
   );
 }
 
-// 8. Pentest vault
-if (existsSync(`${PENTEST_CIPHER_DIR}/gocryptfs.conf`)) {
-  const pentestMount = await $`mountpoint -q ${PENTEST_MOUNT}`.quiet().nothrow();
-  if (pentestMount.exitCode === 0) {
-    const du = await $`du -sh ${PENTEST_MOUNT}`.text();
-    const size = du.split("\t")[0];
-    results.push({ component: "Pentest vault", status: "ok", detail: `mounted (${size})` });
-  } else {
-    results.push({ component: "Pentest vault", status: "ok", detail: "locked (initialized)" });
+// 8. Plugin vaults (optional extra encrypted volumes), one row each.
+for (const plugin of PLUGINS) {
+  for (const vault of plugin.vaults) {
+    const component = `${vault.id.charAt(0).toUpperCase()}${vault.id.slice(1)} vault`;
+    const state = await gocryptfsVolume.state(vault);
+    if (state === "unlocked") {
+      const size = (await $`du -sh ${vault.mountPoint}`.text()).split("\t")[0];
+      results.push({ component, status: "ok", detail: `mounted (${size})` });
+    } else if (state === "locked") {
+      results.push({ component, status: "ok", detail: "locked (initialized)" });
+    } else {
+      results.push({ component, status: "ok", detail: "not initialized (optional)" });
+    }
   }
-} else {
-  results.push({ component: "Pentest vault", status: "ok", detail: "not initialized (optional)" });
 }
 
 // 8. Backup (S3/restic)

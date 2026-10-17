@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { ALL_VAULTS } from "@sdw/core/plugins";
 import { RateLimiter } from "@sdw/core/shared/rate-limit";
 import {
   DESTRUCT_KEY_HASH_PATH,
@@ -81,7 +82,7 @@ export async function destructRoute(c: Context, features: FeatureFlags): Promise
   setTimeout(async () => {
     try {
       const report = await destroyWorkspace(
-        createDestroyDeps(() => {}),
+        createDestroyDeps(ALL_VAULTS, () => {}),
         {
           skipShred: false,
           remote: false,

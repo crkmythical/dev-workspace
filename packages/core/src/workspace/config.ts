@@ -18,8 +18,6 @@ export interface WorkspaceConfig {
   clashSubscriptionUrl: string;
   /** Master password shared by code-server, the desktops and the vault. Generated when unset. */
   password: string | undefined;
-  /** Password for the pentest vault; prompted for when unset. */
-  pentestVaultPassword: string | undefined;
   desktopResolution: string;
   git: {
     userName: string | undefined;
@@ -42,7 +40,6 @@ export function loadConfig(env: EnvLike): WorkspaceConfig {
   return {
     clashSubscriptionUrl: value(env, "CLASH_SUBSCRIPTION_URL") ?? "",
     password: value(env, "PASSWORD"),
-    pentestVaultPassword: value(env, "PENTEST_VAULT_PASSWORD"),
     desktopResolution: value(env, "DESKTOP_RESOLUTION") ?? DESKTOP_DEFAULT_RESOLUTION,
     git: {
       userName: value(env, "GIT_USER_NAME"),
