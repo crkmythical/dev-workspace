@@ -29,7 +29,7 @@ profile:
 
 dns:
   enable: true
-  listen: 0.0.0.0:53
+  listen: 127.0.0.1:53
   enhanced-mode: fake-ip
   fake-ip-range: 198.18.0.1/16
   nameserver:
