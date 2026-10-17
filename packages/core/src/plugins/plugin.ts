@@ -11,6 +11,7 @@
  * Grow it only when a second plugin needs the same thing, one capability at a time.
  */
 import type { VaultSpec } from "../vault/domain.ts";
+import type { EnvGroup } from "../workspace/env-schema.ts";
 
 export interface Plugin {
   id: string;
@@ -19,4 +20,6 @@ export interface Plugin {
    * detached when stale at boot, and reported by `doctor`.
    */
   vaults: readonly VaultSpec[];
+  /** Environment variables the plugin reads: documented in the generated `.env.example`. */
+  env?: readonly EnvGroup[];
 }

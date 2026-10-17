@@ -5,7 +5,7 @@
 # Usage:
 #   host-watcher.sh              # daemon mode (blocks, watches docker events)
 #   host-watcher.sh --once       # single check then exit
-#   host-watcher.sh --install    # install macOS LaunchAgent
+#   host-watcher.sh --install    # install macOS LaunchAgent (Linux: deploy/linux-systemd/install.sh)
 #   host-watcher.sh --uninstall  # remove macOS LaunchAgent
 set -euo pipefail
 
@@ -29,7 +29,7 @@ check_destruct() {
 
 do_cleanup() {
   echo "[$(date -Iseconds)] Self-destruct confirmed. Running host cleanup..."
-  bash "${SCRIPT_DIR}/destroy.sh" --force --paranoid
+  bash "${PROJECT_DIR}/destroy.sh" --force --paranoid
 }
 
 daemon_mode() {
@@ -51,6 +51,10 @@ once_mode() {
 }
 
 install_agent() {
+  if [[ "$(uname)" != "Darwin" ]]; then
+    echo "LaunchAgents are macOS only. On Linux: bash deploy/linux-systemd/install.sh --host-watcher" >&2
+    exit 1
+  fi
   mkdir -p "$HOME/Library/LaunchAgents"
   cat > "$PLIST_PATH" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>

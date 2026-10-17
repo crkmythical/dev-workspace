@@ -85,9 +85,9 @@ if (existsSync(`${VAULT_CIPHER_DIR}/gocryptfs.conf`)) {
   const initVault = isAuto ? "y" : ask("  初始化加密 vault？(y/n)", "y");
   if (initVault.toLowerCase() === "y") {
     console.log("  正在初始化...");
-    // In auto mode, use env var VAULT_PASSWORD; in interactive, gocryptfs prompts
-    if (isAuto && process.env.VAULT_PASSWORD) {
-      const pw = process.env.VAULT_PASSWORD;
+    // The vault passphrase is the master password: PASSWORD in auto mode; gocryptfs prompts otherwise
+    if (isAuto && config.password) {
+      const pw = config.password;
       const proc = Bun.spawn(["gocryptfs", "-init", "-q", VAULT_CIPHER_DIR], {
         stdin: new Response(`${pw}\n${pw}\n`).body!,
         stdout: "pipe",

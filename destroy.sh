@@ -7,6 +7,13 @@
 #   ./destroy.sh --paranoid   # Deep clean: shell history, cloudflared creds, DNS cache
 set -euo pipefail
 
+PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=scripts/lib/env.sh
+source "$PROJECT_DIR/scripts/lib/env.sh"
+# shellcheck source=scripts/lib/scrub.sh
+source "$PROJECT_DIR/scripts/lib/scrub.sh"
+TUNNEL_NAME="$(env_value TUNNEL_NAME dev-workspace)"
+
 FORCE=false
 REMOTE=false
 PARANOID=false
@@ -35,11 +42,11 @@ docker volume rm vault-data cache-data clash-config 2>/dev/null || true
 docker image ls --format '{{.Repository}}:{{.Tag}}' | grep '^dev-workspace:' | xargs -r docker image rm 2>/dev/null || true
 
 # Remove tunnel
-cloudflared tunnel delete dev-workspace 2>/dev/null || true
+cloudflared tunnel delete "$TUNNEL_NAME" 2>/dev/null || true
 
 # Remote vault deletion
 if [[ "$REMOTE" == "true" ]]; then
-  VAULT_REPO=$(grep VAULT_GIT_REPO .env 2>/dev/null | cut -d= -f2)
+  VAULT_REPO="$(env_value VAULT_GIT_REPO)"
   if [[ -n "$VAULT_REPO" ]]; then
     echo "Deleting remote vault repo..."
     gh repo delete "$VAULT_REPO" --yes 2>/dev/null || echo "Could not delete remote repo"
@@ -50,10 +57,17 @@ fi
 if [[ "$PARANOID" == "true" ]]; then
   echo "Paranoid mode: deep cleanup..."
 
-  # Remove host-watcher LaunchAgent
-  launchctl unload ~/Library/LaunchAgents/com.dev-workspace.host-watcher.plist 2>/dev/null || true
-  rm -f ~/Library/LaunchAgents/com.dev-workspace.host-watcher.plist
-  echo "  ✗ host-watcher LaunchAgent removed"
+  # Remove the host services
+  if [[ "$(uname)" == "Darwin" ]]; then
+    launchctl unload ~/Library/LaunchAgents/com.dev-workspace.host-watcher.plist 2>/dev/null || true
+    rm -f ~/Library/LaunchAgents/com.dev-workspace.host-watcher.plist
+    echo "  ✗ host-watcher LaunchAgent removed"
+  else
+    systemctl --user disable --now dev-workspace-host-watcher.service cloudflared-dev-workspace.service 2>/dev/null || true
+    rm -f ~/.config/systemd/user/dev-workspace-host-watcher.service ~/.config/systemd/user/cloudflared-dev-workspace.service
+    systemctl --user daemon-reload 2>/dev/null || true
+    echo "  ✗ systemd user services removed"
+  fi
 
   # Remove destruct-state volume (may survive compose down if externally created)
   docker volume rm destruct-state 2>/dev/null || true
@@ -64,15 +78,17 @@ if [[ "$PARANOID" == "true" ]]; then
 
   # Clean shell history of related commands
   for histfile in ~/.zsh_history ~/.bash_history; do
-    if [[ -f "$histfile" ]]; then
-      sed -i '' '/dev-workspace\|vault\|clash\|cloudflared\|gocryptfs\|unlock-vault\|init-vault/d' "$histfile" 2>/dev/null || true
-    fi
+    scrub_history "$histfile"
   done
   echo "  ✗ Shell history scrubbed"
 
   # Flush DNS cache
-  sudo dscacheutil -flushcache 2>/dev/null || true
-  sudo killall -HUP mDNSResponder 2>/dev/null || true
+  if [[ "$(uname)" == "Darwin" ]]; then
+    sudo dscacheutil -flushcache 2>/dev/null || true
+    sudo killall -HUP mDNSResponder 2>/dev/null || true
+  else
+    resolvectl flush-caches 2>/dev/null || true
+  fi
   echo "  ✗ DNS cache flushed"
 
   # Clear Docker build cache
@@ -80,8 +96,10 @@ if [[ "$PARANOID" == "true" ]]; then
   echo "  ✗ Docker build cache cleared"
 
   # Remove any Docker Desktop logs mentioning workspace
-  find ~/Library/Containers/com.docker.docker/Data/log -name "*.log" -exec sed -i '' '/dev-workspace/d' {} \; 2>/dev/null || true
-  echo "  ✗ Docker logs scrubbed"
+  if [[ "$(uname)" == "Darwin" ]]; then
+    find ~/Library/Containers/com.docker.docker/Data/log -name "*.log" -exec sed -i '' '/dev-workspace/d' {} \; 2>/dev/null || true
+    echo "  ✗ Docker logs scrubbed"
+  fi
 fi
 
 # Self-destruct: remove project directory

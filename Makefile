@@ -1,5 +1,5 @@
 # Secure Dev Workspace — Build & Test
-.PHONY: build image-export image-import dev test lint format clean
+.PHONY: build image-export image-import dev test lint format env-example clean
 
 build:
 	docker compose build
@@ -24,6 +24,8 @@ format:
 
 build-spa:
 	cd packages/spa && bun run build
+env-example:
+	bun run packages/cli/scripts/gen-env-example.ts
 
 clean:
 	rm -f workspace.tar

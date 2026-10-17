@@ -129,7 +129,7 @@ destruct-passphrase # 显示远程自毁口令（由 vault 口令派生，随时
 
 ```bash
 # 一次性配置（在宿主机执行，非容器内）
-./scripts/setup-cloudflared.sh
+./scripts/setup-cloudflared.sh --hostname <hostname>   # 或在 .env 设置 TUNNEL_HOSTNAME
 
 # 启动 tunnel（LaunchAgent，开机自启 + 崩溃自动重启）
 launchctl load ~/Library/LaunchAgents/com.cloudflare.tunnel.plist
@@ -137,39 +137,37 @@ launchctl load ~/Library/LaunchAgents/com.cloudflare.tunnel.plist
 # 停止 tunnel
 launchctl unload ~/Library/LaunchAgents/com.cloudflare.tunnel.plist
 
-# 从任何地方访问：
-# https://workspace.cicd.dpdns.org
-# https://workspace.cicd.dpdns.org/desktop/   (Selkies)
-# https://workspace.cicd.dpdns.org/vnc/        (KasmVNC)
+# 从任何地方访问（<hostname> 是你自己的域名）：
+# https://<hostname>
+# https://<hostname>/vnc/        (KasmVNC，默认)
+# https://<hostname>/desktop/    (Selkies，仅 DESKTOP_STACK=selkies|both 的镜像)
 ```
 
-`setup-cloudflared.sh` 会自动安装 cloudflared、登录 Cloudflare、创建 tunnel、配置 DNS 并安装 macOS LaunchAgent。
+`setup-cloudflared.sh` 会自动安装 cloudflared、登录 Cloudflare、创建 tunnel、配置 DNS，并在 macOS 上安装 LaunchAgent。没有默认域名，必须通过 `--hostname` 或 `.env` 指定。Linux 宿主机用 systemd 用户服务：`bash deploy/linux-systemd/install.sh --cloudflared`（见 `deploy/linux-systemd/README.md`，未在真实 Linux 主机上验证）。
 
 ## 环境变量 (.env)
 
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| BASE_IMAGE | kalilinux/kali-rolling | 构建基础镜像（`debian:trixie-slim` 可选） |
-| WORKSPACE_VARIANT | latest | 镜像 tag 后缀（Kali 用 `latest`，Debian 用 `trixie`） |
-| PASSWORD | (自动生成) | 统一密码，用于 code-server、桌面和 vault |
-| CLASH_SUBSCRIPTION_URL | (必填) | Clash 代理订阅地址 |
-| DESKTOP_RESOLUTION | 1920x1080 | KasmVNC (`/vnc/`) 分辨率。Selkies (`/desktop/`) 忽略此项（自适应）。 |
-| DESKTOP_AUDIO | 1 | 启用 PulseAudio（0 禁用） |
-| TUNNEL_HOST_PORT | 18080 | 宿主机端口映射 |
-| RESTIC_REPOSITORY | (空) | S3 备份仓库 URL，设置后启用实时备份 |
-| RESTIC_PASSWORD | (空) | 备份仓库加密密码 |
-| AWS_ACCESS_KEY_ID | (空) | S3 备份凭证 |
-| AWS_SECRET_ACCESS_KEY | (空) | S3 备份凭证 |
-| SYNC_ENABLED | (空=关闭) | 启用浏览器文件同步页 `/sync/` 及其 API。启用后每次解锁会把 vault 口令写入 `/workspace/.credentials/sync-passphrase`；关闭后下次解锁会删除它 |
-| REMOTE_DESTRUCT_ENABLED | (空=关闭) | 启用远程自毁端点 `POST /sync/api/destruct`。口令用 `destruct-passphrase` 查看；关闭后下次解锁会删除口令哈希 |
+完整的变量列表、默认值和说明在 [`.env.example`](.env.example)。它由代码里的 schema（`packages/core/src/workspace/env-schema.ts`，插件的变量由插件自己声明）生成，改了 schema 后运行 `make env-example`；测试会在示例文件、代码读取的变量和 docker-compose.yml 不一致时失败。
+
+最常用的几个：
+
+| 变量 | 说明 |
+|------|------|
+| CLASH_SUBSCRIPTION_URL | 必填。Clash 代理订阅地址 |
+| PASSWORD | 统一密码：code-server、桌面和 vault 共用同一个。留空则首次启动随机生成并打印在启动横幅里 |
+| DESKTOP_STACK | 构建时选择桌面栈：`kasmvnc`（默认）/ `selkies` / `both` |
+| SYNC_ENABLED | 默认关闭。启用浏览器文件同步页 `/sync/`；启用后每次解锁会把 vault 口令写入 `/workspace/.credentials/sync-passphrase`，关闭后下次解锁会删除它 |
+| REMOTE_DESTRUCT_ENABLED | 默认关闭。启用远程自毁端点 `POST /sync/api/destruct`；口令用 `destruct-passphrase` 查看 |
+| RESTIC_REPOSITORY | 设置后启用实时备份（还需 `RESTIC_PASSWORD` 与 S3 凭证）；仓库不存在时启动时自动创建 |
 
 ## CI/CD（GitHub Actions）
 
 镜像在推送 `v*` tag 时自动构建并推送，配置文件：`.github/workflows/build-image.yml`。
 
+- **镜像变体**：默认镜像只含 KasmVNC；带 `-full` 后缀的镜像含 Selkies + KasmVNC（`DESKTOP_STACK=both`）。每次发布都会构建两种，保证 Selkies 一直可用
 - **多架构**：`linux/amd64` + `linux/arm64`（原生 runner，无 QEMU 模拟）
 - **Registry**：GHCR（始终推送）+ Docker Hub（配置 secrets 后自动推送）
-- **缓存**：按架构分离的 registry cache（GHCR 上的 `cache-amd64` / `cache-arm64` tag）
+- **缓存**：按变体与架构分离的 registry cache（GHCR 上的 `cache-<variant>-<arch>` tag）
 
 ### 配置步骤
 
@@ -188,11 +186,12 @@ git push origin v1.0.0
 3. 拉取构建好的镜像：
 
 ```bash
-# 从 GHCR
+# 从 GHCR（默认：KasmVNC；`-full`：Selkies + KasmVNC）
 docker pull ghcr.io/<owner>/dev-workspace:latest
+docker pull ghcr.io/<owner>/dev-workspace:latest-full
 
 # 从 Docker Hub
 docker pull <username>/dev-workspace:latest
 ```
 
-也可通过 Actions → "Run workflow" 手动触发，支持选择 desktop stack。
+也可通过 Actions → "Run workflow" 手动触发（同样构建两种变体）。

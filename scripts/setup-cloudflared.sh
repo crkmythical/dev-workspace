@@ -1,15 +1,21 @@
 #!/usr/bin/env bash
 # Cloudflare Tunnel — fully automated setup with sensible defaults
 # Usage:
-#   ./setup-cloudflared.sh                    # Use defaults (dev-workspace, workspace.cicd.dpdns.org)
-#   ./setup-cloudflared.sh --name myname      # Custom tunnel name
-#   ./setup-cloudflared.sh --hostname x.y.z   # Custom hostname
+#   ./setup-cloudflared.sh --hostname workspace.example.com
+#   ./setup-cloudflared.sh --name myname --port 18080 --hostname x.y.z
+#
+# The tunnel name, hostname and local port are also read from the environment or from
+# the project's .env (see .env.example). There is no default hostname.
 set -euo pipefail
 
-# Defaults (change these for your setup)
-TUNNEL_NAME="${TUNNEL_NAME:-dev-workspace}"
-TUNNEL_HOSTNAME="${TUNNEL_HOSTNAME:-workspace.cicd.dpdns.org}"
-TUNNEL_PORT="${TUNNEL_HOST_PORT:-18080}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=lib/env.sh
+source "$SCRIPT_DIR/lib/env.sh"
+
+TUNNEL_NAME="$(env_value TUNNEL_NAME dev-workspace)"
+TUNNEL_HOSTNAME="$(env_value TUNNEL_HOSTNAME)"
+TUNNEL_PORT="$(env_value TUNNEL_HOST_PORT 18080)"
 CLOUDFLARED_DIR="$HOME/.cloudflared"
 
 # Parse args
@@ -22,6 +28,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ -z "$TUNNEL_HOSTNAME" ]]; then
+  echo "ERROR: no hostname. Pass --hostname x.y.z, export TUNNEL_HOSTNAME, or set it in .env" >&2
+  exit 2
+fi
 echo "=== Cloudflare Tunnel Setup ==="
 echo "  Tunnel:   $TUNNEL_NAME"
 echo "  Hostname: $TUNNEL_HOSTNAME"
@@ -31,12 +41,17 @@ echo ""
 # 1. Check cloudflared
 if ! command -v cloudflared &>/dev/null; then
   echo "Installing cloudflared..."
+  case "$(uname -m)" in
+    x86_64|amd64) CF_ARCH=amd64 ;;
+    aarch64|arm64) CF_ARCH=arm64 ;;
+    *) echo "ERROR: unsupported architecture $(uname -m)" >&2; exit 1 ;;
+  esac
   if [[ "$(uname)" == "Darwin" ]]; then
     brew install cloudflared 2>/dev/null || {
-      curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64.tgz | tar xz -C /usr/local/bin/
+      curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-${CF_ARCH}.tgz" | tar xz -C /usr/local/bin/
     }
   else
-    curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64 -o /usr/local/bin/cloudflared
+    curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CF_ARCH}" -o /usr/local/bin/cloudflared
     chmod +x /usr/local/bin/cloudflared
   fi
 fi
@@ -115,6 +130,9 @@ PLIST
   fi
 fi
 
+if [[ "$(uname)" != "Darwin" ]]; then
+  echo "  Auto-start (systemd user service): bash deploy/linux-systemd/install.sh --cloudflared"
+fi
 echo ""
 echo "=== Done ==="
 echo "  Access: https://$TUNNEL_HOSTNAME"

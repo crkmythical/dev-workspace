@@ -22,8 +22,8 @@ docker exec -it dev-workspace doctor         # Health check
 ## Access
 
 - Local: http://localhost:18080
-- Remote: https://workspace.cicd.dpdns.org
-- File sync: https://workspace.cicd.dpdns.org/sync/
+- Remote: https://<hostname> (the domain you gave `scripts/setup-cloudflared.sh`)
+- File sync: https://<hostname>/sync/ (needs `SYNC_ENABLED=1`)
 
 ## Password Rotation
 
@@ -65,7 +65,7 @@ docker exec -it dev-workspace self-destruct --force
 ### 2. 远程 API（无需 SSH/exec 权限）
 
 ```bash
-curl -X POST https://workspace.cicd.dpdns.org/sync/api/destruct \
+curl -X POST https://<hostname>/sync/api/destruct \
   -H "Content-Type: application/json" \
   -d '{"passphrase":"<your-destruct-passphrase>"}'
 # 200 = 成功; 404 = 密码错误; 429 = 速率限制
@@ -73,7 +73,7 @@ curl -X POST https://workspace.cicd.dpdns.org/sync/api/destruct \
 
 ### 3. 浏览器 SPA
 
-访问 `https://workspace.cicd.dpdns.org/sync/#emergency`，输入 destruct passphrase 和确认词 "DESTROY"。
+访问 `https://<hostname>/sync/#emergency`，输入 destruct passphrase 和确认词 "DESTROY"。
 
 ### Destruct Passphrase
 
