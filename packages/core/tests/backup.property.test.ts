@@ -61,7 +61,11 @@ describe("Feature: realtime-backup-s3, Property 1: Debounce trigger correctness"
             expect(decision).toBe("wait");
           } else if (state.nowMs - state.lastTriggerMs >= BACKUP_FALLBACK_INTERVAL_MS) {
             expect(decision).toBe("trigger");
-          } else if (state.lastEventMs === null) {
+          } else if (state.consecutiveFailures > 0) {
+            // The last attempt failed and its backoff is over: retry.
+            expect(decision).toBe("trigger");
+          } else if (state.lastEventMs === null || state.lastEventMs < state.lastTriggerMs) {
+            // No event since the last backup started: nothing unsaved.
             expect(decision).toBe("wait");
           } else if (state.nowMs - state.lastEventMs >= BACKUP_DEBOUNCE_MS) {
             expect(decision).toBe("trigger");

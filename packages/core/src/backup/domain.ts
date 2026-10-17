@@ -2,8 +2,8 @@
  * Realtime Backup — Pure decision logic (no IO).
  *
  * This module contains all constants, types, and pure functions for the
- * event-driven restic backup feature. The IO execution layer lives in
- * packages/cli/src/backup-watcher.ts.
+ * event-driven restic backup feature. The watcher's state transitions are in
+ * ./loop.ts; the IO execution layer lives in packages/cli/src/backup-watcher.ts.
  */
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -127,22 +127,30 @@ export interface DoctorBackupState {
  * 2. First run (lastTriggerMs === null) → trigger (immediate baseline)
  * 3. Within backoff window after failure → wait
  * 4. Fallback elapsed (≥ 5 min since last trigger) → trigger
- * 5. No events yet → wait
- * 6. Quiet ≥ 10s since last event → trigger
- * 7. Otherwise → wait
+ * 5. The last attempt failed and its backoff is over → trigger (retry)
+ * 6. No event since the last backup started → wait (nothing is unsaved)
+ * 7. Quiet ≥ 10s since the last event → trigger, otherwise wait
+ *
+ * Rule 6 matters: `lastEventMs` is never cleared, so without it every tick after the
+ * first event would find "quiet for 10s" and start another backup, back to back,
+ * forever. Only an event that arrived after the last backup STARTED is a change that
+ * backup has not seen.
  */
 export function planDebounce(state: DebounceState): DebounceDecision {
   if (state.backupInFlight) return "coalesce";
   if (state.lastTriggerMs === null) return "trigger";
-  // Backoff: after failure, wait until backoff period elapses
-  if (state.consecutiveFailures > 0 && state.lastFailureMs !== null) {
+  const failing = state.consecutiveFailures > 0;
+  // Backoff: after failure, wait until the backoff period elapses
+  if (failing && state.lastFailureMs !== null) {
     const backoff = backoffDelayMs(state.consecutiveFailures);
     if (state.nowMs - state.lastFailureMs < backoff) return "wait";
   }
   if (state.nowMs - state.lastTriggerMs >= BACKUP_FALLBACK_INTERVAL_MS) {
     return "trigger";
   }
-  if (state.lastEventMs === null) return "wait";
+  // A failed attempt saved nothing: what it was meant to save is still unsaved.
+  if (failing) return "trigger";
+  if (state.lastEventMs === null || state.lastEventMs < state.lastTriggerMs) return "wait";
   const quiet = state.nowMs - state.lastEventMs;
   return quiet >= BACKUP_DEBOUNCE_MS ? "trigger" : "wait";
 }

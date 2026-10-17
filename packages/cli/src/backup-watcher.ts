@@ -6,6 +6,9 @@
  * RESTIC_REPOSITORY is configured. Watches /workspace via inotify,
  * debounces 10s, then triggers `restic backup`.
  *
+ * What to do when is decided by the pure state machine in @sdw/core/backup (loop.ts),
+ * which is replayed over time in tests. This file owns the effects only.
+ *
  * FUSE-unmount safety: this process holds inotify watches + read fds on
  * /workspace. It MUST be stopped before fusermount -u (lock-vault/destroy).
  */
@@ -18,10 +21,13 @@ import {
   BACKUP_KEEP_HOURLY,
   BACKUP_KEEP_WEEKLY,
   BACKUP_STATE_DIR,
-  backoffDelayMs,
+  decideNext,
   evaluateBackupGate,
   isExcludedPath,
-  planDebounce,
+  newLoop,
+  onBackupFinished,
+  onBackupStarted,
+  onFsEvent,
   planPrune,
 } from "@sdw/core/backup";
 import { CLASH_HTTP_PORT } from "@sdw/core/egress";
@@ -62,14 +68,19 @@ const tracker = createFileFailureTracker({
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
-let lastEventMs: number | null = null;
-let lastTriggerMs: number | null = null;
-let backupInFlight = false;
-let pendingDuringFlight = false;
-let consecutiveFailures = tracker.consecutiveFailures();
-let lastFailureMs: number | null = null;
+let loop = newLoop(tracker.consecutiveFailures());
 let stopping = false;
 let resticProc: Subprocess<"ignore", "pipe", "pipe"> | null = null;
+
+/** restic goes through the same proxy as everything else. */
+const PROXY_URL = `http://127.0.0.1:${CLASH_HTTP_PORT}`;
+const resticEnv = () => ({
+  ...process.env,
+  http_proxy: PROXY_URL,
+  https_proxy: PROXY_URL,
+  HTTPS_PROXY: PROXY_URL,
+  HTTP_PROXY: PROXY_URL,
+});
 
 // ─── inotify watcher ─────────────────────────────────────────────────────────
 
@@ -78,8 +89,7 @@ try {
   watcher = watch(WORKSPACE_MOUNT, { recursive: true }, (_event, filename) => {
     if (stopping) return;
     if (filename && isExcludedPath(filename)) return;
-    lastEventMs = Date.now();
-    if (backupInFlight) pendingDuringFlight = true;
+    loop = onFsEvent(loop, Date.now());
   });
 } catch (err) {
   console.error(`Failed to start filesystem watcher: ${err}`);
@@ -91,17 +101,9 @@ console.log("Backup watcher started. Monitoring /workspace for changes.");
 // ─── Main loop (1-second tick) ───────────────────────────────────────────────
 
 const TICK_MS = 1000;
-const loop = setInterval(async () => {
+const timer = setInterval(async () => {
   if (stopping) return;
-  const decision = planDebounce({
-    lastEventMs,
-    nowMs: Date.now(),
-    backupInFlight,
-    lastTriggerMs,
-    consecutiveFailures,
-    lastFailureMs,
-  });
-  if (decision === "trigger") {
+  if (decideNext(loop, Date.now()) === "trigger") {
     await runBackup();
   }
 }, TICK_MS);
@@ -114,7 +116,7 @@ process.on("SIGINT", gracefulStop);
 async function gracefulStop() {
   if (stopping) return;
   stopping = true;
-  clearInterval(loop);
+  clearInterval(timer);
   if (resticProc) {
     resticProc.kill("SIGTERM");
     const killTimeout = setTimeout(() => {
@@ -133,27 +135,22 @@ async function gracefulStop() {
 // ─── Backup execution ────────────────────────────────────────────────────────
 
 async function runBackup() {
-  if (backupInFlight) return; // guard against re-entry from setInterval overlap
-  backupInFlight = true;
-  lastTriggerMs = Date.now();
-  // Clear pending flag for THIS backup cycle — we only care about events
-  // that arrive DURING this backup, not before it.
-  pendingDuringFlight = false;
+  if (loop.backupInFlight) return; // guard against re-entry from setInterval overlap
+  loop = onBackupStarted(loop, Date.now());
 
   const excludeArgs = BACKUP_EXCLUSION_SET.flatMap((p) => ["--exclude", p]);
-  const proxyUrl = `http://127.0.0.1:${CLASH_HTTP_PORT}`;
+  let failures: number | null = null; // set when this run failed
+
+  const fail = (detail: string) => {
+    failures = tracker.recordFailure().count;
+    console.error(`Backup failed (attempt ${failures}): ${detail.slice(0, 200)}`);
+  };
 
   try {
     resticProc = Bun.spawn(["restic", "backup", WORKSPACE_MOUNT, ...excludeArgs], {
       stdout: "pipe",
       stderr: "pipe",
-      env: {
-        ...process.env,
-        http_proxy: proxyUrl,
-        https_proxy: proxyUrl,
-        HTTPS_PROXY: proxyUrl,
-        HTTP_PROXY: proxyUrl,
-      },
+      env: resticEnv(),
     });
 
     // Save stderr ref before nulling resticProc (needed for failure reporting)
@@ -162,50 +159,29 @@ async function runBackup() {
     resticProc = null;
 
     if (exitCode === 0) {
-      await onBackupSuccess();
+      tracker.recordSuccess();
+      // Prune is serialized with the backup: never concurrent with it.
+      if (planPrune({ lastPruneMs: loadLastPrune(), nowMs: Date.now() }) === "prune-due") {
+        await runPrune();
+      }
     } else {
-      const stderr = await new Response(stderrStream).text().catch(() => "");
-      onBackupFailure(stderr);
+      fail(await new Response(stderrStream).text().catch(() => ""));
     }
   } catch (err) {
     resticProc = null;
-    onBackupFailure(String(err));
+    fail(String(err));
   }
 
-  backupInFlight = false;
-
-  // Re-enter debounce if events accumulated during this backup
-  if (pendingDuringFlight) {
-    lastEventMs = Date.now();
-    pendingDuringFlight = false;
-  }
-}
-
-async function onBackupSuccess() {
-  consecutiveFailures = 0;
-  lastFailureMs = null;
-  tracker.recordSuccess();
-
-  // Check if prune is due (serialized — never concurrent with backup)
-  const pruneDecision = planPrune({
-    lastPruneMs: loadLastPrune(),
-    nowMs: Date.now(),
-  });
-  if (pruneDecision === "prune-due") {
-    await runPrune();
-  }
-}
-
-function onBackupFailure(detail: string) {
-  lastFailureMs = Date.now();
-  consecutiveFailures = tracker.recordFailure().count;
-  console.error(`Backup failed (attempt ${consecutiveFailures}): ${detail.slice(0, 200)}`);
+  loop = onBackupFinished(
+    loop,
+    failures === null ? { ok: true } : { ok: false, failures },
+    Date.now(),
+  );
 }
 
 // ─── Prune ───────────────────────────────────────────────────────────────────
 
 async function runPrune() {
-  const proxyUrl = `http://127.0.0.1:${CLASH_HTTP_PORT}`;
   try {
     const proc = Bun.spawn(
       [
@@ -219,17 +195,7 @@ async function runPrune() {
         "--keep-weekly",
         String(BACKUP_KEEP_WEEKLY),
       ],
-      {
-        stdout: "pipe",
-        stderr: "pipe",
-        env: {
-          ...process.env,
-          http_proxy: proxyUrl,
-          https_proxy: proxyUrl,
-          HTTPS_PROXY: proxyUrl,
-          HTTP_PROXY: proxyUrl,
-        },
-      },
+      { stdout: "pipe", stderr: "pipe", env: resticEnv() },
     );
     const exitCode = await proc.exited;
     if (exitCode === 0) {
