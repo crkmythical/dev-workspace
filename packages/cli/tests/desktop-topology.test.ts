@@ -1,9 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import {
-  type DesktopTarget,
-  desktopStartOrder,
-  desktopStopOrder,
-} from "../src/lib/desktop.ts";
+import { type DesktopTarget, desktopStartOrder, desktopStopOrder } from "../src/lib/desktop.ts";
 
 /**
  * Property test: FUSE-safety topology invariant — for BOTH desktop stacks.

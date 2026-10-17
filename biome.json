@@ -2,7 +2,12 @@
   "organizeImports": { "enabled": true },
   "linter": {
     "enabled": true,
-    "rules": { "recommended": true }
+    "rules": {
+      "recommended": true,
+      "style": {
+        "noNonNullAssertion": "off"
+      }
+    }
   },
   "formatter": {
     "enabled": true,
@@ -11,6 +16,16 @@
     "lineWidth": 100
   },
   "files": {
-    "ignore": ["node_modules", "dist", "out", "*.tar"]
+    "ignore": [
+      "node_modules",
+      "**/node_modules",
+      "**/dist",
+      "**/out",
+      "*.tar",
+      "bun.lock",
+      "image/selkies-web",
+      "rust",
+      "**/*.min.js"
+    ]
   }
 }

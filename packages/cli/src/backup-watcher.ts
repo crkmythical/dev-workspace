@@ -9,7 +9,7 @@
  * FUSE-unmount safety: this process holds inotify watches + read fds on
  * /workspace. It MUST be stopped before fusermount -u (lock-vault/destroy).
  */
-import { watch, type FSWatcher } from "node:fs";
+import { type FSWatcher, watch } from "node:fs";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import {
   BACKUP_EXCLUSION_SET,
@@ -105,7 +105,9 @@ async function gracefulStop() {
   if (resticProc) {
     resticProc.kill("SIGTERM");
     const killTimeout = setTimeout(() => {
-      try { resticProc?.kill("SIGKILL"); } catch {}
+      try {
+        resticProc?.kill("SIGKILL");
+      } catch {}
     }, 5000);
     await resticProc.exited;
     clearTimeout(killTimeout);
@@ -129,20 +131,17 @@ async function runBackup() {
   const proxyUrl = "http://127.0.0.1:7890";
 
   try {
-    resticProc = Bun.spawn(
-      ["restic", "backup", WORKSPACE_MOUNT, ...excludeArgs],
-      {
-        stdout: "pipe",
-        stderr: "pipe",
-        env: {
-          ...process.env,
-          http_proxy: proxyUrl,
-          https_proxy: proxyUrl,
-          HTTPS_PROXY: proxyUrl,
-          HTTP_PROXY: proxyUrl,
-        },
+    resticProc = Bun.spawn(["restic", "backup", WORKSPACE_MOUNT, ...excludeArgs], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...process.env,
+        http_proxy: proxyUrl,
+        https_proxy: proxyUrl,
+        HTTPS_PROXY: proxyUrl,
+        HTTP_PROXY: proxyUrl,
       },
-    );
+    });
 
     // Save stderr ref before nulling resticProc (needed for failure reporting)
     const stderrStream = resticProc.stderr;
@@ -209,10 +208,15 @@ async function runPrune() {
   try {
     const proc = Bun.spawn(
       [
-        "restic", "forget", "--prune",
-        "--keep-hourly", String(BACKUP_KEEP_HOURLY),
-        "--keep-daily", String(BACKUP_KEEP_DAILY),
-        "--keep-weekly", String(BACKUP_KEEP_WEEKLY),
+        "restic",
+        "forget",
+        "--prune",
+        "--keep-hourly",
+        String(BACKUP_KEEP_HOURLY),
+        "--keep-daily",
+        String(BACKUP_KEEP_DAILY),
+        "--keep-weekly",
+        String(BACKUP_KEEP_WEEKLY),
       ],
       {
         stdout: "pipe",
@@ -242,7 +246,12 @@ async function runPrune() {
 
 function loadFailureCount(): number {
   try {
-    return parseInt(readFileSync(`${BACKUP_STATE_DIR}/consecutive-failures`, "utf-8").trim(), 10) || 0;
+    return (
+      Number.parseInt(
+        readFileSync(`${BACKUP_STATE_DIR}/consecutive-failures`, "utf-8").trim(),
+        10,
+      ) || 0
+    );
   } catch {
     return 0;
   }

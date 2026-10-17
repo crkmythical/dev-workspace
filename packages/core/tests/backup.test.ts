@@ -37,11 +37,19 @@ describe("planDebounce", () => {
   });
 
   it("coalesces when backup in flight", () => {
-    expect(planDebounce({ ...base, backupInFlight: true, lastEventMs: NOW - 30_000 })).toBe("coalesce");
+    expect(planDebounce({ ...base, backupInFlight: true, lastEventMs: NOW - 30_000 })).toBe(
+      "coalesce",
+    );
   });
 
   it("triggers on fallback after 5 minutes", () => {
-    expect(planDebounce({ ...base, lastEventMs: null, lastTriggerMs: NOW - BACKUP_FALLBACK_INTERVAL_MS })).toBe("trigger");
+    expect(
+      planDebounce({
+        ...base,
+        lastEventMs: null,
+        lastTriggerMs: NOW - BACKUP_FALLBACK_INTERVAL_MS,
+      }),
+    ).toBe("trigger");
   });
 
   it("triggers immediately on first run (lastTriggerMs === null)", () => {
@@ -108,12 +116,14 @@ describe("evaluateBackupGate", () => {
   });
 
   it("enabled when all present", () => {
-    expect(evaluateBackupGate({
-      RESTIC_REPOSITORY: "s3:test",
-      RESTIC_PASSWORD: "pw",
-      AWS_ACCESS_KEY_ID: "key",
-      AWS_SECRET_ACCESS_KEY: "secret",
-    })).toEqual({ status: "enabled" });
+    expect(
+      evaluateBackupGate({
+        RESTIC_REPOSITORY: "s3:test",
+        RESTIC_PASSWORD: "pw",
+        AWS_ACCESS_KEY_ID: "key",
+        AWS_SECRET_ACCESS_KEY: "secret",
+      }),
+    ).toEqual({ status: "enabled" });
   });
 
   it("misconfigured when repo present but password missing", () => {
@@ -131,57 +141,69 @@ describe("evaluateBackupGate", () => {
 
 describe("planDoctorBackupStatus", () => {
   it("not-configured when dormant", () => {
-    expect(planDoctorBackupStatus({
-      gateResult: { status: "dormant" },
-      lastSuccessMs: null,
-      consecutiveFailures: 0,
-      nowMs: NOW,
-    })).toBe("not-configured");
+    expect(
+      planDoctorBackupStatus({
+        gateResult: { status: "dormant" },
+        lastSuccessMs: null,
+        consecutiveFailures: 0,
+        nowMs: NOW,
+      }),
+    ).toBe("not-configured");
   });
 
   it("fail when misconfigured", () => {
-    expect(planDoctorBackupStatus({
-      gateResult: { status: "misconfigured", missing: ["RESTIC_PASSWORD"] },
-      lastSuccessMs: null,
-      consecutiveFailures: 0,
-      nowMs: NOW,
-    })).toBe("fail");
+    expect(
+      planDoctorBackupStatus({
+        gateResult: { status: "misconfigured", missing: ["RESTIC_PASSWORD"] },
+        lastSuccessMs: null,
+        consecutiveFailures: 0,
+        nowMs: NOW,
+      }),
+    ).toBe("fail");
   });
 
   it("fail when failures >= threshold", () => {
-    expect(planDoctorBackupStatus({
-      gateResult: { status: "enabled" },
-      lastSuccessMs: NOW - 1000,
-      consecutiveFailures: BACKUP_FAILURE_THRESHOLD,
-      nowMs: NOW,
-    })).toBe("fail");
+    expect(
+      planDoctorBackupStatus({
+        gateResult: { status: "enabled" },
+        lastSuccessMs: NOW - 1000,
+        consecutiveFailures: BACKUP_FAILURE_THRESHOLD,
+        nowMs: NOW,
+      }),
+    ).toBe("fail");
   });
 
   it("warn when no success recorded", () => {
-    expect(planDoctorBackupStatus({
-      gateResult: { status: "enabled" },
-      lastSuccessMs: null,
-      consecutiveFailures: 0,
-      nowMs: NOW,
-    })).toBe("warn");
+    expect(
+      planDoctorBackupStatus({
+        gateResult: { status: "enabled" },
+        lastSuccessMs: null,
+        consecutiveFailures: 0,
+        nowMs: NOW,
+      }),
+    ).toBe("warn");
   });
 
   it("warn when success is stale", () => {
-    expect(planDoctorBackupStatus({
-      gateResult: { status: "enabled" },
-      lastSuccessMs: NOW - BACKUP_STALENESS_MS - 1,
-      consecutiveFailures: 0,
-      nowMs: NOW,
-    })).toBe("warn");
+    expect(
+      planDoctorBackupStatus({
+        gateResult: { status: "enabled" },
+        lastSuccessMs: NOW - BACKUP_STALENESS_MS - 1,
+        consecutiveFailures: 0,
+        nowMs: NOW,
+      }),
+    ).toBe("warn");
   });
 
   it("ok when recent success and no failures", () => {
-    expect(planDoctorBackupStatus({
-      gateResult: { status: "enabled" },
-      lastSuccessMs: NOW - 5000,
-      consecutiveFailures: 0,
-      nowMs: NOW,
-    })).toBe("ok");
+    expect(
+      planDoctorBackupStatus({
+        gateResult: { status: "enabled" },
+        lastSuccessMs: NOW - 5000,
+        consecutiveFailures: 0,
+        nowMs: NOW,
+      }),
+    ).toBe("ok");
   });
 });
 

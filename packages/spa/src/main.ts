@@ -125,7 +125,9 @@ function render() {
   `;
   const btnStyle =
     "padding:8px 16px;border:1px solid #45475a;border-radius:6px;background:#2a2a3c;color:#cdd6f4;cursor:pointer";
-  document.querySelectorAll("button").forEach((b) => b.setAttribute("style", btnStyle));
+  for (const b of document.querySelectorAll("button")) {
+    b.setAttribute("style", btnStyle);
+  }
   document.getElementById("bf")!.onclick = chooseFolder;
   document.getElementById("bk")!.onclick = setPassphrase;
   document.getElementById("bl")!.onclick = async () => {
@@ -146,7 +148,10 @@ function render() {
 
 async function chooseFolder() {
   try {
-    const h = await (window as any).showDirectoryPicker({ mode: "readwrite" });
+    const picker = window as unknown as {
+      showDirectoryPicker(opts?: { mode?: string }): Promise<FileSystemDirectoryHandle>;
+    };
+    const h = await picker.showDirectoryPicker({ mode: "readwrite" });
     dirHandle = h;
     await saveHandle(h);
     log("Folder selected");
@@ -192,7 +197,9 @@ async function poll() {
       try {
         const resp = await fetch("/sync/api/download");
         if (resp.ok) {
-          const { files } = (await resp.json()) as any;
+          const { files } = (await resp.json()) as {
+            files?: Array<{ name: string; size: number }>;
+          };
           for (const f of files || []) {
             baseline.set(f.name, { mtime: 0, size: f.size }); // Mark as already synced
           }
@@ -212,8 +219,8 @@ async function poll() {
     for (const c of changes) await uploadFile(c.path, c.handle);
     baseline = new Map([...current].map(([k, v]) => [k, { mtime: v.mtime, size: v.size }]));
     setStatus("idle");
-  } catch (e: any) {
-    log(`Error: ${e.message}`);
+  } catch (e) {
+    log(`Error: ${e instanceof Error ? e.message : String(e)}`);
     setStatus("error");
   }
 }
@@ -298,7 +305,12 @@ async function scanDir(
   prefix = "",
 ): Promise<Map<string, { mtime: number; size: number; handle: FileSystemFileHandle }>> {
   const entries = new Map<string, { mtime: number; size: number; handle: FileSystemFileHandle }>();
-  for await (const [name, child] of (handle as any).entries()) {
+  // FileSystemDirectoryHandle.entries() is not in the stock DOM lib typings yet;
+  // narrow via a typed shape instead of `any` so child.kind still discriminates.
+  const dir = handle as FileSystemDirectoryHandle & {
+    entries(): AsyncIterableIterator<[string, FileSystemFileHandle | FileSystemDirectoryHandle]>;
+  };
+  for await (const [name, child] of dir.entries()) {
     if (name.startsWith(".")) continue;
     const p = prefix ? `${prefix}/${name}` : name;
     if (child.kind === "file") {

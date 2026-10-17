@@ -140,7 +140,11 @@ for (const target of installedStacks()) {
     results.push(
       streamProbe.exitCode === 0
         ? { component: meta.streamLabel, status: "ok", detail: `port ${meta.port} listening` }
-        : { component: meta.streamLabel, status: "fail", detail: `port ${meta.port} not responding` },
+        : {
+            component: meta.streamLabel,
+            status: "fail",
+            detail: `port ${meta.port} not responding`,
+          },
     );
 
     // Static client reachability — selkies only. Selkies is WS-only, so a missing
@@ -150,8 +154,16 @@ for (const target of installedStacks()) {
       const clientExists = existsSync(`${DESKTOP_WEB_ROOT}/index.html`);
       results.push(
         clientExists
-          ? { component: "Desktop client (static)", status: "ok", detail: `${DESKTOP_WEB_ROOT}/index.html present` }
-          : { component: "Desktop client (static)", status: "warn", detail: `${DESKTOP_WEB_ROOT}/index.html MISSING — browser will get 426` },
+          ? {
+              component: "Desktop client (static)",
+              status: "ok",
+              detail: `${DESKTOP_WEB_ROOT}/index.html present`,
+            }
+          : {
+              component: "Desktop client (static)",
+              status: "warn",
+              detail: `${DESKTOP_WEB_ROOT}/index.html MISSING — browser will get 426`,
+            },
       );
     }
 
@@ -159,17 +171,25 @@ for (const target of installedStacks()) {
     results.push(
       displayCheck.exitCode === 0
         ? { component: `Desktop Display ${meta.display}`, status: "ok", detail: "active" }
-        : { component: `Desktop Display ${meta.display}`, status: "warn", detail: "not responding" },
+        : {
+            component: `Desktop Display ${meta.display}`,
+            status: "warn",
+            detail: "not responding",
+          },
     );
   } else {
-    results.push({ component: `Desktop [${target}]`, status: "ok", detail: "not started (optional)" });
+    results.push({
+      component: `Desktop [${target}]`,
+      status: "ok",
+      detail: "not started (optional)",
+    });
   }
 }
 
 // Window-manager / panel health (shared XFCE binaries across both stacks).
 // Detects the "fake-alive" session: X server up but WM/panel crashed (black
 // screen in browser even though supervisord reports RUNNING).
-if ((await isAnyAnchorRunning())) {
+if (await isAnyAnchorRunning()) {
   const [wmName, panelName] = ["xfwm4", "xfce4-panel"];
   const wm = await $`pgrep -x ${wmName}`.quiet().nothrow();
   const panel = await $`pgrep -x ${panelName}`.quiet().nothrow();
@@ -200,11 +220,7 @@ if (existsSync(`${PENTEST_CIPHER_DIR}/gocryptfs.conf`)) {
 }
 
 // 8. Backup (S3/restic)
-import {
-  evaluateBackupGate,
-  planDoctorBackupStatus,
-  BACKUP_STATE_DIR,
-} from "@sdw/core";
+import { BACKUP_STATE_DIR, evaluateBackupGate, planDoctorBackupStatus } from "@sdw/core";
 
 const backupGate = evaluateBackupGate(process.env);
 const backupLastSuccessFile = `${BACKUP_STATE_DIR}/last-success`;
@@ -213,7 +229,7 @@ const backupLastSuccess = existsSync(backupLastSuccessFile)
   ? readFileSync(backupLastSuccessFile, "utf-8").trim()
   : null;
 const backupFailures = existsSync(backupFailuresFile)
-  ? parseInt(readFileSync(backupFailuresFile, "utf-8").trim(), 10) || 0
+  ? Number.parseInt(readFileSync(backupFailuresFile, "utf-8").trim(), 10) || 0
   : 0;
 
 const backupStatus = planDoctorBackupStatus({

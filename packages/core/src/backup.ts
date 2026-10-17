@@ -150,14 +150,12 @@ export function planDebounce(state: DebounceState): DebounceDecision {
 /** Decide whether a prune cycle is due. */
 export function planPrune(state: PruneState): PruneDecision {
   if (state.lastPruneMs === null) return "prune-due";
-  return state.nowMs - state.lastPruneMs >= BACKUP_PRUNE_CADENCE_MS
-    ? "prune-due"
-    : "skip";
+  return state.nowMs - state.lastPruneMs >= BACKUP_PRUNE_CADENCE_MS ? "prune-due" : "skip";
 }
 
 /** Compute exponential backoff delay: 5s × 2^min(n, 4). Capped at ~80s. */
 export function backoffDelayMs(consecutiveFailures: number): number {
-  return BACKUP_BASE_BACKOFF_MS * Math.pow(2, Math.min(consecutiveFailures, 4));
+  return BACKUP_BASE_BACKOFF_MS * 2 ** Math.min(consecutiveFailures, 4);
 }
 
 /** Evaluate the opt-in gate from environment variables. */
@@ -167,9 +165,7 @@ export function evaluateBackupGate(env: BackupGateEnv): GateResult {
   if (!env.RESTIC_PASSWORD) missing.push("RESTIC_PASSWORD");
   if (!env.AWS_ACCESS_KEY_ID) missing.push("AWS_ACCESS_KEY_ID");
   if (!env.AWS_SECRET_ACCESS_KEY) missing.push("AWS_SECRET_ACCESS_KEY");
-  return missing.length > 0
-    ? { status: "misconfigured", missing }
-    : { status: "enabled" };
+  return missing.length > 0 ? { status: "misconfigured", missing } : { status: "enabled" };
 }
 
 /** Whether the failure count has reached the notification threshold. */

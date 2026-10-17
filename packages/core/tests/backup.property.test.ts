@@ -46,27 +46,30 @@ const arbPruneState: fc.Arbitrary<PruneState> = fc.record({
 describe("Feature: realtime-backup-s3, Property 1: Debounce trigger correctness", () => {
   it("triggers iff conditions met (not in-flight, not in backoff)", () => {
     fc.assert(
-      fc.property(arbDebounceState.filter((s) => !s.backupInFlight), (state) => {
-        const decision = planDebounce(state);
-        const inBackoff =
-          state.consecutiveFailures > 0 &&
-          state.lastFailureMs !== null &&
-          state.nowMs - state.lastFailureMs < backoffDelayMs(state.consecutiveFailures);
+      fc.property(
+        arbDebounceState.filter((s) => !s.backupInFlight),
+        (state) => {
+          const decision = planDebounce(state);
+          const inBackoff =
+            state.consecutiveFailures > 0 &&
+            state.lastFailureMs !== null &&
+            state.nowMs - state.lastFailureMs < backoffDelayMs(state.consecutiveFailures);
 
-        if (state.lastTriggerMs === null) {
-          expect(decision).toBe("trigger");
-        } else if (inBackoff) {
-          expect(decision).toBe("wait");
-        } else if (state.nowMs - state.lastTriggerMs >= BACKUP_FALLBACK_INTERVAL_MS) {
-          expect(decision).toBe("trigger");
-        } else if (state.lastEventMs === null) {
-          expect(decision).toBe("wait");
-        } else if (state.nowMs - state.lastEventMs >= BACKUP_DEBOUNCE_MS) {
-          expect(decision).toBe("trigger");
-        } else {
-          expect(decision).toBe("wait");
-        }
-      }),
+          if (state.lastTriggerMs === null) {
+            expect(decision).toBe("trigger");
+          } else if (inBackoff) {
+            expect(decision).toBe("wait");
+          } else if (state.nowMs - state.lastTriggerMs >= BACKUP_FALLBACK_INTERVAL_MS) {
+            expect(decision).toBe("trigger");
+          } else if (state.lastEventMs === null) {
+            expect(decision).toBe("wait");
+          } else if (state.nowMs - state.lastEventMs >= BACKUP_DEBOUNCE_MS) {
+            expect(decision).toBe("trigger");
+          } else {
+            expect(decision).toBe("wait");
+          }
+        },
+      ),
       { numRuns: 200 },
     );
   });
@@ -75,9 +78,12 @@ describe("Feature: realtime-backup-s3, Property 1: Debounce trigger correctness"
 describe("Feature: realtime-backup-s3, Property 2: In-flight coalesce invariant", () => {
   it("always returns coalesce when backup is in flight", () => {
     fc.assert(
-      fc.property(arbDebounceState.filter((s) => s.backupInFlight), (state) => {
-        expect(planDebounce(state)).toBe("coalesce");
-      }),
+      fc.property(
+        arbDebounceState.filter((s) => s.backupInFlight),
+        (state) => {
+          expect(planDebounce(state)).toBe("coalesce");
+        },
+      ),
       { numRuns: 200 },
     );
   });
@@ -86,9 +92,9 @@ describe("Feature: realtime-backup-s3, Property 2: In-flight coalesce invariant"
 describe("Feature: realtime-backup-s3, Property 3: Exclusion path filtering", () => {
   it("excludes paths with any segment matching the exclusion set", () => {
     const arbExcludedSegment = fc.constantFrom(...BACKUP_EXCLUSION_SET);
-    const arbSafeSegment = fc.string({ minLength: 1, maxLength: 20 }).filter(
-      (s) => !BACKUP_EXCLUSION_SET.includes(s) && !s.includes("/"),
-    );
+    const arbSafeSegment = fc
+      .string({ minLength: 1, maxLength: 20 })
+      .filter((s) => !BACKUP_EXCLUSION_SET.includes(s) && !s.includes("/"));
 
     fc.assert(
       fc.property(
@@ -105,9 +111,9 @@ describe("Feature: realtime-backup-s3, Property 3: Exclusion path filtering", ()
   });
 
   it("does not exclude paths with no matching segment", () => {
-    const arbSafeSegment = fc.string({ minLength: 1, maxLength: 20 }).filter(
-      (s) => !BACKUP_EXCLUSION_SET.includes(s) && !s.includes("/"),
-    );
+    const arbSafeSegment = fc
+      .string({ minLength: 1, maxLength: 20 })
+      .filter((s) => !BACKUP_EXCLUSION_SET.includes(s) && !s.includes("/"));
 
     fc.assert(
       fc.property(fc.array(arbSafeSegment, { minLength: 1, maxLength: 5 }), (segments) => {
@@ -141,7 +147,7 @@ describe("Feature: realtime-backup-s3, Property 5: Exponential backoff computati
   it("returns BASE * 2^min(n, 4)", () => {
     fc.assert(
       fc.property(fc.integer({ min: 0, max: 20 }), (n) => {
-        const expected = BACKUP_BASE_BACKOFF_MS * Math.pow(2, Math.min(n, 4));
+        const expected = BACKUP_BASE_BACKOFF_MS * 2 ** Math.min(n, 4);
         expect(backoffDelayMs(n)).toBe(expected);
       }),
       { numRuns: 100 },
@@ -254,16 +260,12 @@ describe("Feature: realtime-backup-s3, Property 8: Doctor backup status", () => 
 describe("Feature: realtime-backup-s3, Property 9: Backoff is monotonically non-decreasing", () => {
   it("backoff(a) <= backoff(b) for a < b (both <= 4)", () => {
     fc.assert(
-      fc.property(
-        fc.integer({ min: 0, max: 3 }),
-        fc.integer({ min: 1, max: 4 }),
-        (a, bOffset) => {
-          const b = a + bOffset;
-          if (b <= 4) {
-            expect(backoffDelayMs(a)).toBeLessThanOrEqual(backoffDelayMs(b));
-          }
-        },
-      ),
+      fc.property(fc.integer({ min: 0, max: 3 }), fc.integer({ min: 1, max: 4 }), (a, bOffset) => {
+        const b = a + bOffset;
+        if (b <= 4) {
+          expect(backoffDelayMs(a)).toBeLessThanOrEqual(backoffDelayMs(b));
+        }
+      }),
       { numRuns: 100 },
     );
   });

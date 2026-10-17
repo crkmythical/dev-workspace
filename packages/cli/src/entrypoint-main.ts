@@ -94,8 +94,8 @@ if (ready) {
         `http://127.0.0.1:${CLASH_CONTROLLER_PORT}/providers/proxies/subscription`,
       );
       if (resp.ok) {
-        const data = (await resp.json()) as any;
-        const nodeCount = Object.keys(data.proxies || {}).length;
+        const data = (await resp.json()) as { proxies?: Record<string, unknown> };
+        const nodeCount = Object.keys(data.proxies ?? {}).length;
         if (nodeCount > 0) {
           providerLoaded = true;
           console.log(`Provider loaded: ${nodeCount} nodes (url-test auto-selecting fastest).`);

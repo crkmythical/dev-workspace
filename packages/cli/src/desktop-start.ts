@@ -8,12 +8,7 @@
  *   desktop-start vnc        start only the kasmvnc stack (/vnc/)
  */
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import {
-  DESKTOP_CACHE_DIR,
-  SELKIES_HOME,
-  VNC_HOME,
-  WORKSPACE_MOUNT,
-} from "@sdw/core/constants";
+import { DESKTOP_CACHE_DIR, SELKIES_HOME, VNC_HOME, WORKSPACE_MOUNT } from "@sdw/core/constants";
 import { $ } from "bun";
 import {
   type DesktopTarget,
