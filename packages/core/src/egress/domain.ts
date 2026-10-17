@@ -151,6 +151,11 @@ export interface EgressTiming {
   proxyWait: Wait;
   /** How long to wait for the subscription provider to load nodes. */
   providerWait: Wait;
+  /**
+   * After an explicit refresh. The refresh call returns once the fetch is done, so this only
+   * covers the nodes becoming visible.
+   */
+  refreshWait: Wait;
   /** Pause after selecting the auto group, so the first connection can establish. */
   settleMs: number;
   /** The probe through the proxy. */
@@ -160,6 +165,7 @@ export interface EgressTiming {
 export const DEFAULT_EGRESS_TIMING: EgressTiming = {
   proxyWait: { attempts: 30, delayMs: 1000 },
   providerWait: { attempts: 15, delayMs: 2000 },
+  refreshWait: { attempts: 3, delayMs: 2000 },
   settleMs: 2000,
   probe: { attempts: 3, delayMs: 3000 },
 };

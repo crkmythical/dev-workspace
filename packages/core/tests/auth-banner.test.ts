@@ -110,6 +110,7 @@ describe("renderBanner", () => {
   const confirmed: EgressReport = { status: "confirmed", checkedAt: "t", providerNodes: 9 };
   const base: BannerInput = {
     password: "s3cret",
+    hostPort: "18080",
     stacks: ["selkies", "vnc"],
     vaultMounted: true,
     egress: confirmed,
@@ -129,6 +130,14 @@ describe("renderBanner", () => {
     expect(out).toContain("user / s3cret");
     expect(out).toContain("http://localhost:18080/desktop/");
     expect(out).toContain("http://localhost:18080/vnc/");
+  });
+
+  it("prints the port the host actually publishes, not a fixed one", () => {
+    const out = text({ hostPort: "18081" });
+    expect(out).toContain("Code:      http://localhost:18081");
+    expect(out).toContain("http://localhost:18081/desktop/");
+    expect(out).toContain("http://localhost:18081/vnc/");
+    expect(out).not.toContain("18080");
   });
 
   it("lists only the desktops the image contains", () => {

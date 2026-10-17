@@ -6,7 +6,7 @@
  * @sdw/core/vault and @sdw/infra, and are shared with the container's
  * boot-time auto-unlock, so both paths leave the system in the same state.
  */
-import { WORKSPACE_VAULT, unlockVault } from "@sdw/core/vault";
+import { WORKSPACE_VAULT, explainUnlockFailure, unlockVault } from "@sdw/core/vault";
 import { loadConfig } from "@sdw/core/workspace";
 import { gocryptfsVolume, interactiveUnlockExtras, workspaceUnlockHooks } from "@sdw/infra";
 import { readPassphrase } from "./lib/passphrase.ts";
@@ -41,7 +41,12 @@ if (result.status === "rejected") {
 }
 
 if (result.status === "failed") {
-  console.error("ERROR: Failed to unlock vault (wrong passphrase or mount error).");
+  console.error("ERROR: Failed to unlock vault.");
+  if (result.detail) console.error(`  ${result.detail.trim().split("\n").join("\n  ")}`);
+  const why = explainUnlockFailure(result.detail);
+  for (const line of why.length > 0 ? why : ["Wrong passphrase, or the mount failed."]) {
+    console.error(`  ${line}`);
+  }
   process.exit(1);
 }
 

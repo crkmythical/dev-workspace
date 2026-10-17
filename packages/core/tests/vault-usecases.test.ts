@@ -100,6 +100,20 @@ describe("lockVault", () => {
     expect(calls).toEqual(["holders.stopAll", "unmount:workspace:lazy"]);
   });
 
+  it("lets the volume tell the user what it had to do to release the mount", async () => {
+    const logs: string[] = [];
+    await lockVault(
+      SECOND,
+      {
+        volume: fakeVolume("unlocked", [], { unmountReport: "killed 2 process(es)" }),
+        holders: { stopAll: async () => {} },
+        log: (m) => logs.push(m),
+      },
+      { mode: "escalate" },
+    );
+    expect(logs).toEqual(["killed 2 process(es)"]);
+  });
+
   it("works for any further vault too (a second VaultSpec, same use case)", async () => {
     const calls: string[] = [];
     const noHolders = { stopAll: async () => {} };
@@ -277,6 +291,18 @@ describe("destroyWorkspace", () => {
     expect(at("unmount:second")).toBeLessThan(at("shred:"));
     expect(at("shred:")).toBeLessThan(at("effects.shredTree"));
     expect(at("effects.marker")).toBe(calls.length - 1);
+  });
+
+  it("puts what the unmount had to kill into the destroy log", async () => {
+    const logs: string[] = [];
+    await destroyWorkspace(
+      makeDeps([], logs, {
+        volume: fakeVolume("unlocked", [], { unmountReport: "killed 1 process(es)" }),
+      }),
+      plain,
+    );
+    // Once per vault: the workspace and the second one.
+    expect(logs.filter((l) => l === "killed 1 process(es)")).toHaveLength(2);
   });
 
   it("logs the Point of No Return only after the keys are really gone", async () => {

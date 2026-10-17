@@ -29,6 +29,8 @@ export interface FakeVolumeOptions {
   /** Result per unmount mode; defaults to success. */
   unmount?: Partial<Record<UnmountMode, boolean>>;
   throwOnUnmount?: boolean;
+  /** What the volume tells its `report` callback while unmounting (e.g. processes killed). */
+  unmountReport?: string;
 }
 
 export function fakeVolume(
@@ -53,8 +55,9 @@ export function fakeVolume(
       state = "unlocked";
       return { ok: true };
     },
-    async unmount(spec, mode) {
+    async unmount(spec, mode, report) {
       calls.push(`unmount:${spec.id}:${mode}`);
+      if (opts.unmountReport) report?.(opts.unmountReport);
       if (opts.throwOnUnmount) throw new Error("fusermount exploded");
       const released = opts.unmount?.[mode] ?? true;
       if (released) state = "locked";

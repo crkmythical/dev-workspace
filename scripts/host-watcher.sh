@@ -27,9 +27,29 @@ check_destruct() {
   docker run --rm -v "${vol}:/s" alpine test -f /s/completed 2>/dev/null
 }
 
+# destroy.sh --paranoid removes the host services, this watcher's included (launchctl unload,
+# systemctl disable --now), and the service manager then kills everything the watcher started:
+# destroy.sh with it, partway through. The credentials, shell history, DNS cache and the project
+# directory were never reached. Seen on macOS (launchd) and on Linux (systemd). So the cleanup runs
+# OUTSIDE the watcher's service: in a new session on macOS, in a transient unit on Linux.
+run_outside_service() {
+  if [[ "$(uname)" == "Darwin" ]]; then
+    if command -v perl &>/dev/null; then
+      perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' "$@" &
+      wait $!
+      return
+    fi
+  elif command -v systemd-run &>/dev/null && systemctl --user show-environment &>/dev/null; then
+    systemd-run --user --quiet --collect --pipe --wait \
+      --working-directory="$PROJECT_DIR" --setenv=PATH="$PATH" -- "$@"
+    return
+  fi
+  "$@"
+}
+
 do_cleanup() {
   echo "[$(date -Iseconds)] Self-destruct confirmed. Running host cleanup..."
-  bash "${PROJECT_DIR}/destroy.sh" --force --paranoid
+  run_outside_service bash "${PROJECT_DIR}/destroy.sh" --force --paranoid
 }
 
 daemon_mode() {

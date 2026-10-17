@@ -53,6 +53,10 @@ export function clashEgressPorts(log: (message: string) => void): EgressPorts {
       }
     },
 
+    async refreshProvider() {
+      await fetch(`${CONTROLLER_URL}/providers/proxies/${CLASH_PROVIDER_NAME}`, { method: "PUT" });
+    },
+
     async selectAutoNode() {
       await fetch(`${CONTROLLER_URL}/proxies/GLOBAL`, {
         method: "PUT",

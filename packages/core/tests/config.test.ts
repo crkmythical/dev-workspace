@@ -13,6 +13,7 @@ describe("loadConfig", () => {
       clashSubscriptionUrl: "",
       password: undefined,
       desktopResolution: "1920x1080",
+      hostPort: "18080",
       git: { userName: undefined, userEmail: undefined, vaultRepo: undefined },
       backup: {
         RESTIC_REPOSITORY: undefined,
@@ -56,6 +57,17 @@ describe("loadConfig", () => {
     });
     expect(cfg.backup.RESTIC_REPOSITORY).toBe("s3:https://s3.example.test/bucket");
     expect(cfg.features).toEqual({ sync: true, remoteDestruct: true });
+  });
+
+  it("takes the published web port from TUNNEL_HOST_PORT, and only if it is a real port", () => {
+    expect(loadConfig({ TUNNEL_HOST_PORT: "18081" }).hostPort).toBe("18081");
+    expect(loadConfig({ TUNNEL_HOST_PORT: " 8080 " }).hostPort).toBe("8080");
+    for (const bad of ["", "0", "65536", "99999", "abc", "80;rm", "-1", "1e3", "123456"]) {
+      expect({ bad, port: loadConfig({ TUNNEL_HOST_PORT: bad }).hostPort }).toEqual({
+        bad,
+        port: "18080",
+      });
+    }
   });
 
   it("never mutates or retains the environment it was given", () => {

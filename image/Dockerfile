@@ -22,14 +22,17 @@ ENV LANG=en_US.UTF-8
 ENV TZ=Asia/Shanghai
 
 # Apt sources: Kali keeps its official repos (deb822 /etc/apt/sources.list.d/
-# kali.sources — do NOT delete it). Debian switches to Aliyun mirrors for speed.
+# kali.sources — do NOT delete it). Debian bases switch to APT_MIRROR: Aliyun by
+# default (fast inside mainland China, very slow elsewhere: build with
+# --build-arg APT_MIRROR=deb.debian.org there).
+ARG APT_MIRROR=mirrors.aliyun.com
 RUN . /etc/os-release && \
     if [ "$ID" != "kali" ]; then \
       rm -f /etc/apt/sources.list.d/*; \
       CN="${VERSION_CODENAME:-trixie}"; \
-      { echo "deb http://mirrors.aliyun.com/debian ${CN} main contrib non-free non-free-firmware"; \
-        echo "deb http://mirrors.aliyun.com/debian ${CN}-updates main contrib non-free non-free-firmware"; \
-        echo "deb http://mirrors.aliyun.com/debian-security ${CN}-security main contrib non-free non-free-firmware"; \
+      { echo "deb http://${APT_MIRROR}/debian ${CN} main contrib non-free non-free-firmware"; \
+        echo "deb http://${APT_MIRROR}/debian ${CN}-updates main contrib non-free non-free-firmware"; \
+        echo "deb http://${APT_MIRROR}/debian-security ${CN}-security main contrib non-free non-free-firmware"; \
       } > /etc/apt/sources.list; \
     fi
 
@@ -40,6 +43,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gocryptfs \
     fuse3 \
     procps \
+    psmisc \
     socat \
     netcat-openbsd \
     unzip \
@@ -64,7 +68,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install Bun — pinned version + sha256 verification against the published
 # SHASUMS256.txt (the GitHub release zip is the same artifact bun.sh/install
 # fetches). Reproducible + tamper-evident; bump BUN_VERSION and both hashes
-# together (from .../releases/download/bun-v<ver>/SHASUMS256.txt).
+# together (from .../releases/download/bun-v<ver>/SHASUMS256.txt). The zip holds only
+# `bun`; `bunx` is the symlink bun.sh/install would have made (the SPA build uses it).
 ARG BUN_VERSION=1.4.3
 ARG BUN_SHA256_AMD64=3e730528d89775f03f87f05c06787c4df4099d0a37f3f252e7b829cb23816e18
 ARG BUN_SHA256_ARM64=efa9813da5ed72423bf847f916e8d2c47c0d776add972354026a75e10da9aa21
@@ -80,6 +85,7 @@ RUN set -eux; \
     unzip -q /tmp/bun.zip -d /tmp/bun; \
     mkdir -p /root/.bun/bin; \
     install -m 0755 "/tmp/bun/bun-linux-${bun_arch}/bun" /root/.bun/bin/bun; \
+    ln -sf bun /root/.bun/bin/bunx; \
     rm -rf /tmp/bun /tmp/bun.zip
 ENV PATH="/root/.bun/bin:${PATH}"
 RUN bun --version
@@ -108,6 +114,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install from pinned GitHub ref. pixelflux pins nvidia-cuda-nvrtc with a stale
 # hash, so install with --no-deps and list the full dependency tree.
 ARG SELKIES_GIT_REF=0d134b6e1ffe42a579bc66363b0e7159ab22aacc
+# pixelflux / pcmflux are Selkies' native capture libraries and must match the pinned ref:
+# that commit imports StripeCallback (pixelflux 1.x only, gone in 2.0) and AudioChunkCallback
+# (pcmflux 1.0.x only, gone in 2.0). Unpinned, pip took 2.1.0 of both and Selkies died on
+# start-up with an ImportError, in an image that built fine. Bump all three together.
+ARG PIXELFLUX_VERSION=1.6.4
+ARG PCMFLUX_VERSION=1.0.8
 ARG DESKTOP_STACK
 RUN if [ "$DESKTOP_STACK" = "both" ] || [ "$DESKTOP_STACK" = "selkies" ]; then \
       set -e; \
@@ -119,7 +131,8 @@ RUN if [ "$DESKTOP_STACK" = "both" ] || [ "$DESKTOP_STACK" = "selkies" ]; then \
       && /opt/selkies-venv/bin/pip install --no-cache-dir setuptools wheel \
       && /opt/selkies-venv/bin/pip install --no-cache-dir --no-deps \
          "git+https://github.com/selkies-project/selkies.git@${SELKIES_GIT_REF}" \
-      && /opt/selkies-venv/bin/pip install --no-cache-dir --no-deps pixelflux pcmflux \
+      && /opt/selkies-venv/bin/pip install --no-cache-dir --no-deps \
+         "pixelflux==${PIXELFLUX_VERSION}" "pcmflux==${PCMFLUX_VERSION}" \
       && /opt/selkies-venv/bin/pip install --no-cache-dir \
          nvidia-cuda-nvrtc numpy \
          "python-xlib @ https://github.com/selkies-project/python-xlib/archive/master.zip" \
@@ -129,6 +142,7 @@ RUN if [ "$DESKTOP_STACK" = "both" ] || [ "$DESKTOP_STACK" = "selkies" ]; then \
          GPUtil typing_extensions \
       && /opt/selkies-venv/bin/python -c "from selkies.__main__ import main" \
       && /opt/selkies-venv/bin/python -c "import pixelflux, pcmflux" \
+      && /opt/selkies-venv/bin/python -c "import selkies.selkies" \
       && apt-get purge -y python3-dev gcc pkg-config libxkbcommon-dev libsrtp2-dev \
       && apt-get autoremove -y \
       && rm -rf /var/lib/apt/lists/*; \

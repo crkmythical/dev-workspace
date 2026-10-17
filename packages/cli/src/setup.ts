@@ -44,9 +44,6 @@ function askSecret(question: string): string {
   return answer?.trim() || "";
 }
 
-// Where the local web UI listens on the host (docker-compose maps it; see TUNNEL_HOST_PORT).
-const LOCAL_PORT = "18080";
-
 // --- Main ---
 console.log("\n=== Secure Dev Workspace Setup ===\n");
 
@@ -149,7 +146,7 @@ console.log(`  ✓ ${gitName || "Developer"} <${gitEmail || "dev@local"}>`);
 
 // Done
 console.log("\n=== 配置完成 ===");
-console.log(`  code-server: http://localhost:${LOCAL_PORT}`);
+console.log(`  code-server: http://localhost:${config.hostPort}`);
 console.log(
   "  远程访问:    经 Cloudflare Tunnel 暴露的域名（宿主机 scripts/setup-cloudflared.sh 配置）",
 );

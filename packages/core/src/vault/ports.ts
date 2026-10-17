@@ -17,8 +17,12 @@ export interface VolumeDriver {
   state(spec: VaultSpec): Promise<VaultState>;
   init(spec: VaultSpec, passphrase: string): Promise<boolean>;
   mount(spec: VaultSpec, passphrase: string): Promise<{ ok: boolean; detail?: string }>;
-  /** Returns true when the mount point has been released (or was not mounted). */
-  unmount(spec: VaultSpec, mode: UnmountMode): Promise<boolean>;
+  /**
+   * Returns true when the mount point has been released (or was not mounted).
+   * `report` hears of anything done to get there that the user would want to know, such as
+   * the processes killed in "escalate" mode.
+   */
+  unmount(spec: VaultSpec, mode: UnmountMode, report?: (message: string) => void): Promise<boolean>;
 }
 
 /**

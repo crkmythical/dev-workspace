@@ -5,7 +5,11 @@ import {
   type VaultCommand,
   type VaultState,
   decide,
+  explainUnlockFailure,
+  killable,
+  lineage,
   needsPassphrase,
+  parseFuserPids,
   planSync,
 } from "../src/vault/domain.ts";
 
@@ -223,5 +227,149 @@ describe("DESTROY_PHASES", () => {
 
   it("finishes with the completion marker", () => {
     expect(DESTROY_PHASES.at(-1)?.id).toBe("mark-complete");
+  });
+});
+
+describe("explainUnlockFailure", () => {
+  // The three strings below are what gocryptfs 2.x really printed inside the image, with
+  // the container's AppArmor profile in force, with a wrong passphrase, and without /dev/fuse.
+  const APPARMOR_DENIED =
+    "/usr/bin/fusermount3: mount failed: Permission denied\nfs.Mount failed: fusermount exited with code 256";
+  const WRONG_PASSPHRASE =
+    "failed to unlock master key: cipher: message authentication failed\nPassword incorrect.";
+  const NO_FUSE_DEVICE =
+    "/usr/bin/fusermount3: fuse device not found, try 'modprobe fuse' first\nfs.Mount failed: fusermount exited with code 256";
+
+  it("a wrong passphrase says so, and nothing about the container", () => {
+    expect(explainUnlockFailure(WRONG_PASSPHRASE)).toEqual(["The passphrase is wrong."]);
+  });
+
+  it("a refused mount points at AppArmor and the override file, not at the passphrase", () => {
+    const lines = explainUnlockFailure(APPARMOR_DENIED).join("\n");
+    expect(lines).toContain("not allowed to mount");
+    expect(lines).toContain("docker-compose.apparmor.yml");
+    expect(lines).not.toContain("passphrase");
+  });
+
+  it("a missing /dev/fuse is its own diagnosis", () => {
+    const lines = explainUnlockFailure(NO_FUSE_DEVICE).join("\n");
+    expect(lines).toContain("/dev/fuse");
+    expect(lines).not.toContain("AppArmor");
+  });
+
+  it("a wrong passphrase right after generating one explains the recreated-container trap", () => {
+    // Boot with PASSWORD empty on an existing vault volume: the old generated password went
+    // away with the old container (verified: restart keeps it, recreate does not).
+    const lines = explainUnlockFailure(WRONG_PASSPHRASE, { passwordGenerated: true });
+    expect(lines[0]).toBe("The passphrase is wrong.");
+    const text = lines.join(" ");
+    expect(text).toContain("generated a new password");
+    expect(text).toContain("recreating");
+    expect(text).toContain("unlock-vault");
+  });
+
+  it("says nothing about generation when the passphrase was not generated", () => {
+    expect(explainUnlockFailure(WRONG_PASSPHRASE, { passwordGenerated: false })).toEqual([
+      "The passphrase is wrong.",
+    ]);
+  });
+
+  it("generation is irrelevant to a failure that is not about the passphrase", () => {
+    expect(explainUnlockFailure(APPARMOR_DENIED, { passwordGenerated: true })).toEqual(
+      explainUnlockFailure(APPARMOR_DENIED),
+    );
+    expect(explainUnlockFailure(NO_FUSE_DEVICE, { passwordGenerated: true })).toEqual(
+      explainUnlockFailure(NO_FUSE_DEVICE),
+    );
+  });
+
+  it("anything it does not recognize gets no guess", () => {
+    expect(explainUnlockFailure("")).toEqual([]);
+    expect(explainUnlockFailure("something unexpected")).toEqual([]);
+  });
+
+  it("ignores letter case", () => {
+    expect(explainUnlockFailure("PASSWORD INCORRECT.")).toEqual(["The passphrase is wrong."]);
+  });
+});
+
+describe("parseFuserPids", () => {
+  it("reads what psmisc 23.7 really printed on stdout (leading spaces, no names)", () => {
+    expect(parseFuserPids(" 555 561")).toEqual([555, 561]);
+    expect(parseFuserPids(" 555")).toEqual([555]);
+  });
+
+  it("an empty listing is no holders", () => {
+    expect(parseFuserPids("")).toEqual([]);
+    expect(parseFuserPids("\n")).toEqual([]);
+  });
+
+  it("is not thrown by access letters or a header, should they ever reach stdout", () => {
+    expect(parseFuserPids("/workspace:  555c 561f")).toEqual([555, 561]);
+  });
+
+  it("never yields PID 0, which `kill` would aim at the whole process group", () => {
+    expect(parseFuserPids("0 12 000")).toEqual([12]);
+  });
+});
+
+describe("lineage", () => {
+  const parents = new Map([
+    [900, 800], // the process releasing the mount
+    [800, 700], // its shell
+    [700, 90], // the terminal's pty host
+    [90, 1],
+    [1, 0],
+  ]);
+  const parentOf = (pid: number) => parents.get(pid);
+
+  it("is the process and every ancestor up to PID 1", () => {
+    expect(lineage(900, parentOf)).toEqual([900, 800, 700, 90, 1]);
+  });
+
+  it("stops where a parent cannot be read", () => {
+    expect(lineage(900, (pid) => (pid === 800 ? undefined : parentOf(pid)))).toEqual([900, 800]);
+  });
+
+  it("an unknown process is just itself", () => {
+    expect(lineage(4242, () => undefined)).toEqual([4242]);
+  });
+
+  it("terminates on a parent cycle", () => {
+    expect(lineage(1, (pid) => (pid === 1 ? 2 : 1))).toEqual([1, 2]);
+  });
+});
+
+describe("killable", () => {
+  it("never includes the caller or anything above it", () => {
+    // `cd /workspace && self-destruct` in a terminal: the caller, its shell and the terminal
+    // all use the mount, and killing any of them takes the caller down before the key is erased.
+    const holders = [900, 800, 700, 123, 456];
+    expect(killable(holders, [900, 800, 700, 90, 1])).toEqual([123, 456]);
+  });
+
+  it("everything else that uses the mount is fair game, once", () => {
+    expect(killable([5, 6, 5], [1])).toEqual([5, 6]);
+  });
+
+  it("no holders, nothing to kill", () => {
+    expect(killable([], [1])).toEqual([]);
+  });
+
+  it("property: the result never intersects the protected set and is always a subset of the holders", () => {
+    fc.assert(
+      fc.property(
+        fc.array(fc.integer({ min: 1, max: 50 })),
+        fc.array(fc.integer({ min: 1, max: 50 })),
+        (holders, protect) => {
+          const victims = killable(holders, protect);
+          for (const pid of victims) {
+            expect(protect).not.toContain(pid);
+            expect(holders).toContain(pid);
+          }
+          expect(new Set(victims).size).toBe(victims.length);
+        },
+      ),
+    );
   });
 });

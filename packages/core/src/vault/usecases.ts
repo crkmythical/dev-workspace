@@ -28,6 +28,8 @@ import type {
 export interface LockDeps {
   volume: VolumeDriver;
   holders: HolderControl;
+  /** Where the volume reports what it had to do to release the mount (e.g. kill processes). */
+  log?: (message: string) => void;
 }
 
 export type LockResult =
@@ -48,7 +50,7 @@ export async function lockVault(
 
   // The ordering invariant: holders first, then unmount.
   await deps.holders.stopAll();
-  const released = await deps.volume.unmount(spec, opts.mode ?? "graceful");
+  const released = await deps.volume.unmount(spec, opts.mode ?? "graceful", deps.log);
   return released ? { status: "locked" } : { status: "busy" };
 }
 
@@ -169,7 +171,7 @@ export async function destroyWorkspace(
       await holders.stopAll();
       const stuck: string[] = [];
       for (const spec of specs) {
-        if (!(await volume.unmount(spec, "escalate"))) stuck.push(spec.id);
+        if (!(await volume.unmount(spec, "escalate", log))) stuck.push(spec.id);
       }
       if (stuck.length > 0) throw new Error(`could not release mount(s): ${stuck.join(", ")}`);
       return undefined;

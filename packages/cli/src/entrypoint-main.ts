@@ -22,7 +22,12 @@ import {
   renderClashConfig,
 } from "@sdw/core/egress";
 import { ALL_VAULTS } from "@sdw/core/plugins";
-import { VAULT_CIPHER_DIR, WORKSPACE_VAULT, unlockVault } from "@sdw/core/vault";
+import {
+  VAULT_CIPHER_DIR,
+  WORKSPACE_VAULT,
+  explainUnlockFailure,
+  unlockVault,
+} from "@sdw/core/vault";
 import {
   BOOT_PLAN,
   type BootState,
@@ -30,6 +35,7 @@ import {
   CODE_SERVER_CONFIG_DIR,
   CODE_SERVER_CONFIG_PATH,
   CODE_SERVER_PORT,
+  type PasswordSource,
   SUPERVISORD_BIN,
   SUPERVISORD_CONF,
   envValidationError,
@@ -61,6 +67,8 @@ const config = loadConfig(process.env);
 
 /** Set by resolve-auth; every later step that needs the password reads it from here. */
 let masterPassword = "";
+/** Where it came from: a freshly generated one cannot open a vault made under an earlier one. */
+let passwordSource: PasswordSource | undefined;
 
 async function gitConfig(key: string, value: string): Promise<void> {
   const r = await $`git config --global ${key} ${value}`.quiet().nothrow();
@@ -140,6 +148,7 @@ const steps: BootStepImpls = {
       console.log("  (set PASSWORD in .env to use a fixed password)");
     }
     masterPassword = password.value;
+    passwordSource = password.source;
 
     // bcrypt hash for Caddy's basic_auth. supervisord (and so Caddy) inherits this env.
     const hash = await caddyPasswordHash(masterPassword);
@@ -180,11 +189,16 @@ const steps: BootStepImpls = {
         state.vaultMounted = true;
         console.log("Vault already unlocked.");
         break;
-      case "failed":
-        console.warn(
-          "WARNING: Vault unlock failed (password mismatch?). Run 'unlock-vault' manually.",
-        );
+      case "failed": {
+        const detail = unlock.detail.trim().split("\n").join(" | ");
+        console.warn(`WARNING: Vault unlock failed${detail ? `: ${detail}` : ""}`);
+        const why = explainUnlockFailure(unlock.detail, {
+          passwordGenerated: passwordSource === "generated",
+        });
+        for (const line of why) console.warn(`  ${line}`);
+        console.warn("  Run 'unlock-vault' once that is fixed.");
         break;
+      }
       case "rejected":
         console.warn(`WARNING: Vault not unlocked (${unlock.reason}).`);
         break;
@@ -248,6 +262,7 @@ const steps: BootStepImpls = {
   async banner(state) {
     for (const line of renderBanner({
       password: masterPassword,
+      hostPort: config.hostPort,
       stacks: installedStacks(),
       vaultMounted: state.vaultMounted,
       egress: state.egress,
@@ -265,6 +280,19 @@ const steps: BootStepImpls = {
       stderr: "inherit",
       env: { ...process.env },
     });
+    // `docker stop` and both self-destruct paths send SIGTERM to PID 1 (tini), which passes it to
+    // this process. Hand it on: supervisord then stops every program in order and exits. Left
+    // alone, Bun just dies and the kernel SIGKILLs whatever was running (a restic backup caught
+    // mid-run leaves its lock in the repository).
+    const forward = () => {
+      try {
+        proc.kill("SIGTERM");
+      } catch {
+        // supervisord is already gone.
+      }
+    };
+    process.on("SIGTERM", forward);
+    process.on("SIGINT", forward);
     const code = await proc.exited;
     if (code !== 0) throw new Error(`supervisord exited with code ${code}`);
   },

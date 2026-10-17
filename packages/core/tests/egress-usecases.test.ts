@@ -15,6 +15,12 @@ interface Scenario {
   listensAtAttempt?: number;
   /** Node counts returned per call; the last one repeats. null = controller unreachable. */
   nodes?: (number | null)[];
+  /**
+   * The subscription fetch failed at start-up: no nodes until refreshProvider() is called,
+   * then this many (a refresh that "works").
+   */
+  nodesAfterRefresh?: number;
+  refreshThrows?: boolean;
   /** Attempt number (1-based) at which the probe starts succeeding; Infinity = never. */
   probeOkAtAttempt?: number;
   startThrows?: boolean;
@@ -28,6 +34,7 @@ function fakePorts(s: Scenario = {}) {
   let listenChecks = 0;
   let nodeChecks = 0;
   let probes = 0;
+  let refreshed = false;
   const nodes = s.nodes ?? [12];
 
   const ports: EgressPorts = {
@@ -42,7 +49,13 @@ function fakePorts(s: Scenario = {}) {
     },
     async providerNodes() {
       calls.push("nodes?");
+      if (s.nodesAfterRefresh !== undefined) return refreshed ? s.nodesAfterRefresh : 0;
       return nodes[Math.min(nodeChecks++, nodes.length - 1)];
+    },
+    async refreshProvider() {
+      calls.push("refresh");
+      if (s.refreshThrows) throw new Error("controller refused");
+      refreshed = true;
     },
     async selectAutoNode() {
       calls.push("select");
@@ -129,9 +142,9 @@ describe("bringUpEgress", () => {
     const report = await bringUpEgress(f.ports);
     expect(report.status).toBe("degraded");
     expect(report.providerNodes).toBe(0);
-    expect(f.count("nodes?")).toBe(T.providerWait.attempts);
+    expect(f.count("nodes?")).toBe(T.providerWait.attempts + T.refreshWait.attempts);
     expect(describeEgress(report)).toContain("CLASH_SUBSCRIPTION_URL");
-    expect(f.logs.some((l) => l.includes("Provider did not load nodes within 30s"))).toBe(true);
+    expect(f.logs.some((l) => l.includes("Provider still has no nodes"))).toBe(true);
   });
 
   it("nodes that load after a few polls stop the wait early", async () => {
@@ -140,6 +153,49 @@ describe("bringUpEgress", () => {
     expect(report.providerNodes).toBe(9);
     expect(f.count("nodes?")).toBe(4);
     expect(f.logs).toContain("Provider loaded: 9 nodes (url-test auto-selecting fastest).");
+  });
+
+  it("a start-up fetch that lost a race with the network is recovered by one refresh", async () => {
+    // Clash fetches the subscription once at start and would not try again for an hour.
+    const f = fakePorts({ nodesAfterRefresh: 5 });
+    const report = await bringUpEgress(f.ports);
+    expect(report.status).toBe("confirmed");
+    expect(report.providerNodes).toBe(5);
+    expect(f.count("refresh")).toBe(1);
+    // the refresh happens only after the full first wait, never instead of it
+    const beforeRefresh = f.calls.slice(0, f.calls.indexOf("refresh"));
+    expect(beforeRefresh.filter((c) => c === "nodes?")).toHaveLength(T.providerWait.attempts);
+    expect(f.logs.some((l) => l.includes("asking Clash to fetch the subscription again"))).toBe(
+      true,
+    );
+    expect(f.logs).toContain("Provider loaded: 5 nodes (url-test auto-selecting fastest).");
+  });
+
+  it("a healthy subscription is never refreshed", async () => {
+    const f = fakePorts();
+    await bringUpEgress(f.ports);
+    expect(f.count("refresh")).toBe(0);
+  });
+
+  it("a refresh that is refused changes nothing: the bring-up carries on and reports", async () => {
+    const f = fakePorts({
+      nodes: [0],
+      refreshThrows: true,
+      probeOkAtAttempt: Number.POSITIVE_INFINITY,
+    });
+    const report = await bringUpEgress(f.ports);
+    expect(f.count("refresh")).toBe(1);
+    expect(report.status).toBe("degraded");
+    expect(report.providerNodes).toBe(0);
+  });
+
+  it("the refresh adds at most its own short wait to a start-up", async () => {
+    const f = fakePorts({ nodes: [0], probeOkAtAttempt: Number.POSITIVE_INFINITY });
+    await bringUpEgress(f.ports);
+    const firstWait = (T.providerWait.attempts - 1) * T.providerWait.delayMs;
+    const secondWait = (T.refreshWait.attempts - 1) * T.refreshWait.delayMs;
+    const probeBudget = T.settleMs + (T.probe.attempts - 1) * T.probe.delayMs;
+    expect(f.elapsed()).toBe(firstWait + secondWait + probeBudget);
   });
 
   it("an unreachable controller leaves the node count unknown", async () => {
@@ -173,6 +229,7 @@ describe("bringUpEgress", () => {
       startProxy: boom,
       proxyListening: boom,
       providerNodes: boom,
+      refreshProvider: boom,
       selectAutoNode: boom,
       probe: boom,
       sleep: async () => {},

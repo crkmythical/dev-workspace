@@ -67,6 +67,15 @@ export const CORE_ENV_GROUPS: readonly EnvGroup[] = [
         example: "trixie",
       },
       {
+        name: "APT_MIRROR",
+        doc: [
+          "Apt mirror host for Debian bases (Kali keeps its own repositories).",
+          "  mirrors.aliyun.com  fast inside mainland China, very slow elsewhere (default)",
+          "  deb.debian.org      the official CDN, for everywhere else",
+        ],
+        example: "mirrors.aliyun.com",
+      },
+      {
         name: "DESKTOP_STACK",
         doc: [
           "Remote desktop(s) to install:",
@@ -85,14 +94,21 @@ export const CORE_ENV_GROUPS: readonly EnvGroup[] = [
         name: "PASSWORD",
         doc: [
           "Master password: code-server, the desktops AND the vault share this one secret.",
-          "If empty, a random one is generated at first start and printed in the start-up",
-          "banner (docker logs dev-workspace). Prefer leaving it empty over storing it here.",
+          "If empty, a random one is generated at first start and printed in the start-up banner",
+          "(docker logs dev-workspace). That one lives only inside the container: a restart keeps",
+          "it, but recreating the container (docker compose up -d after a rebuild or pull, docker",
+          "rm) generates a NEW one, and the existing vault then stays locked until you give it the",
+          "old one. Save the printed password, or set it here (it then sits in .env and in the",
+          "container environment).",
         ],
         example: "",
       },
       {
         name: "TUNNEL_HOST_PORT",
-        doc: ["Host port the Cloudflare Tunnel connects to."],
+        doc: [
+          "Host port (127.0.0.1) the web UI is published on: the Cloudflare Tunnel connects",
+          "to it and the start-up banner prints it.",
+        ],
         example: "18080",
       },
       {
@@ -146,6 +162,18 @@ export const CORE_ENV_GROUPS: readonly EnvGroup[] = [
         doc: ["Docker memory reservation for the container."],
         example: "8g",
       },
+      {
+        name: "COMPOSE_FILE",
+        doc: [
+          "Linux hosts with AppArmor (Ubuntu, Debian): Docker's default profile forbids the FUSE",
+          'mount, so the vault stays locked ("mount failed: Permission denied"). This adds the',
+          "opt-in override docker-compose.apparmor.yml, which lifts the container's AppArmor",
+          "confinement, for every `docker compose` command run here. Not needed on Docker Desktop.",
+        ],
+        example: "docker-compose.yml:docker-compose.apparmor.yml",
+        optIn: true,
+        external: "docker compose",
+      },
     ],
   },
   {
@@ -176,6 +204,9 @@ export const CORE_ENV_GROUPS: readonly EnvGroup[] = [
           "  s3:https://s3.us-east-1.amazonaws.com/my-bucket/workspace-backup",
           "  s3:https://<account-id>.r2.cloudflarestorage.com/<bucket>/prefix   (Cloudflare R2)",
           "A repository that does not exist yet is created at start-up.",
+          "The backup holds the PLAINTEXT workspace (.credentials/ included), protected only by",
+          "RESTIC_PASSWORD, and self-destruct does not delete it: treat the repository as part of",
+          "the vault.",
         ],
         example: "",
       },

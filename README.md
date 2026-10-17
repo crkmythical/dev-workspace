@@ -25,6 +25,10 @@ docker compose up -d
 # 认证:    user / <你的 PASSWORD>
 ```
 
+端口 18080 是 `TUNNEL_HOST_PORT` 的默认值；改了它，启动横幅会打印实际端口。
+
+**Linux 宿主机（Ubuntu、Debian 等带 AppArmor 的发行版）**：Docker 默认的 AppArmor 配置禁止 `mount(2)`，gocryptfs 挂载 vault 会失败（启动后 vault 保持锁定，报 `fusermount3: mount failed: Permission denied`；Docker Desktop 没有 AppArmor，不受影响）。在 `.env` 里取消注释 `COMPOSE_FILE=docker-compose.yml:docker-compose.apparmor.yml`，或每次用 `docker compose -f docker-compose.yml -f docker-compose.apparmor.yml up -d`。这个覆盖文件会去掉容器最后一层 AppArmor 约束，是安全上的取舍，所以不是默认；见 `docs/threat-model.md`。
+
 ## 重建 / 重置
 
 ```bash
@@ -89,7 +93,7 @@ docker compose build
 docker compose up -d
 ```
 
-受限网络（例如需要镜像仓库）：把 `BASE_IMAGE` 指向可达的镜像地址即可，Debian 系基础镜像会自动改用 Aliyun apt 源。
+受限网络（例如需要镜像仓库）：把 `BASE_IMAGE` 指向可达的镜像地址即可。Debian 系基础镜像的 apt 源由 `APT_MIRROR` 决定，默认 `mirrors.aliyun.com`（大陆内很快，境外很慢），境外构建请设 `APT_MIRROR=deb.debian.org`；Kali 基础镜像沿用自己的源。
 
 也可以不改 `.env`，直接命令行覆盖构建另一个 tag：
 
@@ -104,7 +108,8 @@ docker build -t dev-workspace:trixie -f image/Dockerfile --build-arg BASE_IMAGE=
 ```bash
 doctor              # 健康检查（出口 / 已安装的桌面 / 备份状态）
 noproxy <cmd>       # 绕过代理直连执行命令
-lock-vault          # 锁定加密工作区（先停止桌面和备份）
+lock-vault          # 锁定加密工作区（先停止桌面和备份；仍有进程占用时会询问是否强制卸载，
+                    # 强制卸载后已打开文件的进程在退出前仍能访问，要彻底切断就重启容器）
 unlock-vault        # 输入密码解锁
 desktop-start       # 启动所有已安装桌面
 desktop-start vnc   # 仅启动 KasmVNC 桌面
@@ -143,7 +148,7 @@ launchctl unload ~/Library/LaunchAgents/com.cloudflare.tunnel.plist
 # https://<hostname>/desktop/    (Selkies，仅 DESKTOP_STACK=selkies|both 的镜像)
 ```
 
-`setup-cloudflared.sh` 会自动安装 cloudflared、登录 Cloudflare、创建 tunnel、配置 DNS，并在 macOS 上安装 LaunchAgent。没有默认域名，必须通过 `--hostname` 或 `.env` 指定。Linux 宿主机用 systemd 用户服务：`bash deploy/linux-systemd/install.sh --cloudflared`（见 `deploy/linux-systemd/README.md`，未在真实 Linux 主机上验证）。
+`setup-cloudflared.sh` 会自动安装 cloudflared、登录 Cloudflare、创建 tunnel、配置 DNS，并在 macOS 上安装 LaunchAgent。没有默认域名，必须通过 `--hostname` 或 `.env` 指定。Linux 宿主机用 systemd 用户服务：`bash deploy/linux-systemd/install.sh --cloudflared`（见 `deploy/linux-systemd/README.md`；已在 Ubuntu 24.04 虚拟机的真实 systemd 下验证单元的安装、启动、自动重启和自毁后的清理链，未在真机和真实 Cloudflare Tunnel 上验证）。
 
 ## 环境变量 (.env)
 
@@ -154,11 +159,12 @@ launchctl unload ~/Library/LaunchAgents/com.cloudflare.tunnel.plist
 | 变量 | 说明 |
 |------|------|
 | CLASH_SUBSCRIPTION_URL | 必填。Clash 代理订阅地址 |
-| PASSWORD | 统一密码：code-server、桌面和 vault 共用同一个。留空则首次启动随机生成并打印在启动横幅里 |
+| PASSWORD | 统一密码：code-server、桌面和 vault 共用同一个。留空则首次启动随机生成并打印在启动横幅里，但这个密码只存在于该容器内：重启容器会保留，**重建容器（`docker compose up -d` 在重新构建或 pull 之后、`docker rm`）会生成新密码**，已有 vault 就打不开了（要用旧密码执行 `unlock-vault`）。务必保存横幅里的密码，或直接在 `.env` 里设置 |
 | DESKTOP_STACK | 构建时选择桌面栈：`kasmvnc`（默认）/ `selkies` / `both` |
 | SYNC_ENABLED | 默认关闭。启用浏览器文件同步页 `/sync/`；启用后每次解锁会把 vault 口令写入 `/workspace/.credentials/sync-passphrase`，关闭后下次解锁会删除它 |
 | REMOTE_DESTRUCT_ENABLED | 默认关闭。启用远程自毁端点 `POST /sync/api/destruct`；口令用 `destruct-passphrase` 查看 |
-| RESTIC_REPOSITORY | 设置后启用实时备份（还需 `RESTIC_PASSWORD` 与 S3 凭证）；仓库不存在时启动时自动创建 |
+| RESTIC_REPOSITORY | 设置后启用实时备份（还需 `RESTIC_PASSWORD` 与 S3 凭证）；仓库不存在时启动时自动创建。备份的是**明文**工作区（含 `.credentials/`），仅由 `RESTIC_PASSWORD` 保护，自毁不会删除它，要把它当作 vault 的一部分对待 |
+| COMPOSE_FILE | 默认不设。Linux + AppArmor 的宿主机取消注释，见上文 |
 
 ## CI/CD（GitHub Actions）
 

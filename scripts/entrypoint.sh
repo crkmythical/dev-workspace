@@ -8,6 +8,8 @@ if [ -f /var/run/self-destruct/completed ]; then
   exec sleep infinity
 fi
 
+# One variable today; the list is where the next required one goes.
+# shellcheck disable=SC2043
 for v in CLASH_SUBSCRIPTION_URL; do
   if [[ -z "${!v:-}" ]]; then
     echo "ERROR: Required env var $v is not set." >&2

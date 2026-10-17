@@ -19,6 +19,11 @@ export interface WorkspaceConfig {
   /** Master password shared by code-server, the desktops and the vault. Generated when unset. */
   password: string | undefined;
   desktopResolution: string;
+  /**
+   * Host port docker-compose publishes the web UI on (TUNNEL_HOST_PORT). Only used to print
+   * correct URLs: the container itself always listens on 8080.
+   */
+  hostPort: string;
   git: {
     userName: string | undefined;
     userEmail: string | undefined;
@@ -36,11 +41,22 @@ function value(env: EnvLike, name: string): string | undefined {
   return v === undefined || v === "" ? undefined : v;
 }
 
+/** What docker-compose publishes when TUNNEL_HOST_PORT is unset. */
+export const DEFAULT_HOST_PORT = "18080";
+
+/** A port number as docker-compose would accept it; anything else would only mislead in a URL. */
+function hostPortOf(env: EnvLike): string {
+  const raw = value(env, "TUNNEL_HOST_PORT")?.trim();
+  const port = raw !== undefined && /^\d{1,5}$/.test(raw) ? Number(raw) : 0;
+  return port >= 1 && port <= 65535 ? String(port) : DEFAULT_HOST_PORT;
+}
+
 export function loadConfig(env: EnvLike): WorkspaceConfig {
   return {
     clashSubscriptionUrl: value(env, "CLASH_SUBSCRIPTION_URL") ?? "",
     password: value(env, "PASSWORD"),
     desktopResolution: value(env, "DESKTOP_RESOLUTION") ?? DESKTOP_DEFAULT_RESOLUTION,
+    hostPort: hostPortOf(env),
     git: {
       userName: value(env, "GIT_USER_NAME"),
       userEmail: value(env, "GIT_USER_EMAIL"),

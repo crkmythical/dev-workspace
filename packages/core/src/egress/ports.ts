@@ -9,6 +9,11 @@ export interface EgressPorts {
   proxyListening(): Promise<boolean>;
   /** Nodes the subscription provider has loaded; null when the controller does not answer. */
   providerNodes(): Promise<number | null>;
+  /**
+   * Fetch the subscription again now. Clash fetches it once at start-up and, if that fails
+   * (network not up yet after a reboot), tries again only after `interval`: an hour.
+   */
+  refreshProvider(): Promise<void>;
   /** GLOBAL defaults to DIRECT, which bypasses the proxy: point it at the auto-select group. */
   selectAutoNode(): Promise<void>;
   /** One request to the probe target THROUGH the proxy. */

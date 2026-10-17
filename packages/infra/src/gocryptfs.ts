@@ -2,13 +2,16 @@
  * gocryptfs adapter: the VolumeDriver port plus the shell primitives behind it.
  * Moved from cli/lib/vault.ts; the passphrase prompt stays in the CLI.
  */
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import {
   DESTRUCT_COMPLETED_PATH,
   type UnmountMode,
   type VaultSpec,
   type VaultState,
   type VolumeDriver,
+  killable,
+  lineage,
+  parseFuserPids,
 } from "@sdw/core/vault";
 import { $ } from "bun";
 
@@ -64,18 +67,84 @@ export async function mountVault(
   return { ok: exitCode === 0, stderr: stderr.trim() };
 }
 
+/** Parent of `pid` per /proc, or undefined once the process is gone. */
+function parentOf(pid: number): number | undefined {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf-8");
+    // "pid (comm) state ppid ...": comm may hold spaces and parentheses, so cut after the last ")".
+    const ppid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
+    return Number.isInteger(ppid) ? ppid : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Leave the mount if this process's working directory is inside it. Left in place it is a
+ * holder of its own (the unmount reports "busy"), and once the mount is detached `getcwd`
+ * fails, so every subprocess started afterwards dies with ENOENT: self-destruct run from a
+ * terminal inside the vault got as far as unmounting and then could not erase the keys.
+ */
+export function stepOutOf(mountPoint: string): void {
+  try {
+    const cwd = process.cwd();
+    if (cwd !== mountPoint && !cwd.startsWith(`${mountPoint}/`)) return;
+  } catch {
+    // The working directory is already unreachable: leave it all the same.
+  }
+  try {
+    process.chdir("/");
+  } catch {
+    // Nowhere to go; the unmount will report what it finds.
+  }
+}
+
+/**
+ * SIGKILL the processes using a mount, except this one and everything above it (see
+ * killable()). "directory" is whatever uses the mount point itself (a shell whose cwd is
+ * in it); "filesystem" is anything with a file open anywhere on the mounted filesystem.
+ * Needs `fuser` (psmisc); without it nothing is found and nothing is killed.
+ */
+async function killHolders(
+  mountPoint: string,
+  scope: "directory" | "filesystem",
+  report?: (message: string) => void,
+): Promise<void> {
+  const listing =
+    scope === "filesystem"
+      ? await $`fuser -m ${mountPoint}`.quiet().nothrow()
+      : await $`fuser ${mountPoint}`.quiet().nothrow();
+  const victims = killable(
+    parseFuserPids(listing.stdout.toString()),
+    lineage(process.pid, parentOf),
+  );
+  for (const pid of victims) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // Already gone.
+    }
+  }
+  if (victims.length > 0) {
+    report?.(`  killed ${victims.length} process(es) using ${mountPoint}: ${victims.join(" ")}`);
+  }
+}
+
 /**
  * Release a FUSE mount. Returns true when the mount point is free (including
  * when it was not mounted to begin with).
  *   graceful  fusermount -u
  *   lazy      fusermount -uz (detach now)
  *   escalate  graceful, then kill users of the mount and retry, then lazy
+ *             (never the calling process or its ancestors)
  */
 export async function unmountVault(
   mountPoint: string,
   mode: UnmountMode = "escalate",
+  report?: (message: string) => void,
 ): Promise<boolean> {
   if (!(await isMounted(mountPoint))) return true;
+  stepOutOf(mountPoint);
 
   const attempt = async (lazy: boolean): Promise<boolean> => {
     const r = lazy
@@ -88,11 +157,11 @@ export async function unmountVault(
   if (await attempt(false)) return true;
   if (mode === "graceful") return false;
 
-  await $`fuser -k ${mountPoint}`.quiet().nothrow();
+  await killHolders(mountPoint, "directory", report);
   await Bun.sleep(500);
   if (await attempt(false)) return true;
 
-  await $`fuser -km ${mountPoint}`.quiet().nothrow();
+  await killHolders(mountPoint, "filesystem", report);
   await Bun.sleep(1000);
   if (await attempt(false)) return true;
 
@@ -116,5 +185,5 @@ export const gocryptfsVolume: VolumeDriver = {
     const { ok, stderr } = await mountVault(spec.cipherDir, spec.mountPoint, passphrase);
     return { ok, detail: stderr };
   },
-  unmount: (spec, mode) => unmountVault(spec.mountPoint, mode),
+  unmount: (spec, mode, report) => unmountVault(spec.mountPoint, mode, report),
 };

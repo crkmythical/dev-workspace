@@ -34,6 +34,78 @@ export type Decision =
     }
   | { do: "reject"; reason: "not-initialized" | "empty-passphrase" | "destroyed" };
 
+/**
+ * Plain-language lines for a failed unlock, from what gocryptfs printed. A wrong passphrase
+ * and a mount the container is not allowed to make both leave the vault locked, but they are
+ * fixed in opposite places, and the second one used to be reported as "password mismatch?".
+ *
+ * `passwordGenerated`: the passphrase tried is one this start-up just made up because PASSWORD
+ * is empty. It lives in the container, so recreating the container (not restarting it) throws
+ * it away, and the vault made under the old one then looks like a plain wrong passphrase.
+ */
+export function explainUnlockFailure(
+  detail: string,
+  opts: { passwordGenerated?: boolean } = {},
+): string[] {
+  const text = detail.toLowerCase();
+  if (text.includes("password incorrect")) {
+    if (!opts.passwordGenerated) return ["The passphrase is wrong."];
+    return [
+      "The passphrase is wrong.",
+      "PASSWORD is not set, so this start generated a new password. A generated password lives",
+      "only in the container and does not survive recreating it (docker compose up -d after a",
+      "rebuild, docker rm). If the vault was made under an earlier one, open it with the old",
+      "password: docker exec -it dev-workspace unlock-vault. Then set PASSWORD in .env to it.",
+    ];
+  }
+  if (text.includes("mount failed") && text.includes("permission denied")) {
+    return [
+      "The container is not allowed to mount a FUSE filesystem.",
+      "On a Linux host with AppArmor (Ubuntu, Debian) add docker-compose.apparmor.yml: set",
+      "COMPOSE_FILE in .env (see .env.example) or start with -f docker-compose.yml -f docker-compose.apparmor.yml",
+    ];
+  }
+  if (text.includes("fuse device not found") || text.includes("/dev/fuse")) {
+    return [
+      "/dev/fuse is not available in the container (docker-compose.yml passes it as a device).",
+    ];
+  }
+  return [];
+}
+
+// --- Releasing a busy mount ---
+
+/** The PIDs in `fuser`'s output: it prints them, space separated, on stdout. */
+export function parseFuserPids(stdout: string): number[] {
+  return [...stdout.matchAll(/\d+/g)].map((m) => Number(m[0])).filter((pid) => pid > 0);
+}
+
+/**
+ * `pid` followed by every process above it, up to PID 1. Stops at a process whose parent
+ * cannot be read (it has exited) and never loops.
+ */
+export function lineage(pid: number, parentOf: (pid: number) => number | undefined): number[] {
+  const chain: number[] = [];
+  let current: number | undefined = pid;
+  while (current !== undefined && current > 0 && !chain.includes(current)) {
+    chain.push(current);
+    current = parentOf(current);
+  }
+  return chain;
+}
+
+/**
+ * Which of the processes using a mount may be killed to free it: all of them except
+ * `protect`. The caller passes its own lineage. The process that releases the mount is the
+ * one that goes on to destroy the vault, and killing its shell hangs up the terminal and
+ * takes it down too; a `fuser -k` that did that left the keys in place (found by running
+ * self-destruct from a terminal inside the container).
+ */
+export function killable(holders: readonly number[], protect: readonly number[]): number[] {
+  const keep = new Set(protect);
+  return [...new Set(holders)].filter((pid) => !keep.has(pid));
+}
+
 /** Only a locked vault needs a passphrase, so callers prompt lazily after this check. */
 export function needsPassphrase(state: VaultState): boolean {
   return state === "locked";

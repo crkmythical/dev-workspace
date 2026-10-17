@@ -3,13 +3,17 @@
 ## First-Time Setup
 
 ```bash
-cp .env.example .env          # Subscription URL pre-filled
+cp .env.example .env          # then set CLASH_SUBSCRIPTION_URL (required) and, better, PASSWORD
 docker compose build          # ~5 min first time
-docker compose up -d
-docker exec -it dev-workspace init-vault
-docker exec -it dev-workspace unlock-vault
-./scripts/setup-cloudflared.sh
+docker compose up -d          # creates AND unlocks the vault on first start; the banner shows the state
+./scripts/setup-cloudflared.sh --hostname <hostname>
 ```
+
+Set `PASSWORD` before the first start. Left empty, a random one is generated and printed in the
+banner, but it lives only inside that container: a restart keeps it, recreating the container
+(`docker compose up -d` after a rebuild or pull, `docker rm`) generates a new one, and the vault
+made under the old one then stays locked until you give it the old password
+(`docker exec -it dev-workspace unlock-vault`). Save the printed password, or set it in `.env`.
 
 ## Daily Operations
 
@@ -27,12 +31,23 @@ docker exec -it dev-workspace doctor         # Health check
 
 ## Password Rotation
 
+The vault, code-server, the desktops and the sync key share one password, so rotating it means
+changing the vault passphrase and `PASSWORD` together. There is no `change-password` command
+(older versions had one). Needs an explicit `PASSWORD` in `.env`: a generated one stays in
+code-server's config and would still be the old one at the next start.
+
 ```bash
 docker exec -it dev-workspace lock-vault
-docker exec -it dev-workspace change-password
-docker exec -it dev-workspace unlock-vault  # Use new password
+docker exec -it dev-workspace gocryptfs -passwd /vault/cipher   # asks for the old, then the new password
+# set PASSWORD=<new password> in .env, then recreate so every service takes it:
+docker compose up -d --force-recreate
+docker exec -it dev-workspace destruct-passphrase                # the remote self-destruct passphrase changes with it
 # Then: Sync Page → Clear key → Set passphrase (new password)
 ```
+
+Checked in a container: after these steps the vault opens with the new password and keeps its
+data, `/vnc/` accepts the new password and rejects the old one, code-server's config and the sync
+key file carry the new one. The Sync Page step (browser side) was not exercised.
 
 ## Troubleshooting
 
@@ -40,7 +55,10 @@ docker exec -it dev-workspace unlock-vault  # Use new password
 |-------|-----|
 | Clash not connecting | Check subscription URL; verify provider loaded: `curl -s http://127.0.0.1:9090/providers/proxies/subscription \| jq '.proxies \| length'`; restart container if needed |
 | Start-up banner says `Egress: DEGRADED` or `DOWN` | The workspace started anyway. `doctor` shows the live state; `cat /var/run/egress-status` shows what the start-up probe saw; with the vault open, `/workspace/.notifications/egress-degraded.md` explains. DOWN: nothing listens on :7890 (check the Clash config and subscription URL). DEGRADED: proxy up but the probe failed, usually nodes still loading; retry `doctor` in a minute |
-| Vault unlock fails | Verify passphrase; check gocryptfs.conf exists |
+| Vault unlock fails, `Password incorrect` | Wrong passphrase. If `PASSWORD` is empty and the container was recreated, the start-up generated a new password and the vault still wants the old one: run `docker exec -it dev-workspace unlock-vault` with the old one, then put it in `PASSWORD` in `.env` (the start-up prints this hint) |
+| Vault unlock fails, `fusermount3: mount failed: Permission denied` | The host's AppArmor profile forbids the FUSE mount (Ubuntu, Debian). Uncomment `COMPOSE_FILE=docker-compose.yml:docker-compose.apparmor.yml` in `.env` and `docker compose up -d`; see the AppArmor note in `docs/threat-model.md` before doing so |
+| `lock-vault` asks `Force unmount?` | Some process still has files open in the vault (code-server, a shell inside it). `y` detaches the mount at once, but those processes keep what they already opened until they exit; restart the container to be sure |
+| Vault unlock fails, other | Check `gocryptfs.conf` exists in the cipher volume; the start-up prints what gocryptfs said |
 | Sync Page idle | Modify a file in the synced folder; check browser console |
 | code-server 502 | Wait 10s after container start; check `docker logs` |
 

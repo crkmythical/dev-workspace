@@ -8,7 +8,7 @@
 import { WORKSPACE_VAULT, lockVault } from "@sdw/core/vault";
 import { broadcastState, gocryptfsVolume, supervisorHolders } from "@sdw/infra";
 
-const deps = { volume: gocryptfsVolume, holders: supervisorHolders };
+const deps = { volume: gocryptfsVolume, holders: supervisorHolders, log: console.log };
 
 const result = await lockVault(WORKSPACE_VAULT, deps);
 
@@ -22,6 +22,7 @@ if (result.status === "rejected") {
   process.exit(1);
 }
 
+let forced = false;
 if (result.status === "busy") {
   console.error("Could not unmount cleanly (open file handles?).");
   const answer = prompt("Force unmount? [y/N]: ");
@@ -29,15 +30,24 @@ if (result.status === "busy") {
     console.log("Aborted.");
     process.exit(1);
   }
-  const forced = await lockVault(WORKSPACE_VAULT, deps, { mode: "lazy" });
-  if (forced.status !== "locked") {
+  const lazy = await lockVault(WORKSPACE_VAULT, deps, { mode: "lazy" });
+  if (lazy.status !== "locked") {
     console.error("ERROR: Force unmount failed.");
     process.exit(1);
   }
+  forced = true;
   console.log("Vault force-locked.");
 } else {
   console.log("Vault locked.");
 }
 
 await broadcastState("locked");
-console.log("Plaintext data is no longer accessible.");
+if (forced) {
+  // A lazy unmount detaches the mount at once, but whoever already had a file open keeps it.
+  console.log("Processes that still had files open can keep using them until they exit.");
+  console.log(
+    "To cut them off now, restart the container (or: supervisorctl restart code-server).",
+  );
+} else {
+  console.log("Plaintext data is no longer accessible.");
+}

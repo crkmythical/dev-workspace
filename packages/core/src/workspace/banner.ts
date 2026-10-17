@@ -7,6 +7,8 @@ import { type EgressReport, describeEgress } from "../egress/domain.ts";
 
 export interface BannerInput {
   password: string;
+  /** Host port the web UI is published on (config.hostPort). */
+  hostPort: string;
   /** Which desktop stacks the image contains. */
   stacks: readonly ("selkies" | "vnc")[];
   vaultMounted: boolean;
@@ -31,14 +33,15 @@ function egressWord(egress: EgressReport | undefined): string {
 }
 
 export function renderBanner(input: BannerInput): string[] {
-  const { password, stacks, vaultMounted, egress, degraded } = input;
+  const { password, hostPort, stacks, vaultMounted, egress, degraded } = input;
+  const origin = `http://localhost:${hostPort}`;
 
   const rows = [
     `${" ".repeat(10)}Secure Dev Workspace Ready`,
     `  Password:  ${password}`,
-    "  Code:      http://localhost:18080",
-    ...(stacks.includes("selkies") ? ["  Desktop:   http://localhost:18080/desktop/"] : []),
-    ...(stacks.includes("vnc") ? ["  VNC:       http://localhost:18080/vnc/"] : []),
+    `  Code:      ${origin}`,
+    ...(stacks.includes("selkies") ? [`  Desktop:   ${origin}/desktop/`] : []),
+    ...(stacks.includes("vnc") ? [`  VNC:       ${origin}/vnc/`] : []),
     `  Auth:      user / ${password}`,
     `  Vault:     ${vaultMounted ? "unlocked" : "LOCKED"}`,
     `  Egress:    ${egressWord(egress)}`,

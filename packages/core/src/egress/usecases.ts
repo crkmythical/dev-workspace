@@ -63,10 +63,19 @@ export async function bringUpEgress(
   let probeOk = false;
   if (listening) {
     providerNodes = await waitForNodes(ports, timing.providerWait);
+    if (!(providerNodes !== null && providerNodes > 0)) {
+      // The start-up fetch may simply have lost a race with the network; Clash would not try
+      // again for an hour, so ask once, now.
+      ports.log(
+        `Provider has no nodes after ${seconds(timing.providerWait)}s; asking Clash to fetch the subscription again.`,
+      );
+      await ports.refreshProvider().catch(() => {});
+      providerNodes = await waitForNodes(ports, timing.refreshWait);
+    }
     ports.log(
       providerNodes !== null && providerNodes > 0
         ? `Provider loaded: ${providerNodes} nodes (url-test auto-selecting fastest).`
-        : `WARNING: Provider did not load nodes within ${seconds(timing.providerWait)}s (will retry via interval).`,
+        : "WARNING: Provider still has no nodes (Clash will retry on its own schedule).",
     );
 
     await ports.selectAutoNode().catch(() => {});

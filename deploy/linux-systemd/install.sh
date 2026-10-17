@@ -8,8 +8,8 @@
 #   install.sh --uninstall       remove both units
 #   --dry-run                    print the units instead of installing them
 #
-# NOT VERIFIED on a real Linux host: it was written without one to test on, and the units
-# are only checked by text. Read them (--dry-run) before relying on them.
+# Checked under real systemd (Ubuntu 24.04 VM, stand-in docker/cloudflared), not on real
+# hardware or against a real tunnel; see README.md. Read the units (--dry-run) before relying on them.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,6 +35,7 @@ for arg in "$@"; do
   esac
 done
 
+# shellcheck disable=SC2329  # called by name, through install_unit
 render_cloudflared_unit() {
   local bin tunnel
   bin="$(command -v cloudflared || echo /usr/local/bin/cloudflared)"
@@ -55,6 +56,7 @@ WantedBy=default.target
 UNIT
 }
 
+# shellcheck disable=SC2329  # called by name, through install_unit
 render_watcher_unit() {
   cat <<UNIT
 [Unit]

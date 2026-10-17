@@ -43,6 +43,7 @@ services:
       args:
         BASE_IMAGE: ${BASE_IMAGE:-debian:trixie-slim}
         DESKTOP_STACK: ${DESKTOP_STACK:-kasmvnc}
+        APT_MIRROR: ${APT_MIRROR:-mirrors.aliyun.com}
     container_name: dev-workspace
 
 volumes:
