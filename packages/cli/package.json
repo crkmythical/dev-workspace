@@ -15,12 +15,14 @@
     "pentest-bootstrap": "./src/pentest-bootstrap.ts",
     "pentest": "./src/pentest-enter.ts",
     "self-destruct": "./src/self-destruct.ts",
+    "destruct-passphrase": "./src/destruct-passphrase.ts",
     "desktop-start": "./src/desktop-start.ts",
     "desktop-stop": "./src/desktop-stop.ts",
     "desktop-install": "./src/desktop-install.ts"
   },
   "dependencies": {
-    "@sdw/core": "workspace:*"
+    "@sdw/core": "workspace:*",
+    "@sdw/infra": "workspace:*"
   },
   "devDependencies": {
     "bun-types": "^1.2.0",

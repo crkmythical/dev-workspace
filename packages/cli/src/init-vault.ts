@@ -1,14 +1,15 @@
 #!/usr/bin/env bun
 import { existsSync } from "node:fs";
 import { VAULT_CIPHER_DIR, WORKSPACE_MOUNT } from "@sdw/core/constants";
+import { decide } from "@sdw/core/vault";
 /**
  * init-vault — One-time gocryptfs vault initialization
  */
 import { $ } from "bun";
-import { planInit } from "./lib/vault-lifecycle.ts";
 
-// Idempotency check
-if (planInit(existsSync(`${VAULT_CIPHER_DIR}/gocryptfs.conf`)).action === "noop") {
+// Idempotency check: an existing gocryptfs.conf means the vault is already initialized.
+const observedState = existsSync(`${VAULT_CIPHER_DIR}/gocryptfs.conf`) ? "locked" : "uninitialized";
+if (decide(observedState, { type: "init" }).do === "noop") {
   console.log("Vault already initialized.");
   process.exit(0);
 }

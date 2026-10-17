@@ -2,7 +2,7 @@
  * Server-side cryptography using Node crypto module (via Bun compatibility).
  */
 import crypto from "node:crypto";
-import { AES_KEY_LENGTH, HKDF_INFO, HKDF_SALT, NONCE_LENGTH } from "../../core/src/constants.ts";
+import { AES_KEY_LENGTH, HKDF_INFO, HKDF_SALT, NONCE_LENGTH } from "@sdw/core/constants";
 
 export function deriveKey(passphrase: string, salt = HKDF_SALT): Buffer {
   return Buffer.from(crypto.hkdfSync("sha256", passphrase, salt, HKDF_INFO, AES_KEY_LENGTH));

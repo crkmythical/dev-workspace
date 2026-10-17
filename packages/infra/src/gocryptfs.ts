@@ -1,8 +1,10 @@
-import { existsSync, mkdirSync } from "node:fs";
 /**
- * Shared vault operations — DRY primitives for init/unlock/lock/mount workflows.
- * Used by both workspace vault and pentest vault commands.
+ * gocryptfs adapter: the VolumeDriver port plus the shell primitives behind it.
+ * Moved from cli/lib/vault.ts; the passphrase prompt stays in the CLI.
  */
+import { existsSync, mkdirSync } from "node:fs";
+import { DESTRUCT_COMPLETED_PATH } from "@sdw/core/constants";
+import type { UnmountMode, VaultSpec, VaultState, VolumeDriver } from "@sdw/core/vault";
 import { $ } from "bun";
 
 /** Check if a path is a FUSE mountpoint. */
@@ -17,20 +19,13 @@ export function isInitialized(cipherDir: string): boolean {
 }
 
 /** Ensure both cipher and mount directories exist. */
-export function ensureDirs(config: { cipherDir: string; mountPoint: string }): void {
+export function ensureDirs(config: {
+  cipherDir: string;
+  mountPoint: string;
+  label?: string;
+}): void {
   mkdirSync(config.cipherDir, { recursive: true });
   mkdirSync(config.mountPoint, { recursive: true });
-}
-
-/** Read passphrase from env, TTY prompt, or piped stdin. */
-export async function readPassphrase(envVar?: string, promptMsg = "Passphrase: "): Promise<string> {
-  if (envVar && process.env[envVar]) {
-    return process.env[envVar]!;
-  }
-  if (process.stdin.isTTY) {
-    return prompt(promptMsg) ?? "";
-  }
-  return (await new Response(process.stdin).text()).trim();
 }
 
 /** Initialize gocryptfs vault. Returns true on success. */
@@ -64,25 +59,57 @@ export async function mountVault(
   return { ok: exitCode === 0, stderr: stderr.trim() };
 }
 
-/** Unmount a FUSE mount with progressive escalation. Always succeeds. */
-export async function unmountVault(mountPoint: string): Promise<void> {
-  const r1 = await $`fusermount -u ${mountPoint}`.quiet().nothrow();
-  if (r1.exitCode === 0) return;
+/**
+ * Release a FUSE mount. Returns true when the mount point is free (including
+ * when it was not mounted to begin with).
+ *   graceful  fusermount -u
+ *   lazy      fusermount -uz (detach now)
+ *   escalate  graceful, then kill users of the mount and retry, then lazy
+ */
+export async function unmountVault(
+  mountPoint: string,
+  mode: UnmountMode = "escalate",
+): Promise<boolean> {
+  if (!(await isMounted(mountPoint))) return true;
+
+  const attempt = async (lazy: boolean): Promise<boolean> => {
+    const r = lazy
+      ? await $`fusermount -uz ${mountPoint}`.quiet().nothrow()
+      : await $`fusermount -u ${mountPoint}`.quiet().nothrow();
+    return r.exitCode === 0;
+  };
+
+  if (mode === "lazy") return attempt(true);
+  if (await attempt(false)) return true;
+  if (mode === "graceful") return false;
 
   await $`fuser -k ${mountPoint}`.quiet().nothrow();
   await Bun.sleep(500);
-  const r2 = await $`fusermount -u ${mountPoint}`.quiet().nothrow();
-  if (r2.exitCode === 0) return;
+  if (await attempt(false)) return true;
 
   await $`fuser -km ${mountPoint}`.quiet().nothrow();
   await Bun.sleep(1000);
-  const r3 = await $`fusermount -u ${mountPoint}`.quiet().nothrow();
-  if (r3.exitCode === 0) return;
+  if (await attempt(false)) return true;
 
-  await $`fusermount -uz ${mountPoint}`.quiet().nothrow();
+  return attempt(true);
 }
 
 /** Cleanup stale FUSE mount from previous container lifecycle. */
 export async function cleanupStaleMount(mountPoint: string): Promise<void> {
   await $`fusermount -uz ${mountPoint}`.quiet().nothrow();
 }
+
+/** VolumeDriver port backed by gocryptfs + FUSE. */
+export const gocryptfsVolume: VolumeDriver = {
+  async state(spec: VaultSpec): Promise<VaultState> {
+    if (existsSync(DESTRUCT_COMPLETED_PATH)) return "destroyed";
+    if (await isMounted(spec.mountPoint)) return "unlocked";
+    return isInitialized(spec.cipherDir) ? "locked" : "uninitialized";
+  },
+  init: (spec, passphrase) => initVault(spec.cipherDir, passphrase),
+  async mount(spec, passphrase) {
+    const { ok, stderr } = await mountVault(spec.cipherDir, spec.mountPoint, passphrase);
+    return { ok, detail: stderr };
+  },
+  unmount: (spec, mode) => unmountVault(spec.mountPoint, mode),
+};

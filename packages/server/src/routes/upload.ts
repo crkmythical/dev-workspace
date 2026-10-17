@@ -2,8 +2,7 @@ import crypto from "node:crypto";
 import { existsSync } from "node:fs";
 import { appendFile, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { Context } from "hono";
-import { buildAad } from "../../../core/src/aad.ts";
+import { buildAad } from "@sdw/core/aad";
 import {
   NONCE_LENGTH,
   PNG_HEADER_SIZE,
@@ -11,9 +10,11 @@ import {
   SYNC_PASSPHRASE_PATH,
   TAG_LENGTH,
   UPLOAD_TRACKING_DIR,
-} from "../../../core/src/constants.ts";
-import { checkRelativePath } from "../../../core/src/path-safety.ts";
-import { ReplayWindow } from "../../../core/src/replay-window.ts";
+} from "@sdw/core/constants";
+import { parseFeatureFlags } from "@sdw/core/features";
+import { checkRelativePath } from "@sdw/core/path-safety";
+import { ReplayWindow } from "@sdw/core/replay-window";
+import type { Context } from "hono";
 import { decrypt, deriveKey } from "../crypto.ts";
 
 const UPLOAD_DIR = UPLOAD_TRACKING_DIR;
@@ -55,6 +56,9 @@ async function getSyncKey(): Promise<Buffer | null> {
 }
 
 export async function uploadRoute(c: Context) {
+  // Off unless SYNC_ENABLED is set: a disabled feature looks like a missing one.
+  if (!parseFeatureFlags(process.env).sync) return c.body(null, 404);
+
   try {
     const key = await getSyncKey();
     if (!key) return c.json({ error: "vault-locked" }, 503);

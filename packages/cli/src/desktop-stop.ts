@@ -7,7 +7,8 @@
  *   desktop-stop selkies    stop only the selkies stack
  *   desktop-stop vnc        stop only the kasmvnc stack
  */
-import { type DesktopTarget, runningDesktopPrograms, stopDesktop } from "./lib/desktop.ts";
+import type { DesktopTarget } from "@sdw/core/desktop";
+import { runningDesktopPrograms, stopDesktop } from "@sdw/infra";
 
 const arg = process.argv[2] as DesktopTarget | undefined;
 if (arg && arg !== "selkies" && arg !== "vnc") {

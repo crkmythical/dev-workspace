@@ -15,12 +15,14 @@ import {
   VNC_STREAM_PORT,
   WORKSPACE_MOUNT,
 } from "@sdw/core/constants";
+import { type DesktopTarget, desktopAnchor } from "@sdw/core/desktop";
+import { parseFeatureFlags } from "@sdw/core/features";
 import type { DoctorResult } from "@sdw/core/types";
+import { installedStacks } from "@sdw/infra";
 /**
  * doctor — Workspace health check
  */
 import { $ } from "bun";
-import { type DesktopTarget, desktopAnchor, installedStacks } from "./lib/desktop.ts";
 
 const results: DoctorResult[] = [];
 
@@ -62,20 +64,28 @@ results.push(
       },
 );
 
-// 4. Sync service
-const syncProbe =
-  await $`curl -s --connect-timeout 2 http://127.0.0.1:${SYNC_SERVICE_PORT}/sync/api/doctor -o /dev/null`
-    .quiet()
-    .nothrow();
-results.push(
-  syncProbe.exitCode === 0
-    ? { component: "Sync service", status: "ok" }
-    : {
-        component: "Sync service",
-        status: "fail",
-        detail: `port ${SYNC_SERVICE_PORT} not responding`,
-      },
-);
+// 4. Sync service (an optional feature: off unless SYNC_ENABLED is set)
+if (parseFeatureFlags(process.env).sync) {
+  const syncProbe =
+    await $`curl -s --connect-timeout 2 http://127.0.0.1:${SYNC_SERVICE_PORT}/sync/api/doctor -o /dev/null`
+      .quiet()
+      .nothrow();
+  results.push(
+    syncProbe.exitCode === 0
+      ? { component: "Sync service", status: "ok" }
+      : {
+          component: "Sync service",
+          status: "fail",
+          detail: `port ${SYNC_SERVICE_PORT} not responding`,
+        },
+  );
+} else {
+  results.push({
+    component: "Sync service",
+    status: "ok",
+    detail: "disabled (set SYNC_ENABLED=1 to enable)",
+  });
+}
 
 // 5. Last vault sync
 const lastSyncFile = `${VAULT_SYNC_STATE_DIR}/last-success`;

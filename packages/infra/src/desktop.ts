@@ -1,81 +1,38 @@
 /**
- * Desktop service control — single source of truth for the remote-desktop
- * supervisord process groups, across BOTH desktop stacks running in parallel.
+ * Desktop adapter: supervisorctl control of the remote-desktop process groups.
+ * The topology and ordering rules are pure and live in @sdw/core/desktop.
  *
- * The image is built with DESKTOP_STACK={both|selkies|kasmvnc} (default both),
- * recorded in /etc/sdw-desktop-stack. This module reads that marker once and
- * exposes a stack-aware topology so every caller (desktop-start, desktop-stop,
- * lock-vault, destroy, doctor) sees the correct program groups, start order,
- * and stop order without knowing which stack(s) are installed.
- *
- *   selkies  — group "desktop": [desktop-xvfb, desktop-audio, desktop-selkies, desktop-xfce]
- *              standalone Xvfb (:1) + WS H.264 encoder (6080) + XFCE session. Served at /desktop/.
- *   kasmvnc  — group "vnc":     [desktop-xvnc, desktop-xfce-vnc]
- *              integrated Xkasmvnc (:2, X server + WS VNC on 6081) + XFCE session. Served at /vnc/.
- *
- * In "both" mode both groups exist and run simultaneously on independent
- * displays with independent HOME dirs. Stop order is always the exact reverse
- * of start order, with XFCE (the primary HOME-fd holder on the gocryptfs mount)
- * stopped first, guaranteeing no process holds /workspace/.desktop* fds before
- * FUSE unmount (EBUSY safety).
+ * The image is built with DESKTOP_STACK={both|selkies|kasmvnc}, recorded in
+ * /etc/sdw-desktop-stack; installedStacks() reads that marker so every caller
+ * (desktop-start, desktop-stop, lock-vault, destroy, doctor) sees the stacks
+ * that actually exist without knowing how the image was built.
  */
 import { existsSync, readFileSync } from "node:fs";
-import { SELKIES_STREAM_PORT, VNC_HOME, VNC_STREAM_PORT } from "@sdw/core/constants";
+import { VNC_HOME } from "@sdw/core/constants";
+import {
+  type DesktopTarget,
+  desktopAnchor,
+  desktopGroup,
+  desktopStartOrder,
+  desktopStopOrder,
+  desktopStreamPort,
+  parseStackMarker,
+} from "@sdw/core/desktop";
 import { $ } from "bun";
-
-/** A single desktop stack target. */
-export type DesktopTarget = "selkies" | "vnc";
 
 /** Path to the build-time stack marker written by the Dockerfile. */
 const STACK_MARKER_PATH = "/etc/sdw-desktop-stack";
 
-/** Per-target supervisord group name. */
-const GROUP: Record<DesktopTarget, string> = {
-  selkies: "desktop",
-  vnc: "vnc",
-};
-
-/** Per-target WebSocket stream port (for readiness probes). */
-const STREAM_PORT: Record<DesktopTarget, number> = {
-  selkies: SELKIES_STREAM_PORT,
-  vnc: VNC_STREAM_PORT,
-};
-
-/**
- * Program members per stack, in START order (group-qualified for supervisorctl).
- * Stop order is the exact reverse. XFCE is always last to start / first to stop.
- */
-const STACK_PROGRAMS: Record<DesktopTarget, readonly string[]> = {
-  // X server → audio (optional, exits if disabled) → stream encoder → session.
-  selkies: [
-    "desktop:desktop-xvfb",
-    "desktop:desktop-audio",
-    "desktop:desktop-selkies",
-    "desktop:desktop-xfce",
-  ],
-  // Integrated X/VNC server (:2) → session. Xkasmvnc is both X server and WS server.
-  vnc: ["vnc:desktop-xvnc", "vnc:desktop-xfce-vnc"],
-};
-
-/**
- * Which stacks are installed in this image. Reads /etc/sdw-desktop-stack:
- *   "both"    → ["selkies", "vnc"]
- *   "selkies" → ["selkies"]
- *   "kasmvnc" → ["vnc"]
- * Defaults to ["selkies"] if the marker is absent (selkies-only legacy images).
- */
+/** Which stacks are installed in this image. */
 export function installedStacks(): readonly DesktopTarget[] {
   try {
-    if (existsSync(STACK_MARKER_PATH)) {
-      const v = readFileSync(STACK_MARKER_PATH, "utf-8").trim();
-      if (v === "both") return ["selkies", "vnc"];
-      if (v === "kasmvnc") return ["vnc"];
-      if (v === "selkies") return ["selkies"];
-    }
+    const raw = existsSync(STACK_MARKER_PATH)
+      ? readFileSync(STACK_MARKER_PATH, "utf-8")
+      : undefined;
+    return parseStackMarker(raw);
   } catch {
-    // fall through to default
+    return parseStackMarker(undefined);
   }
-  return ["selkies"];
 }
 
 /** Resolve a caller target argument to the concrete list of stacks to act on. */
@@ -83,21 +40,6 @@ function resolveTargets(target?: DesktopTarget): readonly DesktopTarget[] {
   const installed = installedStacks();
   if (!target) return installed;
   return installed.includes(target) ? [target] : [];
-}
-
-/** Group-qualified name of the base program (X server) for a stack. */
-export function desktopAnchor(target: DesktopTarget): string {
-  return STACK_PROGRAMS[target][0];
-}
-
-/** Start order for a stack (base/X server first). */
-export function desktopStartOrder(target: DesktopTarget): readonly string[] {
-  return STACK_PROGRAMS[target];
-}
-
-/** Stop order for a stack: exact reverse of start order. */
-export function desktopStopOrder(target: DesktopTarget): readonly string[] {
-  return [...STACK_PROGRAMS[target]].reverse();
 }
 
 /** Whether a specific stack's X server (base of the chain) is RUNNING. */
@@ -163,7 +105,7 @@ export async function stopAllDesktops(): Promise<void> {
 
 /** Names of any desktop programs still RUNNING across all groups (post-stop check). */
 export async function runningDesktopPrograms(): Promise<string[]> {
-  const groups = [...new Set(installedStacks().map((t) => GROUP[t]))];
+  const groups = [...new Set(installedStacks().map((t) => desktopGroup(t)))];
   const running: string[] = [];
   for (const g of groups) {
     const r = await $`supervisorctl status ${g}:*`.quiet().nothrow();
@@ -184,7 +126,7 @@ export async function waitForDesktopStream(
   target: DesktopTarget,
   timeoutSec = 30,
 ): Promise<boolean> {
-  const port = STREAM_PORT[target];
+  const port = desktopStreamPort(target);
   for (let i = 0; i < timeoutSec; i++) {
     const probe = await $`nc -z 127.0.0.1 ${port}`.quiet().nothrow();
     if (probe.exitCode === 0) return true;

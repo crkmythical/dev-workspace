@@ -12,7 +12,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const ROOT = path.resolve(import.meta.dir, "..");
-const PACKAGES = ["core", "cli", "server", "spa"] as const;
+const PACKAGES = ["core", "infra", "cli", "server", "spa"] as const;
 type Pkg = (typeof PACKAGES)[number];
 
 type Kind = "relative" | "alias" | "runtime" | "third-party";
@@ -24,27 +24,15 @@ interface Edge {
   kind: Kind;
   /** The OTHER workspace package this import reaches (undefined = none / same package). */
   target?: Pkg;
+  /** For relative imports: the resolved path, relative to the repo root. */
+  resolved?: string;
 }
 
-/** Existing violations, each tagged with the migration phase that removes it. */
-const KNOWN_VIOLATIONS = new Set<string>([
-  // Phase 1: the destroy use case moves into core (+ infra); server stops importing cli.
-  "R1-server-and-cli-are-independent packages/server/src/routes/destruct.ts -> cli",
-
-  // Phase 1: key derivation moves behind a port (node adapter in infra); core must stay
-  // runtime-neutral so the browser SPA can import it.
-  "R4-core-and-spa-are-runtime-neutral packages/core/src/crypto-utils.ts -> node:crypto",
-
-  // Phase 2: server and spa switch from relative paths to @sdw/* package specifiers.
-  "R5-cross-package-imports-use-@sdw packages/server/src/crypto.ts -> core",
-  "R5-cross-package-imports-use-@sdw packages/server/src/index.ts -> core",
-  "R5-cross-package-imports-use-@sdw packages/server/src/routes/destruct.ts -> cli", // Phase 1
-  "R5-cross-package-imports-use-@sdw packages/server/src/routes/destruct.ts -> core",
-  "R5-cross-package-imports-use-@sdw packages/server/src/routes/doctor.ts -> core",
-  "R5-cross-package-imports-use-@sdw packages/server/src/routes/download.ts -> core",
-  "R5-cross-package-imports-use-@sdw packages/server/src/routes/upload.ts -> core",
-  "R5-cross-package-imports-use-@sdw packages/spa/src/main.ts -> core",
-]);
+/**
+ * Existing violations. A new one fails the build; so does fixing one without
+ * deleting its entry here. Empty since phase 1: keep it that way.
+ */
+const KNOWN_VIOLATIONS = new Set<string>([]);
 
 // ── import extraction ───────────────────────────────────────────────────────
 
@@ -61,11 +49,11 @@ function extractImports(source: string): string[] {
 function classify(file: string, pkg: Pkg, spec: string): Edge {
   const base = { file, pkg, spec };
   if (spec.startsWith(".")) {
-    const abs = path.resolve(ROOT, path.dirname(file), spec);
-    const [top, owner] = path.relative(ROOT, abs).split(path.sep);
+    const resolved = path.relative(ROOT, path.resolve(ROOT, path.dirname(file), spec));
+    const [top, owner] = resolved.split(path.sep);
     const target = top === "packages" ? (owner as Pkg) : undefined;
     const crosses = target !== undefined && target !== pkg && PACKAGES.includes(target);
-    return { ...base, kind: "relative", target: crosses ? target : undefined };
+    return { ...base, kind: "relative", target: crosses ? target : undefined, resolved };
   }
   const alias = spec.match(/^@sdw\/([^/]+)/);
   if (alias) {
@@ -111,6 +99,19 @@ function violationsOf(edges: Edge[]): string[] {
       add("R4-core-and-spa-are-runtime-neutral", e, e.spec);
     }
     if (e.kind === "relative" && reaches) add("R5-cross-package-imports-use-@sdw", e, reaches);
+    // Adapters implement core's ports; they never reach into a driving adapter.
+    if (e.pkg === "infra" && reaches && reaches !== "core") {
+      add("R6-infra-depends-only-on-core", e, reaches);
+    }
+    // Inside core the dependency points inward: domain <- ports <- usecases.
+    if (e.pkg === "core" && e.kind === "relative" && e.resolved) {
+      const importer = path.basename(e.file);
+      const imported = path.basename(e.resolved);
+      const inward =
+        (importer === "domain.ts" && (imported === "ports.ts" || imported === "usecases.ts")) ||
+        (importer === "ports.ts" && imported === "usecases.ts");
+      if (inward) add("R7-core-layers-point-inward", e, imported);
+    }
   }
   return [...found].sort();
 }
@@ -122,6 +123,11 @@ describe("architecture: dependency rules (ratchet)", () => {
 
   test("no NEW violations", () => {
     expect(found.filter((k) => !KNOWN_VIOLATIONS.has(k))).toEqual([]);
+  });
+
+  test("scans every package, including infra", () => {
+    const scanned = new Set(collectEdges().map((e) => e.pkg));
+    for (const pkg of PACKAGES) expect(scanned.has(pkg)).toBe(true);
   });
 
   test("KNOWN_VIOLATIONS has no stale entries (the list may only shrink)", () => {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import { planSync } from "@sdw/core/vault";
 import fc from "fast-check";
 import { isIgnored, parseGitignore } from "../src/lib/gitignore-match.ts";
-import { planSync } from "../src/lib/vault-lifecycle.ts";
 
 /**
  * Property tests for vault-sync (task 4.3).

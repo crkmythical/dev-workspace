@@ -1,12 +1,13 @@
 /**
- * Shared cryptographic utilities — destruct key derivation.
+ * Remote self-destruct key derivation (moved from core/crypto-utils.ts: it needs
+ * node:crypto, and core must stay runtime-neutral so the browser SPA can import it).
  *
  * Used by:
- *   - packages/cli/src/unlock-vault.ts (derive + store hash on unlock)
- *   - packages/server/src/routes/destruct.ts (verify passphrase)
+ *   - the remote-destruct unlock hook (derive + store a bcrypt hash)
+ *   - the `destruct-passphrase` command (re-derive the passphrase on demand)
  */
 import crypto from "node:crypto";
-import { AES_KEY_LENGTH, DESTRUCT_HKDF_INFO, DESTRUCT_HKDF_SALT } from "./constants.ts";
+import { AES_KEY_LENGTH, DESTRUCT_HKDF_INFO, DESTRUCT_HKDF_SALT } from "@sdw/core/constants";
 
 /**
  * Derive a 32-byte destruct key from the vault passphrase via HKDF-SHA256.

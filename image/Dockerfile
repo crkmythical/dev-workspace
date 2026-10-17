@@ -302,7 +302,7 @@ RUN for cmd in init-vault unlock-vault lock-vault vault-sync doctor setup; do \
       printf '#!/bin/bash\nexec bun run /opt/workspace/packages/cli/src/%s.ts "$@"\n' "$cmd" > /usr/local/bin/$cmd; \
       chmod +x /usr/local/bin/$cmd; \
     done && \
-    for cmd in init-pentest unlock-pentest lock-pentest pentest-bootstrap self-destruct desktop-start desktop-stop desktop-install backup-init; do \
+    for cmd in init-pentest unlock-pentest lock-pentest pentest-bootstrap self-destruct destruct-passphrase desktop-start desktop-stop desktop-install backup-init; do \
       printf '#!/bin/bash\nexec bun run /opt/workspace/packages/cli/src/%s.ts "$@"\n' "$cmd" > /usr/local/bin/$cmd; \
       chmod +x /usr/local/bin/$cmd; \
     done && \

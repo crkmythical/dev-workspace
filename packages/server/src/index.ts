@@ -1,9 +1,9 @@
+import { SYNC_SERVICE_PORT } from "@sdw/core/constants";
 /**
  * Sync service — Hono + Bun.serve()
  * Serves: SPA static files, encrypted upload/download API, doctor endpoint, WebSocket events.
  */
 import { Hono } from "hono";
-import { SYNC_SERVICE_PORT } from "../../core/src/constants.ts";
 import { destructRoute } from "./routes/destruct.ts";
 import { doctorRoute } from "./routes/doctor.ts";
 import { downloadRoute } from "./routes/download.ts";

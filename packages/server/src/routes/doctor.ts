@@ -1,11 +1,15 @@
 import { existsSync } from "node:fs";
+import { SYNC_PASSPHRASE_PATH } from "@sdw/core/constants";
+import { parseFeatureFlags } from "@sdw/core/features";
 import type { Context } from "hono";
-import { SYNC_PASSPHRASE_PATH } from "../../../core/src/constants.ts";
 
 export async function doctorRoute(c: Context) {
+  const enabled = parseFeatureFlags(process.env).sync;
   const hasKey = existsSync(SYNC_PASSPHRASE_PATH);
   return c.json({
-    state: hasKey ? "ready" : "vault-locked",
+    // "disabled" is reported as such, not as a locked vault.
+    state: !enabled ? "disabled" : hasKey ? "ready" : "vault-locked",
+    sync_enabled: enabled,
     sync_key_available: hasKey,
   });
 }

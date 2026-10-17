@@ -8,7 +8,12 @@
     "./constants": "./src/constants.ts",
     "./aad": "./src/aad.ts",
     "./reconcile": "./src/reconcile.ts",
-    "./crypto-utils": "./src/crypto-utils.ts"
+    "./path-safety": "./src/path-safety.ts",
+    "./replay-window": "./src/replay-window.ts",
+    "./rate-limit": "./src/rate-limit.ts",
+    "./features": "./src/workspace/features.ts",
+    "./desktop": "./src/desktop/domain.ts",
+    "./vault": "./src/vault/index.ts"
   },
   "devDependencies": {
     "bun-types": "^1.2.0",

@@ -1,5 +1,13 @@
 import { describe, expect, it } from "bun:test";
-import { type DesktopTarget, desktopStartOrder, desktopStopOrder } from "../src/lib/desktop.ts";
+import {
+  type DesktopTarget,
+  desktopAnchor,
+  desktopGroup,
+  desktopStartOrder,
+  desktopStopOrder,
+  desktopStreamPort,
+  parseStackMarker,
+} from "../src/desktop/domain.ts";
 
 /**
  * Property test: FUSE-safety topology invariant — for BOTH desktop stacks.
@@ -38,6 +46,11 @@ describe("Desktop topology FUSE-safety invariant (both stacks)", () => {
       expect(desktopStartOrder(stack).length).toBe(PROGRAM_COUNT[stack]);
       expect(desktopStopOrder(stack).length).toBe(PROGRAM_COUNT[stack]);
     });
+
+    it(`[${stack}] anchor is the X server, first to start, inside the stack's own group`, () => {
+      expect(desktopAnchor(stack)).toBe(desktopStartOrder(stack)[0]);
+      expect(desktopAnchor(stack).startsWith(`${desktopGroup(stack)}:`)).toBe(true);
+    });
   }
 
   it("selkies and vnc use independent supervisord groups", () => {
@@ -47,5 +60,28 @@ describe("Desktop topology FUSE-safety invariant (both stacks)", () => {
     for (const p of vncProgs) {
       expect(selkiesProgs.has(p)).toBe(false);
     }
+    expect(desktopGroup("selkies")).not.toBe(desktopGroup("vnc"));
+  });
+
+  it("the two stacks listen on different stream ports", () => {
+    expect(desktopStreamPort("selkies")).not.toBe(desktopStreamPort("vnc"));
+  });
+});
+
+describe("parseStackMarker (build-time /etc/sdw-desktop-stack)", () => {
+  it("maps each build mode to the stacks it installs", () => {
+    expect(parseStackMarker("both")).toEqual(["selkies", "vnc"]);
+    expect(parseStackMarker("selkies")).toEqual(["selkies"]);
+    expect(parseStackMarker("kasmvnc")).toEqual(["vnc"]);
+  });
+
+  it("tolerates the trailing newline written by the Dockerfile", () => {
+    expect(parseStackMarker("kasmvnc\n")).toEqual(["vnc"]);
+  });
+
+  it("treats an absent or unrecognised marker as a legacy selkies-only image", () => {
+    expect(parseStackMarker(undefined)).toEqual(["selkies"]);
+    expect(parseStackMarker("")).toEqual(["selkies"]);
+    expect(parseStackMarker("nonsense")).toEqual(["selkies"]);
   });
 });

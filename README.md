@@ -105,6 +105,7 @@ desktop-start vnc   # 仅启动 KasmVNC 桌面
 desktop-stop        # 停止所有桌面
 desktop-stop selkies # 仅停止 Selkies 桌面
 backup-init         # 初始化 restic 仓库（配置后首次启动自动执行）
+destruct-passphrase # 显示远程自毁口令（由 vault 口令派生，随时可重新查看）
 ```
 
 ## 认证
@@ -153,6 +154,8 @@ launchctl unload ~/Library/LaunchAgents/com.cloudflare.tunnel.plist
 | RESTIC_PASSWORD | (空) | 备份仓库加密密码 |
 | AWS_ACCESS_KEY_ID | (空) | S3 备份凭证 |
 | AWS_SECRET_ACCESS_KEY | (空) | S3 备份凭证 |
+| SYNC_ENABLED | (空=关闭) | 启用浏览器文件同步页 `/sync/` 及其 API。启用后每次解锁会把 vault 口令写入 `/workspace/.credentials/sync-passphrase`；关闭后下次解锁会删除它 |
+| REMOTE_DESTRUCT_ENABLED | (空=关闭) | 启用远程自毁端点 `POST /sync/api/destruct`。口令用 `destruct-passphrase` 查看；关闭后下次解锁会删除口令哈希 |
 
 ## CI/CD（GitHub Actions）
 

@@ -6,11 +6,11 @@ import {
   VAULT_SYNC_STATE_DIR,
   WORKSPACE_MOUNT,
 } from "@sdw/core/constants";
+import { planSync } from "@sdw/core/vault";
 /**
  * vault-sync — Periodic vault ciphertext sync to GitHub
  */
 import { $ } from "bun";
-import { planSync } from "./lib/vault-lifecycle.ts";
 
 const LAST_SUCCESS = `${VAULT_SYNC_STATE_DIR}/last-success`;
 const FAILURE_COUNT = `${VAULT_SYNC_STATE_DIR}/consecutive-failures`;

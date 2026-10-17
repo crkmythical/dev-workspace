@@ -24,9 +24,15 @@
         "lock-pentest": "./src/lock-pentest.ts",
         "pentest-bootstrap": "./src/pentest-bootstrap.ts",
         "pentest": "./src/pentest-enter.ts",
+        "self-destruct": "./src/self-destruct.ts",
+        "destruct-passphrase": "./src/destruct-passphrase.ts",
+        "desktop-start": "./src/desktop-start.ts",
+        "desktop-stop": "./src/desktop-stop.ts",
+        "desktop-install": "./src/desktop-install.ts",
       },
       "dependencies": {
         "@sdw/core": "workspace:*",
+        "@sdw/infra": "workspace:*",
       },
       "devDependencies": {
         "bun-types": "^1.2.0",
@@ -41,11 +47,22 @@
         "fast-check": "^4.1.0",
       },
     },
+    "packages/infra": {
+      "name": "@sdw/infra",
+      "version": "0.1.0",
+      "dependencies": {
+        "@sdw/core": "workspace:*",
+      },
+      "devDependencies": {
+        "bun-types": "^1.2.0",
+      },
+    },
     "packages/server": {
       "name": "@sdw/server",
       "version": "0.1.0",
       "dependencies": {
         "@sdw/core": "workspace:*",
+        "@sdw/infra": "workspace:*",
         "hono": "^4.7.0",
       },
       "devDependencies": {
@@ -190,6 +207,8 @@
     "@sdw/cli": ["@sdw/cli@workspace:packages/cli"],
 
     "@sdw/core": ["@sdw/core@workspace:packages/core"],
+
+    "@sdw/infra": ["@sdw/infra@workspace:packages/infra"],
 
     "@sdw/server": ["@sdw/server@workspace:packages/server"],
 

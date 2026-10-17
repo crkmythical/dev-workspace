@@ -3,7 +3,21 @@ import {
   CLASH_CONTROLLER_PORT,
   CLASH_HTTP_PORT,
   DESKTOP_DEFAULT_RESOLUTION,
+  SELKIES_HOME,
+  VAULT_CIPHER_DIR,
+  VNC_HOME,
 } from "@sdw/core/constants";
+import { parseFeatureFlags } from "@sdw/core/features";
+import { WORKSPACE_VAULT, unlockVault } from "@sdw/core/vault";
+import {
+  cleanupStaleMount,
+  ensureKasmPasswd,
+  gocryptfsVolume,
+  initVault,
+  installedStacks,
+  isInitialized,
+  workspaceUnlockHooks,
+} from "@sdw/infra";
 /**
  * entrypoint-main — Container startup logic (called from entrypoint.sh)
  *
@@ -19,7 +33,6 @@ import {
  */
 import { $ } from "bun";
 import { envValidationError, findMissingRequiredEnv } from "./lib/env-validate.ts";
-import { cleanupStaleMount } from "./lib/vault.ts";
 
 // 0. Defense-in-depth env validation (mirrors entrypoint.sh pre-flight).
 const missingEnv = findMissingRequiredEnv(process.env);
@@ -169,11 +182,7 @@ if (bcryptHash) {
   console.log(`Auth configured (user: user, password: ${masterPassword}).`);
 }
 
-import { SELKIES_HOME, VAULT_CIPHER_DIR, VNC_HOME, WORKSPACE_MOUNT } from "@sdw/core/constants";
-import { ensureKasmPasswd, installedStacks } from "./lib/desktop.ts";
 // 8b. Auto-vault: init (if needed) + unlock (if not mounted) using masterPassword
-import { initVault, isInitialized, mountVault } from "./lib/vault.ts";
-
 const vaultInitialized = isInitialized(VAULT_CIPHER_DIR);
 if (!vaultInitialized) {
   const ok = await initVault(VAULT_CIPHER_DIR, masterPassword);
@@ -181,58 +190,64 @@ if (!vaultInitialized) {
   else console.warn("WARNING: Vault init failed.");
 }
 
-const mountCheck = await $`mountpoint -q ${WORKSPACE_MOUNT}`.quiet().nothrow();
-if (mountCheck.exitCode !== 0 && (vaultInitialized || isInitialized(VAULT_CIPHER_DIR))) {
-  const { ok } = await mountVault(VAULT_CIPHER_DIR, WORKSPACE_MOUNT, masterPassword);
-  if (ok) {
-    console.log("Vault unlocked.");
-    // 8c. Auto-start desktop(s): create per-stack HOME dirs + flip autostart=true
-    // on every installed desktop group's supervisor conf so supervisord starts
-    // them automatically. "both" mode → both desktop.conf and vnc.conf present.
-    mkdirSync("/tmp/.desktop-cache", { recursive: true });
-    const stacks = installedStacks();
-    if (stacks.includes("selkies")) {
-      mkdirSync(`${SELKIES_HOME}/.local/share/applications`, { recursive: true });
-    }
-    if (stacks.includes("vnc")) {
-      mkdirSync(`${VNC_HOME}/.local/share/applications`, { recursive: true });
-      // KasmVNC native HTTP Basic Auth reads $VNC_HOME/.kasmpasswd. Provision it
-      // with the master password so the /vnc/ WS upgrade authenticates with the
-      // same credentials as code-server/selkies (KasmVNC owns its WS auth).
-      await ensureKasmPasswd(masterPassword);
-    }
-    // Patch every desktop group conf (one-shot sed; only files that exist).
-    await $`sh -c "sed -i 's/autostart=false/autostart=true/g' /etc/supervisor/conf.d/desktop.conf /etc/supervisor/conf.d/vnc.conf 2>/dev/null || true"`
-      .quiet()
-      .nothrow();
+// One unlock path, shared with the interactive `unlock-vault` command, so the
+// post-unlock hooks (ssh / git credential links, feature-gated credentials) run
+// on boot too. Hooks that need a running supervisord are interactive-only.
+const unlock = await unlockVault(WORKSPACE_VAULT, async () => masterPassword, {
+  volume: gocryptfsVolume,
+  hooks: workspaceUnlockHooks({ flags: parseFeatureFlags(process.env), announce: console.log }),
+});
+if (unlock.status === "unlocked") {
+  console.log("Vault unlocked.");
+  for (const failure of unlock.hookFailures) {
+    console.warn(`WARNING: post-unlock step failed: ${failure}`);
+  }
+  // 8c. Auto-start desktop(s): create per-stack HOME dirs + flip autostart=true
+  // on every installed desktop group's supervisor conf so supervisord starts
+  // them automatically. "both" mode → both desktop.conf and vnc.conf present.
+  mkdirSync("/tmp/.desktop-cache", { recursive: true });
+  const stacks = installedStacks();
+  if (stacks.includes("selkies")) {
+    mkdirSync(`${SELKIES_HOME}/.local/share/applications`, { recursive: true });
+  }
+  if (stacks.includes("vnc")) {
+    mkdirSync(`${VNC_HOME}/.local/share/applications`, { recursive: true });
+    // KasmVNC native HTTP Basic Auth reads $VNC_HOME/.kasmpasswd. Provision it
+    // with the master password so the /vnc/ WS upgrade authenticates with the
+    // same credentials as code-server/selkies (KasmVNC owns its WS auth).
+    await ensureKasmPasswd(masterPassword);
+  }
+  // Patch every desktop group conf (one-shot sed; only files that exist).
+  await $`sh -c "sed -i 's/autostart=false/autostart=true/g' /etc/supervisor/conf.d/desktop.conf /etc/supervisor/conf.d/vnc.conf 2>/dev/null || true"`
+    .quiet()
+    .nothrow();
 
-    // 8d. Auto-start backup watcher (if configured via RESTIC_REPOSITORY)
-    if (process.env.RESTIC_REPOSITORY) {
-      // Auto-init repo if not yet initialized (idempotent).
-      const initCheck = await $`restic snapshots --no-lock`.quiet().nothrow();
-      if (initCheck.exitCode !== 0) {
-        const stderr = (await new Response(initCheck.stderr).text()).toLowerCase();
-        if (stderr.includes("wrong password") || stderr.includes("unable to open config")) {
-          console.warn(
-            "WARNING: Backup repo exists but RESTIC_PASSWORD does not match. Check .env.",
-          );
+  // 8d. Auto-start backup watcher (if configured via RESTIC_REPOSITORY)
+  if (process.env.RESTIC_REPOSITORY) {
+    // Auto-init repo if not yet initialized (idempotent).
+    const initCheck = await $`restic snapshots --no-lock`.quiet().nothrow();
+    if (initCheck.exitCode !== 0) {
+      const stderr = (await new Response(initCheck.stderr).text()).toLowerCase();
+      if (stderr.includes("wrong password") || stderr.includes("unable to open config")) {
+        console.warn("WARNING: Backup repo exists but RESTIC_PASSWORD does not match. Check .env.");
+      } else {
+        const initResult = await $`restic init`.quiet().nothrow();
+        if (initResult.exitCode === 0) {
+          console.log("Backup repo initialized.");
         } else {
-          const initResult = await $`restic init`.quiet().nothrow();
-          if (initResult.exitCode === 0) {
-            console.log("Backup repo initialized.");
-          } else {
-            console.warn("WARNING: Backup repo init failed (will retry on next start).");
-          }
+          console.warn("WARNING: Backup repo init failed (will retry on next start).");
         }
       }
-      // Flip autostart so supervisord starts the watcher
-      await $`sed -i 's/autostart=false/autostart=true/' /etc/supervisor/conf.d/backup-watcher.conf`
-        .quiet()
-        .nothrow();
     }
-  } else {
-    console.warn("WARNING: Vault unlock failed (password mismatch?). Run 'unlock-vault' manually.");
+    // Flip autostart so supervisord starts the watcher
+    await $`sed -i 's/autostart=false/autostart=true/' /etc/supervisor/conf.d/backup-watcher.conf`
+      .quiet()
+      .nothrow();
   }
+} else if (unlock.status === "failed") {
+  console.warn("WARNING: Vault unlock failed (password mismatch?). Run 'unlock-vault' manually.");
+} else if (unlock.status === "rejected") {
+  console.warn(`WARNING: Vault not unlocked (${unlock.reason}).`);
 }
 
 // 9. exec supervisord (explicitly pass the current environment so Caddy, a

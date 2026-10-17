@@ -9,15 +9,15 @@
  */
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { DESKTOP_CACHE_DIR, SELKIES_HOME, VNC_HOME, WORKSPACE_MOUNT } from "@sdw/core/constants";
-import { $ } from "bun";
+import type { DesktopTarget } from "@sdw/core/desktop";
 import {
-  type DesktopTarget,
   ensureKasmPasswd,
   installedStacks,
   isDesktopRunning,
   startDesktop,
   waitForDesktopStream,
-} from "./lib/desktop.ts";
+} from "@sdw/infra";
+import { $ } from "bun";
 
 const URL_FOR: Record<DesktopTarget, string> = {
   selkies: "/desktop/",
