@@ -36,3 +36,18 @@ describe("ReplayWindow", () => {
     expect(rw.check("x", 1000, 1000)).toBe(true);
   });
 });
+
+describe("ReplayWindow: malformed timestamps", () => {
+  it("rejects NaN and infinities instead of letting them skip the tolerance check", () => {
+    const rw = new ReplayWindow();
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      expect(rw.check("aa", bad, 1_000)).toBe(false);
+    }
+  });
+
+  it("does not remember a rejected nonce", () => {
+    const rw = new ReplayWindow();
+    expect(rw.check("bb", Number.NaN, 1_000)).toBe(false);
+    expect(rw.check("bb", 1_000, 1_000)).toBe(true);
+  });
+});

@@ -10,9 +10,10 @@
  * /workspace. It MUST be stopped before fusermount -u (lock-vault/destroy).
  */
 import { type FSWatcher, watch } from "node:fs";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import {
   BACKUP_EXCLUSION_SET,
+  BACKUP_FAILURE_THRESHOLD,
   BACKUP_KEEP_DAILY,
   BACKUP_KEEP_HOURLY,
   BACKUP_KEEP_WEEKLY,
@@ -22,10 +23,10 @@ import {
   isExcludedPath,
   planDebounce,
   planPrune,
-  shouldNotify,
 } from "@sdw/core/backup";
 import { WORKSPACE_MOUNT } from "@sdw/core/shared/layout";
 import { loadConfig } from "@sdw/core/workspace";
+import { createFileFailureTracker } from "@sdw/infra";
 import { $, type Subprocess } from "bun";
 
 // ─── Pre-flight ──────────────────────────────────────────────────────────────
@@ -48,13 +49,23 @@ if (mountCheck.exitCode !== 0) {
 
 mkdirSync(BACKUP_STATE_DIR, { recursive: true });
 
+// Counter, last-success marker and notification file live in the shared tracker (the
+// same one vault-sync uses), so `doctor` reads one format for both jobs.
+const tracker = createFileFailureTracker({
+  stateDir: BACKUP_STATE_DIR,
+  threshold: BACKUP_FAILURE_THRESHOLD,
+  notificationFile: "backup-failure.md",
+  notificationBody: (n) =>
+    `# ⚠ Backup Failure\n\nFailed ${n} consecutive times. Run \`doctor\` to diagnose.\n`,
+});
+
 // ─── State ───────────────────────────────────────────────────────────────────
 
 let lastEventMs: number | null = null;
 let lastTriggerMs: number | null = null;
 let backupInFlight = false;
 let pendingDuringFlight = false;
-let consecutiveFailures = loadFailureCount();
+let consecutiveFailures = tracker.consecutiveFailures();
 let lastFailureMs: number | null = null;
 let stopping = false;
 let resticProc: Subprocess<"ignore", "pipe", "pipe"> | null = null;
@@ -172,8 +183,7 @@ async function runBackup() {
 async function onBackupSuccess() {
   consecutiveFailures = 0;
   lastFailureMs = null;
-  writeFileSync(`${BACKUP_STATE_DIR}/last-success`, new Date().toISOString());
-  writeFileSync(`${BACKUP_STATE_DIR}/consecutive-failures`, "0");
+  tracker.recordSuccess();
 
   // Check if prune is due (serialized — never concurrent with backup)
   const pruneDecision = planPrune({
@@ -186,20 +196,9 @@ async function onBackupSuccess() {
 }
 
 function onBackupFailure(detail: string) {
-  consecutiveFailures++;
   lastFailureMs = Date.now();
-  writeFileSync(`${BACKUP_STATE_DIR}/consecutive-failures`, String(consecutiveFailures));
+  consecutiveFailures = tracker.recordFailure().count;
   console.error(`Backup failed (attempt ${consecutiveFailures}): ${detail.slice(0, 200)}`);
-
-  if (shouldNotify(consecutiveFailures)) {
-    try {
-      mkdirSync(`${WORKSPACE_MOUNT}/.notifications`, { recursive: true });
-      writeFileSync(
-        `${WORKSPACE_MOUNT}/.notifications/backup-failure.md`,
-        `# ⚠️ Backup Failure\n\nFailed ${consecutiveFailures} consecutive times. Run \`doctor\` to diagnose.\n`,
-      );
-    } catch {}
-  }
 }
 
 // ─── Prune ───────────────────────────────────────────────────────────────────
@@ -244,19 +243,6 @@ async function runPrune() {
 }
 
 // ─── State helpers ───────────────────────────────────────────────────────────
-
-function loadFailureCount(): number {
-  try {
-    return (
-      Number.parseInt(
-        readFileSync(`${BACKUP_STATE_DIR}/consecutive-failures`, "utf-8").trim(),
-        10,
-      ) || 0
-    );
-  } catch {
-    return 0;
-  }
-}
 
 function loadLastPrune(): number | null {
   try {

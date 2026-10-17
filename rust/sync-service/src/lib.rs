@@ -4,6 +4,7 @@
 pub mod aad;
 pub mod constants;
 pub mod crypto;
+pub mod list_auth;
 pub mod path_safety;
 pub mod replay;
 pub mod routes;

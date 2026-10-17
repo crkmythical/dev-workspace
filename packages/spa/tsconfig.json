@@ -6,12 +6,10 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "strict": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "isolatedModules": true,
-    "paths": {
-      "@sdw/core/*": ["../core/src/*"]
-    }
+    "isolatedModules": true
   },
   "include": ["src/**/*.ts"]
 }

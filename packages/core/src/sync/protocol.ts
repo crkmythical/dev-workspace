@@ -62,3 +62,20 @@ export const REPLAY_TOLERANCE_MS = 300_000; // 5 min
 // SPA polling cadence
 export const POLL_INTERVAL_FOCUSED_MS = 2000;
 export const POLL_INTERVAL_BACKGROUND_MS = 10000;
+
+/** HTTP headers carrying the plaintext inputs of the AAD, and the list authenticator. */
+export const SYNC_HEADERS = {
+  op: "X-Sync-Op",
+  ts: "X-Sync-Ts",
+  fileId: "X-Sync-FileId",
+  chunkIdx: "X-Sync-ChunkIdx",
+  auth: "X-Sync-Auth",
+} as const;
+
+/** The API surface, defined once for the SPA and the server. */
+export const SYNC_API = {
+  upload: "/sync/api/upload",
+  list: "/sync/api/download",
+  doctor: "/sync/api/doctor",
+  destruct: "/sync/api/destruct",
+} as const;

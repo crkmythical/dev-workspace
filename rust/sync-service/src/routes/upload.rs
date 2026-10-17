@@ -53,20 +53,22 @@ pub async fn upload(
     let file_id_hdr = hdr("x-sync-fileid", "");
     let chunk_idx = hdr("x-sync-chunkidx", "0");
 
-    // Replay protection
-    let nonce_hex = hex::encode(frame.nonce);
-    {
-        let mut rw = state.replay.lock().unwrap();
-        if !rw.check(&nonce_hex, ts, now_ms()) {
-            return err(StatusCode::BAD_REQUEST, "replay-detected");
-        }
-    }
-
     let aad = build_aad(&op, ts, &[file_id_hdr.as_str(), chunk_idx.as_str()]);
     let plaintext = match decrypt(&key, frame.nonce, frame.ct_with_tag, &aad) {
         Ok(p) => p,
         Err(_) => return err(StatusCode::BAD_REQUEST, "aead-failure"),
     };
+
+    // Replay protection. Only an authentic envelope may claim a window slot: the
+    // window is bounded, so forgeries that could claim slots would flush genuine
+    // nonces out and let a captured request be replayed.
+    {
+        let nonce_hex = hex::encode(frame.nonce);
+        let mut rw = state.replay.lock().unwrap();
+        if !rw.check(&nonce_hex, ts, now_ms()) {
+            return err(StatusCode::BAD_REQUEST, "replay-detected");
+        }
+    }
 
     let _ = fs::create_dir_all(UPLOAD_TRACKING_DIR);
     let _ = fs::create_dir_all(SHARED_DIR);

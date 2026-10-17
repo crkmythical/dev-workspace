@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { buildAad } from "@sdw/core/sync";
-import { decrypt, deriveKey, encrypt, keyFingerprint } from "../src/crypto.ts";
+import { decrypt, deriveKey, encrypt, keyFingerprint } from "../src/sync-crypto.ts";
 
 describe("server/crypto", () => {
   it("deriveKey returns 32 bytes deterministically", () => {

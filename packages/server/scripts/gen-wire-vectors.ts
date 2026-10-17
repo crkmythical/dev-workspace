@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * Generate cross-language wire-protocol golden vectors from the AUTHORITATIVE
- * TypeScript implementation (packages/server crypto + packages/core aad/paths).
+ * TypeScript implementation (packages/infra sync-crypto + packages/core sync).
  *
  * The Rust PoC (rust/sync-service) consumes the SAME JSON in its parity tests,
  * so both ends are proven byte-for-byte compatible on:
@@ -9,6 +9,7 @@
  *   - AES-256-GCM (nonce + ciphertext||tag layout)
  *   - AAD string framing
  *   - the PNG-camouflage upload body
+ *   - the list authenticator (base64(nonce || tag) over an empty message)
  *   - relative-path validation
  *
  * Deterministic (fixed nonces + patterned plaintext) so regenerating is stable.
@@ -16,9 +17,17 @@
  * Run from repo root: bun run packages/server/scripts/gen-wire-vectors.ts
  */
 import crypto from "node:crypto";
-import { buildAad, buildChunkAad, checkRelativePath } from "@sdw/core/sync";
+import {
+  buildAad,
+  buildChunkAad,
+  buildListAuth,
+  checkRelativePath,
+  deriveSyncKey,
+  sealEnvelope,
+  toBase64,
+} from "@sdw/core/sync";
 import { HKDF_INFO, HKDF_SALT, PNG_HEADER } from "@sdw/core/sync/protocol";
-import { decrypt, deriveKey } from "../src/crypto.ts";
+import { decrypt, deriveKey } from "@sdw/infra";
 
 const hex = (b: Uint8Array | Buffer): string => Buffer.from(b).toString("hex");
 
@@ -114,6 +123,29 @@ const aead = aeadCases.map((c) => {
   };
 });
 
+// ── List authenticator ──────────────────────────────────────────────────────
+// X-Sync-Auth = base64(nonce || tag): an AEAD over an EMPTY message, AAD "list|<ts>".
+// Sealed with the production client code and a pinned nonce so the file is stable.
+const clientKey = await deriveSyncKey("correct horse battery staple");
+const listAuthCases = [
+  { label: "list-a", ts: 1700000000000, nonce: nonceA },
+  { label: "list-b", ts: 1700000000123, nonce: nonceB },
+];
+const listAuth = await Promise.all(
+  listAuthCases.map(async (c) => {
+    const aadBytes = buildAad("list", c.ts);
+    const envelope = await sealEnvelope(clientKey, new Uint8Array(0), aadBytes, c.nonce);
+    return {
+      label: c.label,
+      ts: c.ts,
+      key_hex: hex(key0),
+      nonce_hex: hex(c.nonce),
+      aad_hex: hex(aadBytes),
+      auth_b64: toBase64(envelope),
+    };
+  }),
+);
+
 // ── Path safety ───────────────────────────────────────────────────────────
 const pathInputs = [
   "",
@@ -150,12 +182,39 @@ for (const v of aead) {
   }
 }
 
-const outDoc = { png_header_hex: hex(PNG_HEADER), hkdf, aad, aead, paths };
+// The list vectors must be what the production builder produces, and the Node side
+// must accept them: sealed with a pinned nonce above, built with a random one here.
+for (const v of listAuth) {
+  const raw = Buffer.from(v.auth_b64, "base64");
+  if (raw.length !== 28) throw new Error(`list auth ${v.label}: expected nonce||tag (28 bytes)`);
+  const out = decrypt(
+    Buffer.from(v.key_hex, "hex"),
+    raw.subarray(0, 12),
+    Buffer.alloc(0),
+    raw.subarray(12),
+    Buffer.from(v.aad_hex, "hex"),
+  );
+  if (out.length !== 0) throw new Error(`list auth ${v.label}: message must be empty`);
+}
+{
+  const live = await buildListAuth(clientKey, 1700000000000);
+  const raw = Buffer.from(live["X-Sync-Auth"], "base64");
+  const out = decrypt(
+    key0,
+    raw.subarray(0, 12),
+    Buffer.alloc(0),
+    raw.subarray(12),
+    Buffer.from(buildAad("list", 1700000000000)),
+  );
+  if (raw.length !== 28 || out.length !== 0) throw new Error("buildListAuth shape drifted");
+}
+
+const outDoc = { png_header_hex: hex(PNG_HEADER), hkdf, aad, aead, list_auth: listAuth, paths };
 await Bun.write(
   "rust/sync-service/testdata/wire-vectors.json",
   `${JSON.stringify(outDoc, null, 2)}\n`,
 );
 console.log("✓ TS self-check passed; wrote rust/sync-service/testdata/wire-vectors.json");
 console.log(
-  `  ${hkdf.length} hkdf, ${aad.length} aad, ${aead.length} aead, ${paths.length} path vectors`,
+  `  ${hkdf.length} hkdf, ${aad.length} aad, ${aead.length} aead, ${listAuth.length} list-auth, ${paths.length} path vectors`,
 );

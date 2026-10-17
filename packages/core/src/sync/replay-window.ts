@@ -23,6 +23,9 @@ export class ReplayWindow {
    * Returns true if OK, false if replay/out-of-window.
    */
   check(nonceHex: string, timestampMs: number, nowMs = Date.now()): boolean {
+    // NaN compares false with everything, so without this a malformed timestamp would
+    // slip past the tolerance check below.
+    if (!Number.isFinite(timestampMs)) return false;
     if (Math.abs(nowMs - timestampMs) > this.toleranceMs) return false;
     if (this.nonceSet.has(nonceHex)) return false;
 

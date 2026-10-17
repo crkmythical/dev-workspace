@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { WORKSPACE_MOUNT } from "@sdw/core/shared/layout";
 import {
   SYNC_FAILURE_THRESHOLD,
@@ -7,15 +6,20 @@ import {
   VAULT_SYNC_STATE_DIR,
   planSync,
 } from "@sdw/core/vault";
+import { createFileFailureTracker } from "@sdw/infra";
 /**
  * vault-sync — Periodic vault ciphertext sync to GitHub
  */
 import { $ } from "bun";
 
-const LAST_SUCCESS = `${VAULT_SYNC_STATE_DIR}/last-success`;
-const FAILURE_COUNT = `${VAULT_SYNC_STATE_DIR}/consecutive-failures`;
-
-mkdirSync(VAULT_SYNC_STATE_DIR, { recursive: true });
+// Same tracker the backup watcher uses: counter, last-success marker, notification file.
+const tracker = createFileFailureTracker({
+  stateDir: VAULT_SYNC_STATE_DIR,
+  threshold: SYNC_FAILURE_THRESHOLD,
+  notificationFile: "sync-failure.md",
+  notificationBody: (n) =>
+    `# ⚠ Vault Sync Failure\n\nFailed ${n} times. Run \`doctor\` to diagnose.\n`,
+});
 
 // Skip if vault not mounted
 const mounted = await $`mountpoint -q ${WORKSPACE_MOUNT}`.quiet().nothrow();
@@ -48,22 +52,8 @@ if (push1.exitCode === 0) {
 }
 
 if (pushOk) {
-  writeFileSync(LAST_SUCCESS, new Date().toISOString());
-  writeFileSync(FAILURE_COUNT, "0");
+  tracker.recordSuccess();
 } else {
-  let failures = 0;
-  try {
-    failures = Number.parseInt(readFileSync(FAILURE_COUNT, "utf-8"));
-  } catch {}
-  failures++;
-  writeFileSync(FAILURE_COUNT, String(failures));
-
-  if (failures >= SYNC_FAILURE_THRESHOLD) {
-    mkdirSync(`${WORKSPACE_MOUNT}/.notifications`, { recursive: true });
-    writeFileSync(
-      `${WORKSPACE_MOUNT}/.notifications/sync-failure.md`,
-      `# ⚠️ Vault Sync Failure\n\nFailed ${failures} times. Run \`doctor\` to diagnose.\n`,
-    );
-  }
+  tracker.recordFailure();
   process.exit(1);
 }

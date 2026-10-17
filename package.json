@@ -9,7 +9,7 @@
     "lint": "bunx biome check .",
     "format": "bunx biome format . --write",
     "build:spa": "cd packages/spa && bun run build",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json && tsc -p packages/spa/tsconfig.json"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",

@@ -1,19 +1,22 @@
 //! GET /sync/api/download — port of packages/server/src/routes/download.ts.
-//! No `path` query → list SHARED_DIR; with `path` → PNG-camouflaged file bytes.
-
+//!
+//! Lists SHARED_DIR, and only that. File content is deliberately not served (the
+//! SPA never downloads it, and the old `?path=` branch returned plaintext with no
+//! authentication). Listing demands the same proof of the sync key as an upload,
+//! see `list_auth`.
 use axum::{
     extract::{Query, State},
-    http::{header, StatusCode},
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
     Json,
 };
 use serde::Deserialize;
 use serde_json::json;
 use std::fs;
-use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::constants::{PNG_HEADER, SHARED_DIR};
-use crate::path_safety::{check_relative_path, PathCheck};
+use crate::constants::SHARED_DIR;
+use crate::list_auth::authenticate_list;
 use crate::AppState;
 
 #[derive(Deserialize)]
@@ -21,47 +24,54 @@ pub struct DownloadQuery {
     path: Option<String>,
 }
 
+fn err(status: StatusCode, msg: &str) -> axum::response::Response {
+    (status, Json(json!({ "error": msg }))).into_response()
+}
+
 pub async fn download(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
+    headers: HeaderMap,
     Query(q): Query<DownloadQuery>,
 ) -> axum::response::Response {
-    match q.path {
-        None => {
-            let mut files = Vec::new();
-            if let Ok(rd) = fs::read_dir(SHARED_DIR) {
-                for entry in rd.flatten() {
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    if name.starts_with('.') {
-                        continue;
-                    }
-                    if let Ok(md) = entry.metadata() {
-                        if md.is_file() {
-                            files.push(json!({ "name": name, "size": md.len() }));
-                        }
-                    }
-                }
+    // Content download is gone: say so, rather than quietly ignoring the parameter.
+    if q.path.is_some() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
+    let key = match state.sync_key() {
+        Some(k) => k,
+        None => return err(StatusCode::SERVICE_UNAVAILABLE, "vault-locked"),
+    };
+
+    let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
+    let ts = header("x-sync-ts").and_then(|v| v.parse::<i64>().ok());
+    let (Some(ts), Some(auth)) = (ts, header("x-sync-auth")) else {
+        return err(StatusCode::UNAUTHORIZED, "unauthorized");
+    };
+    if authenticate_list(&key, ts, auth, &state.replay, now_ms()).is_err() {
+        return err(StatusCode::UNAUTHORIZED, "unauthorized");
+    }
+
+    let mut files = Vec::new();
+    if let Ok(rd) = fs::read_dir(SHARED_DIR) {
+        for entry in rd.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue;
             }
-            Json(json!({ "files": files })).into_response()
-        }
-        Some(p) => {
-            let rel = match check_relative_path(&p) {
-                PathCheck::Ok(n) => n,
-                PathCheck::Err(_) => {
-                    return (StatusCode::NOT_FOUND, Json(json!({ "error": "not-found" }))).into_response()
-                }
-            };
-            let full = Path::new(SHARED_DIR).join(&rel);
-            match fs::read(&full) {
-                Ok(data) => {
-                    let mut body = Vec::with_capacity(PNG_HEADER.len() + data.len());
-                    body.extend_from_slice(&PNG_HEADER);
-                    body.extend_from_slice(&data);
-                    ([(header::CONTENT_TYPE, "image/png")], body).into_response()
-                }
-                Err(_) => {
-                    (StatusCode::NOT_FOUND, Json(json!({ "error": "not-found" }))).into_response()
+            if let Ok(md) = entry.metadata() {
+                if md.is_file() {
+                    files.push(json!({ "name": name, "size": md.len() }));
                 }
             }
         }
     }
+    Json(json!({ "files": files })).into_response()
+}
+
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }

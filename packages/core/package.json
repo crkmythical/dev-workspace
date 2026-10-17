@@ -6,6 +6,7 @@
     "./backup": "./src/backup/index.ts",
     "./desktop": "./src/desktop/index.ts",
     "./egress": "./src/egress/index.ts",
+    "./shared/failure": "./src/shared/failure.ts",
     "./shared/layout": "./src/shared/layout.ts",
     "./shared/rate-limit": "./src/shared/rate-limit.ts",
     "./sync": "./src/sync/index.ts",

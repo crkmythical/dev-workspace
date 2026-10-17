@@ -1,51 +1,32 @@
-import { readFile, readdir, stat } from "node:fs/promises";
-import path from "node:path";
-import { checkRelativePath } from "@sdw/core/sync";
-import { SHARED_DIR } from "@sdw/core/sync/layout";
-import { PNG_HEADER } from "@sdw/core/sync/protocol";
+import { SYNC_HEADERS, type SyncDeps, listShared } from "@sdw/core/sync";
 import type { FeatureFlags } from "@sdw/core/workspace";
 import type { Context } from "hono";
+import { statusFor } from "./upload.ts";
 
-export async function downloadRoute(c: Context, features: FeatureFlags) {
+/**
+ * GET /sync/api/download — lists the shared directory, and only that.
+ *
+ * File content is deliberately NOT served: the SPA never downloads it, and the
+ * old `?path=` branch returned plaintext (PNG header, no encryption, no auth).
+ * Listing now requires the same proof of the sync key as an upload.
+ */
+export async function downloadRoute(c: Context, features: FeatureFlags, deps: SyncDeps) {
   // Off unless SYNC_ENABLED is set: a disabled feature looks like a missing one.
   if (!features.sync) return c.body(null, 404);
 
-  const filePath = c.req.query("path");
+  // File content is gone; make that explicit rather than quietly ignoring the parameter.
+  if (c.req.query("path") !== undefined) return c.body(null, 404);
 
-  if (!filePath) {
-    // List files in shared directory
-    try {
-      const entries = await readdir(SHARED_DIR);
-      const files = [];
-      for (const entry of entries) {
-        if (entry.startsWith(".")) continue;
-        const fullPath = path.join(SHARED_DIR, entry);
-        const s = await stat(fullPath);
-        if (s.isFile()) {
-          files.push({ name: entry, size: s.size, mtime: s.mtimeMs });
-        }
-      }
-      return c.json({ files });
-    } catch {
-      return c.json({ files: [] });
-    }
-  }
-
-  // Download specific file. `filePath` is attacker-influenced query input and
-  // must be validated to stay within SHARED_DIR (defense-in-depth traversal).
-  const pathCheck = checkRelativePath(filePath);
-  if (!pathCheck.ok) {
-    return c.json({ error: "not-found" }, 404);
-  }
-  const fullPath = path.join(SHARED_DIR, pathCheck.normalized);
-  try {
-    const data = await readFile(fullPath);
-    // Wrap with PNG header for camouflage
-    const camouflaged = Buffer.concat([Buffer.from(PNG_HEADER), data]);
-    return new Response(camouflaged, {
-      headers: { "Content-Type": "image/png" },
-    });
-  } catch {
-    return c.json({ error: "not-found" }, 404);
-  }
+  const nowMs = Date.now();
+  const outcome = await listShared(
+    {
+      ts: Number.parseInt(c.req.header(SYNC_HEADERS.ts) ?? "", 10),
+      auth: c.req.header(SYNC_HEADERS.auth) ?? null,
+      nowMs,
+    },
+    deps,
+  );
+  return outcome.ok
+    ? c.json({ files: outcome.files })
+    : c.json({ error: outcome.code }, statusFor(outcome.code));
 }

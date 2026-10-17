@@ -1,0 +1,66 @@
+/**
+ * FailureTracker on plain files, replacing the two copies that vault-sync and the
+ * backup watcher each carried.
+ *
+ *   <stateDir>/last-success            ISO timestamp of the last success
+ *   <stateDir>/consecutive-failures    the counter (what `doctor` reads)
+ *   <notificationsDir>/<file>          written once the threshold is reached
+ *
+ * State is container-local (non-FUSE); losing it on restart is harmless.
+ */
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { type FailureTracker, reachedFailureThreshold } from "@sdw/core/shared/failure";
+import { WORKSPACE_MOUNT } from "@sdw/core/shared/layout";
+
+export interface FailureTrackerOptions {
+  stateDir: string;
+  threshold: number;
+  /** File name inside the notifications directory, e.g. "backup-failure.md". */
+  notificationFile: string;
+  /** Markdown body for the notification, given the failure count. */
+  notificationBody: (count: number) => string;
+  /** Where notifications go; defaults to the vault's .notifications directory. */
+  notificationsDir?: string;
+}
+
+export function createFileFailureTracker(opts: FailureTrackerOptions): FailureTracker {
+  const countFile = path.join(opts.stateDir, "consecutive-failures");
+  const successFile = path.join(opts.stateDir, "last-success");
+  const notificationsDir = opts.notificationsDir ?? path.join(WORKSPACE_MOUNT, ".notifications");
+  mkdirSync(opts.stateDir, { recursive: true });
+
+  const read = (): number => {
+    try {
+      return Number.parseInt(readFileSync(countFile, "utf-8").trim(), 10) || 0;
+    } catch {
+      return 0;
+    }
+  };
+
+  return {
+    consecutiveFailures: read,
+
+    recordSuccess() {
+      writeFileSync(successFile, new Date().toISOString());
+      writeFileSync(countFile, "0");
+    },
+
+    recordFailure() {
+      const count = read() + 1;
+      writeFileSync(countFile, String(count));
+      if (!reachedFailureThreshold(count, opts.threshold)) return { count, notified: false };
+      try {
+        // The vault may be locked, in which case there is nowhere to write; that is not fatal.
+        mkdirSync(notificationsDir, { recursive: true });
+        writeFileSync(
+          path.join(notificationsDir, opts.notificationFile),
+          opts.notificationBody(count),
+        );
+        return { count, notified: true };
+      } catch {
+        return { count, notified: false };
+      }
+    },
+  };
+}

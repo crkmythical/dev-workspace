@@ -4,12 +4,23 @@
  * Files are PNG-camouflaged for DLP evasion.
  */
 import {
+  SYNC_API,
+  buildChunkRequest,
+  buildFinalizeRequest,
+  buildListAuth,
+  deriveSyncKey,
+} from "@sdw/core/sync";
+import {
   CHUNK_SIZE,
-  NONCE_LENGTH,
-  PNG_HEADER,
+  POLL_INTERVAL_BACKGROUND_MS,
+  POLL_INTERVAL_FOCUSED_MS,
   SIZE_LIMIT,
-  TAG_LENGTH,
 } from "@sdw/core/sync/protocol";
+
+/** `queryPermission` belongs to the File System Access API but not to the stock DOM typings. */
+type PermissionedDirHandle = FileSystemDirectoryHandle & {
+  queryPermission(descriptor: { mode: "read" | "readwrite" }): Promise<PermissionState>;
+};
 
 let syncKey: CryptoKey | null = null;
 let dirHandle: FileSystemDirectoryHandle | null = null;
@@ -17,51 +28,6 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 let baseline: Map<string, { mtime: number; size: number }> = new Map();
 
 const app = document.getElementById("app")!;
-const HKDF_SALT = "sync-key-v1";
-const HKDF_INFO = "aead-key";
-
-// --- Crypto (WebCrypto) ---
-async function deriveKey(passphrase: string): Promise<CryptoKey> {
-  const enc = new TextEncoder();
-  const keyMaterial = await crypto.subtle.importKey("raw", enc.encode(passphrase), "HKDF", false, [
-    "deriveKey",
-  ]);
-  return crypto.subtle.deriveKey(
-    { name: "HKDF", hash: "SHA-256", salt: enc.encode(HKDF_SALT), info: enc.encode(HKDF_INFO) },
-    keyMaterial,
-    { name: "AES-GCM", length: 256 },
-    false,
-    ["encrypt", "decrypt"],
-  );
-}
-
-async function encryptPayload(
-  key: CryptoKey,
-  plaintext: ArrayBuffer,
-  aadStr: string,
-): Promise<Uint8Array> {
-  const nonce = crypto.getRandomValues(new Uint8Array(NONCE_LENGTH));
-  const aad = new TextEncoder().encode(aadStr);
-  const combined = new Uint8Array(
-    await crypto.subtle.encrypt(
-      { name: "AES-GCM", iv: nonce, additionalData: aad, tagLength: TAG_LENGTH * 8 },
-      key,
-      plaintext,
-    ),
-  );
-  // Format: nonce(12) + ciphertext + tag(16) — tag is appended by WebCrypto
-  const result = new Uint8Array(NONCE_LENGTH + combined.length);
-  result.set(nonce, 0);
-  result.set(combined, NONCE_LENGTH);
-  return result;
-}
-
-function wrapPng(data: Uint8Array): Uint8Array {
-  const result = new Uint8Array(PNG_HEADER.length + data.length);
-  result.set(PNG_HEADER, 0);
-  result.set(data, PNG_HEADER.length);
-  return result;
-}
 
 // --- Init ---
 async function init() {
@@ -88,7 +54,7 @@ async function init() {
   try {
     const stored = await loadHandle();
     if (stored) {
-      const perm = await stored.queryPermission({ mode: "readwrite" });
+      const perm = await (stored as PermissionedDirHandle).queryPermission({ mode: "readwrite" });
       if (perm === "granted") {
         dirHandle = stored;
         log("Folder restored");
@@ -166,7 +132,7 @@ async function setPassphrase() {
   const pass = prompt("Vault passphrase (same as unlock-vault):");
   if (!pass) return;
   try {
-    syncKey = await deriveKey(pass);
+    syncKey = await deriveSyncKey(pass);
     await saveKey(syncKey);
     log("Key set");
     if (dirHandle) {
@@ -178,12 +144,16 @@ async function setPassphrase() {
   }
 }
 
+function pollInterval(): number {
+  return document.hidden ? POLL_INTERVAL_BACKGROUND_MS : POLL_INTERVAL_FOCUSED_MS;
+}
+
 function startPolling() {
   if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(poll, document.hidden ? 10000 : 2000);
+  pollTimer = setInterval(poll, pollInterval());
   document.addEventListener("visibilitychange", () => {
     if (pollTimer) clearInterval(pollTimer);
-    if (syncKey && dirHandle) pollTimer = setInterval(poll, document.hidden ? 10000 : 2000);
+    if (syncKey && dirHandle) pollTimer = setInterval(poll, pollInterval());
   });
 }
 
@@ -195,7 +165,9 @@ async function poll() {
     // If no baseline (first run or cache cleared), fetch remote state to avoid full re-upload
     if (baseline.size === 0) {
       try {
-        const resp = await fetch("/sync/api/download");
+        const resp = await fetch(SYNC_API.list, {
+          headers: await buildListAuth(syncKey, Date.now()),
+        });
         if (resp.ok) {
           const { files } = (await resp.json()) as {
             files?: Array<{ name: string; size: number }>;
@@ -235,25 +207,19 @@ async function uploadFile(filePath: string, fileHandle: FileSystemFileHandle) {
 
   const fileId = crypto.randomUUID();
   const totalChunks = Math.ceil(file.size / CHUNK_SIZE) || 1;
-  const ts = Date.now();
 
-  // Upload chunks
+  // Upload chunks. Every request carries its OWN timestamp: the server only accepts
+  // a timestamp within a short tolerance window, so reusing the first one would make
+  // a slow multi-chunk upload fail part way through.
   for (let i = 0; i < totalChunks; i++) {
-    const chunk = await file.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE).arrayBuffer();
-    const aadStr = `put-chunk|${ts}|${fileId}|${i}`;
-    const encrypted = await encryptPayload(syncKey, chunk, aadStr);
-    const camouflaged = wrapPng(encrypted);
-
-    const resp = await fetch("/sync/api/upload", {
+    const chunk = new Uint8Array(
+      await file.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE).arrayBuffer(),
+    );
+    const req = await buildChunkRequest(syncKey, Date.now(), fileId, i, chunk);
+    const resp = await fetch(SYNC_API.upload, {
       method: "POST",
-      headers: {
-        "Content-Type": "image/png",
-        "X-Sync-Op": "put-chunk",
-        "X-Sync-Ts": String(ts),
-        "X-Sync-FileId": fileId,
-        "X-Sync-ChunkIdx": String(i),
-      },
-      body: camouflaged,
+      headers: req.headers,
+      body: req.body,
     });
     if (!resp.ok) {
       log(`✗ chunk ${i} failed`);
@@ -262,31 +228,16 @@ async function uploadFile(filePath: string, fileHandle: FileSystemFileHandle) {
   }
 
   // Finalize
-  const contentHash = await hashFile(file);
-  const finalizePayload = JSON.stringify({
-    file_id: fileId,
-    file_path: filePath,
-    content_sha256: contentHash,
-    total_chunks: totalChunks,
+  const req = await buildFinalizeRequest(syncKey, Date.now(), {
+    fileId,
+    filePath,
+    contentSha256: await hashFile(file),
+    totalChunks,
   });
-  const finalizeAad = `put-finalize|${ts}|${fileId}|${totalChunks}`;
-  const encrypted = await encryptPayload(
-    syncKey,
-    new TextEncoder().encode(finalizePayload).buffer,
-    finalizeAad,
-  );
-  const camouflaged = wrapPng(encrypted);
-
-  const resp = await fetch("/sync/api/upload", {
+  const resp = await fetch(SYNC_API.upload, {
     method: "POST",
-    headers: {
-      "Content-Type": "image/png",
-      "X-Sync-Op": "put-finalize",
-      "X-Sync-Ts": String(ts),
-      "X-Sync-FileId": fileId,
-      "X-Sync-ChunkIdx": String(totalChunks),
-    },
-    body: camouflaged,
+    headers: req.headers,
+    body: req.body,
   });
   if (resp.ok) log(`↑ ${filePath}`);
   else log(`✗ finalize failed: ${filePath}`);
@@ -459,7 +410,7 @@ function renderEmergencyPanel() {
     status.style.color = "#f9e2af";
 
     try {
-      const resp = await fetch("/sync/api/destruct", {
+      const resp = await fetch(SYNC_API.destruct, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ passphrase: passInput.value }),

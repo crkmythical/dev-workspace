@@ -6,10 +6,13 @@
 //!   bun run packages/server/scripts/gen-wire-vectors.ts
 
 use serde_json::Value;
+use std::sync::Mutex;
 use sync_service::aad::build_aad;
 use sync_service::constants::PNG_HEADER;
 use sync_service::crypto::{decrypt, derive_key, encrypt};
+use sync_service::list_auth::{authenticate_list, ListAuthError};
 use sync_service::path_safety::{check_relative_path, PathCheck};
+use sync_service::replay::ReplayWindow;
 use sync_service::wire::parse_upload_body;
 
 fn vectors() -> Value {
@@ -106,4 +109,95 @@ fn path_safety_matches_ts() {
             }
         }
     }
+}
+
+#[test]
+fn list_auth_matches_ts() {
+    let v = vectors();
+    for item in v["list_auth"].as_array().unwrap() {
+        let label = item["label"].as_str().unwrap();
+        let key = unhex(item["key_hex"].as_str().unwrap());
+        let ts = item["ts"].as_i64().unwrap();
+        let auth = item["auth_b64"].as_str().unwrap();
+
+        // The AAD the TS client sealed under is the one the Rust side derives.
+        assert_eq!(
+            hex::encode(build_aad("list", ts, &[])),
+            item["aad_hex"].as_str().unwrap(),
+            "list aad: {label}"
+        );
+
+        let replay = Mutex::new(ReplayWindow::new());
+        assert_eq!(authenticate_list(&key, ts, auth, &replay, ts), Ok(()), "accept: {label}");
+        // The same authenticator again is a replay.
+        assert_eq!(
+            authenticate_list(&key, ts, auth, &replay, ts),
+            Err(ListAuthError::Replay),
+            "replay: {label}"
+        );
+    }
+}
+
+#[test]
+fn list_auth_binds_timestamp_key_and_shape() {
+    let v = vectors();
+    let item = &v["list_auth"].as_array().unwrap()[0];
+    let key = unhex(item["key_hex"].as_str().unwrap());
+    let ts = item["ts"].as_i64().unwrap();
+    let auth = item["auth_b64"].as_str().unwrap();
+    let fresh = || Mutex::new(ReplayWindow::new());
+
+    // A different timestamp changes the AAD: the tag no longer verifies.
+    assert_eq!(
+        authenticate_list(&key, ts + 1, auth, &fresh(), ts + 1),
+        Err(ListAuthError::BadTag)
+    );
+    // A different key cannot produce or verify it.
+    assert_eq!(
+        authenticate_list(&derive_key("another passphrase"), ts, auth, &fresh(), ts),
+        Err(ListAuthError::BadTag)
+    );
+    // Not base64, or not exactly nonce || tag (28 bytes).
+    assert_eq!(
+        authenticate_list(&key, ts, "!!!not base64!!!", &fresh(), ts),
+        Err(ListAuthError::Malformed)
+    );
+    assert_eq!(
+        authenticate_list(&key, ts, "AAAA", &fresh(), ts),
+        Err(ListAuthError::Malformed)
+    );
+    // Outside the tolerance window an authentic envelope is still refused.
+    assert_eq!(
+        authenticate_list(&key, ts, auth, &fresh(), ts + 10 * 60_000),
+        Err(ListAuthError::Replay)
+    );
+}
+
+#[test]
+fn list_auth_forgeries_cannot_flush_the_replay_window() {
+    let v = vectors();
+    let item = &v["list_auth"].as_array().unwrap()[0];
+    let key = unhex(item["key_hex"].as_str().unwrap());
+    let ts = item["ts"].as_i64().unwrap();
+    let auth = item["auth_b64"].as_str().unwrap();
+
+    // A deliberately tiny window: if forgeries could claim slots they would evict
+    // the genuine nonce and the replay below would be accepted.
+    let replay = Mutex::new(ReplayWindow::with(4, 300_000));
+    assert_eq!(authenticate_list(&key, ts, auth, &replay, ts), Ok(()));
+
+    let wrong = derive_key("attacker");
+    for i in 0..12u8 {
+        // 12 bytes of nonce + 16 bytes of tag, none of it authentic.
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        let forged = STANDARD.encode([i; 28]);
+        assert_eq!(
+            authenticate_list(&wrong, ts, &forged, &replay, ts),
+            Err(ListAuthError::BadTag)
+        );
+    }
+    assert_eq!(
+        authenticate_list(&key, ts, auth, &replay, ts),
+        Err(ListAuthError::Replay)
+    );
 }
