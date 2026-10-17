@@ -10,8 +10,10 @@
 - **启动**：首次启动（初始化并解锁 vault）、`docker restart`、`docker rm` 后用同一批卷重建；`HEALTHCHECK` 变 healthy；横幅、`doctor` 各行。
 - **出口**：confirmed、degraded（节点不通 / 订阅里没有节点）、down（Clash 配置损坏）；degraded 和 down 不阻止启动，横幅、`/var/run/egress-status`、vault 里的 `.notifications/egress-degraded.md`、`doctor` 都给出状态。
 - **Vault**：加解锁、`lock-vault`（干净卸载 / 被占用时强制）、第二个 vault（pentest 插件）的 init / unlock / lock、`gocryptfs -passwd` 轮换口令。
-- **服务**：code-server 登录页、Caddy 认证（无凭据 401，有凭据 200）、`/vnc/`、`/desktop/`（`-full`）、同步服务的完整协议流程（分块上传、finalize、带认证的列表、重放 / 伪造 / 过期 / 路径穿越都被拒）。
+- **服务**：code-server 登录（对的密码 302 并给会话 cookie，错的 200）、Caddy 认证（无凭据 401，有凭据 200）、`/vnc/` 以及 KasmVNC 的 WebSocket 升级（无凭据 401，有凭据 101）、`/desktop/`（`-full`）、同步服务的完整协议流程（分块上传、finalize、带认证的列表、重放 / 伪造 / 过期 / 路径穿越都被拒）。
+- **容器内命令**：`doctor`、`init-vault`（已初始化时）、`lock-vault` / `unlock-vault`、`init-pentest` / `unlock-pentest` / `lock-pentest`、`desktop-start` / `desktop-stop`、`backup-init`、`vault-sync`、`setup --auto`、`self-destruct`、`destruct-passphrase`。
 - **备份**：restic 初始化、监视器启动时的基线快照、空闲不产生快照（无风暴）、一串编辑只在静默 10 秒后产生一个快照、被排除的路径不触发、无事件时 5 分钟兜底快照、prune、口令错误和仓库不可达两种情形（不会 `restic init` 覆盖、连续失败 3 次后写通知并在 `doctor` 里报错）。
+- **vault 复制**：用容器里的本地裸仓库当远端——启动时建仓库、`vault-sync` 首次提交并推送、无变化时不提交、有新数据再提交、远端里只有加密的文件名且不含明文、远端不可用时连续失败并在第 3 次写通知、远端恢复后补推未推送的提交并清掉通知（真实 GitHub 没有测）。
 - **自毁**：`self-destruct --force`（从 vault 外和 vault 内的目录运行）、`POST /sync/api/destruct`（错口令 404，对口令 200）；两个 vault 的密钥和数据都被清空，重启后进入 inert 模式。
 - **停机**：`docker stop` 约 4 秒、退出码 0，supervisord 按顺序停掉所有程序。
 - **宿主机**：Linux 的两个 systemd 用户单元在真实 systemd 下安装、启动、被 `kill -9` 后自动重启，并且「容器退出 + 自毁标记」触发的 `destroy.sh --force --paranoid` 能跑到最后（用 stand-in 的 `docker` / `cloudflared`，在 VM 里）；macOS launchd 用缩小版作业验证了清理脚本被其监督进程卸载时的行为（没有运行真实的 `destroy.sh`，它会删凭据和 shell 历史）。
@@ -32,12 +34,17 @@
 - 镜像构建默认用的阿里云 apt 源在境外只有约 14 KB/s → 新增 `APT_MIRROR` 构建参数，默认值不变。
 - `lock-vault` 强制卸载后仍说「Plaintext data is no longer accessible」→ 强制时如实说明已打开文件的进程仍可访问。
 - runbook 里的 `change-password` 命令不存在 → 改为验证过的 `gocryptfs -passwd` 流程。
+- **vault 复制到 git 远端（`VAULT_GIT_REPO`）在默认流程下根本不工作**：启动流程自己创建 vault 时只做 `gocryptfs -init`，cipher 目录不是 git 仓库（只有交互式 `init-vault` 会 `git init`），cron 的 `vault-sync` 每 30 分钟抛一次异常；cron 又读不到容器环境变量，所以不能让它自己去读 `VAULT_GIT_REPO`。**原来的代码里就有这个问题。** → 启动新增 `prepare-replication` 步骤（有 `VAULT_GIT_REPO` 时把 cipher 目录变成以它为 origin 的仓库，幂等，不打印 URL）；`vault-sync` 只看有没有 origin，没有就静默退出；提交带备用身份，推送用显式的 `origin main`。
+- **一次推送失败之后，那个提交再也不会被推送**：提交已经做了，下一轮看起来是「无变化」就跳过，既不重试也不累计失败次数，失败通知永远不会出现，最后的改动要等下一次编辑才会上去 → 计划里新增「有未推送的提交就只推送」。同时成功后会清掉旧的失败通知（备份监视器共用这个跟踪器），之前恢复后通知文件一直留着。
+- **`setup --auto` 重启 Clash 后不退出**：Clash 子进程让 Bun 的事件循环一直活着（阶段 5 重构引入）→ 守护进程 `unref()`。
+- **`backup-init` 对已存在的仓库报「初始化失败」**：脚本头写着重复运行安全，实际 `restic init` 对已有仓库退出 1 → 先探测（与启动共用同一个分类器和同一个适配器 `probeRepository`）：可读则报「已初始化」；口令错误或不可达则明确报错且不初始化。
 
 ### 仍未验证
 
 - **Docker Desktop（macOS）、真实 Linux 主机、amd64**：只在 arm64 的 Colima/QEMU 上跑过。amd64 只确认了 PyPI 上有对应的 wheel，没有在 amd64 上构建过。
 - **浏览器里的真实使用**：KasmVNC / Selkies 只验证了进程常驻、端口、路由和认证，没有连上去看画面（Selkies 在软件模拟下也无法测画质）；同步页 SPA 的界面没有在浏览器里跑过（服务端协议用脚本验证了）。
 - **真实外部服务**：Cloudflare Tunnel / Access、真实 S3 / R2、真实 Clash 订阅和节点（用的是本地假上游和本地 restic 仓库）。
+- **容器内命令**：`desktop-install`（要联网 apt / 下载，测试环境的上游代理只是个假的）、`pentest-bootstrap` 和 `pentest`（debootstrap 要下载 rootfs）。
 - **GitHub 上的 CI**：workflow 通过了 actionlint，但没有真正跑过。
 - **macOS 上真实的 `host-watcher.sh --install` / `destroy.sh --paranoid`**：只验证了行为（见上），没有跑真实脚本。
 - **在已装好的旧 LaunchAgent / systemd 单元上**：修复在脚本里，需要重启监视器（见 `deploy/linux-systemd/README.md`）。

@@ -2,16 +2,16 @@
 /**
  * backup-init — Initialize the restic repository on S3.
  *
- * Run once before the watcher can operate. Safe to re-run: restic reports
- * "already initialized" and exits 0 if the repo exists with matching password.
+ * Safe to re-run: the repository is probed first, and only a location where restic says
+ * there is no repository gets `restic init`. (Calling `restic init` on an existing repository
+ * exits 1, which this command used to report as a failed initialization.)
  *
  * The entrypoint handles auto-init on first boot; this command exists as a
  * manual fallback/diagnostic tool.
  */
 import { evaluateBackupGate } from "@sdw/core/backup";
-import { CLASH_HTTP_PORT } from "@sdw/core/egress";
 import { loadConfig } from "@sdw/core/workspace";
-import { $ } from "bun";
+import { initRepository, probeRepository } from "@sdw/infra";
 
 const gate = evaluateBackupGate(loadConfig(process.env).backup);
 if (gate.status === "dormant") {
@@ -23,25 +23,27 @@ if (gate.status === "misconfigured") {
   process.exit(1);
 }
 
-const proxyUrl = `http://127.0.0.1:${CLASH_HTTP_PORT}`;
-console.log("Initializing restic repository...");
-
-const proc = Bun.spawn(["restic", "init"], {
-  stdout: "inherit",
-  stderr: "inherit",
-  env: {
-    ...process.env,
-    http_proxy: proxyUrl,
-    https_proxy: proxyUrl,
-    HTTPS_PROXY: proxyUrl,
-    HTTP_PROXY: proxyUrl,
-  },
-});
-
-const exitCode = await proc.exited;
-if (exitCode === 0) {
-  console.log("✓ Repository initialized (or already exists).");
-} else {
-  console.error("✗ Repository initialization failed.");
-  process.exit(1);
+const { verdict, detail } = await probeRepository(process.env);
+switch (verdict) {
+  case "ready":
+    console.log("✓ Repository already initialized and readable with this password.");
+    break;
+  case "wrong-password":
+    console.error("✗ A repository exists at that location, but RESTIC_PASSWORD does not open it.");
+    process.exit(1);
+    break;
+  case "unreachable":
+    console.error("✗ Could not reach the repository (network or credentials?). Not initializing.");
+    if (detail) console.error(`  ${detail.split("\n").slice(-1)[0]}`);
+    process.exit(1);
+    break;
+  case "missing":
+    console.log("Initializing restic repository...");
+    if (await initRepository(process.env)) {
+      console.log("✓ Repository initialized.");
+    } else {
+      console.error("✗ Repository initialization failed.");
+      process.exit(1);
+    }
+    break;
 }

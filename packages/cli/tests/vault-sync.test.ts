@@ -19,10 +19,15 @@ import { isIgnored, parseGitignore } from "./support/gitignore-match.ts";
 const rules = parseGitignore(VAULT_GITIGNORE);
 
 describe("Property 5: Vault State Invariants on Locked Boundary", () => {
-  it("never commits while the vault is locked (not mounted)", () => {
+  it("never commits or pushes while the vault is locked (not mounted)", () => {
     fc.assert(
-      fc.property(fc.boolean(), (hasStagedChanges) => {
-        const plan = planSync({ mounted: false, hasStagedChanges });
+      fc.property(fc.boolean(), fc.boolean(), (hasStagedChanges, hasUnpushedCommits) => {
+        const plan = planSync({
+          hasRemote: true,
+          mounted: false,
+          hasStagedChanges,
+          hasUnpushedCommits,
+        });
         expect(plan.action).toBe("skip");
         if (plan.action === "skip") {
           expect(plan.reason).toBe("not-mounted");
@@ -34,26 +39,60 @@ describe("Property 5: Vault State Invariants on Locked Boundary", () => {
 });
 
 describe("Property 16: Vault-Sync No-Op on Quiet Cycle", () => {
-  it("mounted + no staged changes ⇒ skip, no commit", () => {
-    const plan = planSync({ mounted: true, hasStagedChanges: false });
+  const base = {
+    hasRemote: true,
+    mounted: true,
+    hasStagedChanges: false,
+    hasUnpushedCommits: false,
+  };
+
+  it("mounted, nothing staged, nothing waiting to be pushed ⇒ skip, no commit", () => {
+    const plan = planSync(base);
     expect(plan.action).toBe("skip");
     if (plan.action === "skip") expect(plan.reason).toBe("no-changes");
   });
 
   it("mounted + staged changes ⇒ commit-and-push", () => {
-    expect(planSync({ mounted: true, hasStagedChanges: true }).action).toBe("commit-and-push");
+    expect(planSync({ ...base, hasStagedChanges: true }).action).toBe("commit-and-push");
   });
 
-  it("only the (mounted ∧ changed) cell commits; the other three skip", () => {
+  it("only the cells with a remote, a mount and work to do act; the rest skip", () => {
     fc.assert(
-      fc.property(fc.boolean(), fc.boolean(), (mounted, hasStagedChanges) => {
-        const plan = planSync({ mounted, hasStagedChanges });
-        if (mounted && hasStagedChanges) {
-          expect(plan.action).toBe("commit-and-push");
-        } else {
-          expect(plan.action).toBe("skip");
-        }
-      }),
+      fc.property(
+        fc.boolean(),
+        fc.boolean(),
+        fc.boolean(),
+        fc.boolean(),
+        (hasRemote, mounted, hasStagedChanges, hasUnpushedCommits) => {
+          const plan = planSync({ hasRemote, mounted, hasStagedChanges, hasUnpushedCommits });
+          if (!hasRemote || !mounted) {
+            expect(plan.action).toBe("skip");
+          } else if (hasStagedChanges) {
+            expect(plan.action).toBe("commit-and-push");
+          } else if (hasUnpushedCommits) {
+            expect(plan.action).toBe("push-only");
+          } else {
+            expect(plan.action).toBe("skip");
+          }
+        },
+      ),
+    );
+  });
+});
+
+describe("Replication is opt-in", () => {
+  it("with nowhere to push to it skips quietly, whatever else is true", () => {
+    fc.assert(
+      fc.property(
+        fc.boolean(),
+        fc.boolean(),
+        fc.boolean(),
+        (mounted, hasStagedChanges, hasUnpushedCommits) => {
+          expect(
+            planSync({ hasRemote: false, mounted, hasStagedChanges, hasUnpushedCommits }),
+          ).toEqual({ action: "skip", reason: "no-remote", exitCode: 0 });
+        },
+      ),
     );
   });
 });

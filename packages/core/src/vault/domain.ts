@@ -171,29 +171,48 @@ export const VAULT_GITATTRIBUTES =
   "*.bin filter=lfs diff=lfs merge=lfs -text\n*.jar filter=lfs diff=lfs merge=lfs -text\n";
 
 export interface SyncState {
+  /**
+   * Does the ciphertext repository exist and have an `origin` to push to? This is observed
+   * from the repository, not from VAULT_GIT_REPO: the job runs from cron, which does not
+   * pass the container's environment on. Replication is opt-in, so "no" is not an error.
+   */
+  hasRemote: boolean;
   /** Is the workspace mount present? */
   mounted: boolean;
   /** Did `git add -A` followed by `git diff --cached --quiet` report changes? */
   hasStagedChanges: boolean;
+  /** Commits that exist here but not on origin yet, because an earlier push failed. */
+  hasUnpushedCommits: boolean;
 }
 
 export type SyncPlan =
+  | { action: "skip"; reason: "no-remote"; exitCode: 0 }
   | { action: "skip"; reason: "not-mounted"; exitCode: 0 }
   | { action: "skip"; reason: "no-changes"; exitCode: 0 }
-  | { action: "commit-and-push" };
+  | { action: "commit-and-push" }
+  | { action: "push-only" };
 
 /**
+ * Opt-in invariant: with nowhere to push to, do nothing (and do not fail: the cron job
+ * used to crash every cycle on a vault that was never made a repository).
  * Locked-boundary invariant: when not mounted, never commit.
- * Quiet-cycle invariant: when mounted but nothing changed, never commit.
+ * Quiet-cycle invariant: when mounted, nothing changed and nothing is waiting to be
+ * pushed, never commit.
+ * Retry invariant: a commit whose push failed is pushed on a later cycle even if nothing
+ * else changed. Otherwise the next cycle looked like a quiet one, the failure was never
+ * repeated, and the last changes stayed off the remote until the next edit (found by
+ * breaking the remote and running the job three times).
  */
 export function planSync(state: SyncState): SyncPlan {
+  if (!state.hasRemote) {
+    return { action: "skip", reason: "no-remote", exitCode: 0 };
+  }
   if (!state.mounted) {
     return { action: "skip", reason: "not-mounted", exitCode: 0 };
   }
-  if (!state.hasStagedChanges) {
-    return { action: "skip", reason: "no-changes", exitCode: 0 };
-  }
-  return { action: "commit-and-push" };
+  if (state.hasStagedChanges) return { action: "commit-and-push" };
+  if (state.hasUnpushedCommits) return { action: "push-only" };
+  return { action: "skip", reason: "no-changes", exitCode: 0 };
 }
 
 // --- destruction ---

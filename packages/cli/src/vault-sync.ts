@@ -6,11 +6,22 @@ import {
   VAULT_SYNC_STATE_DIR,
   planSync,
 } from "@sdw/core/vault";
-import { createFileFailureTracker } from "@sdw/infra";
-/**
- * vault-sync — Periodic vault ciphertext sync to GitHub
- */
+import {
+  commitStaged,
+  createFileFailureTracker,
+  hasUnpushedCommits,
+  originOf,
+  pushToOrigin,
+  stageChanges,
+} from "@sdw/infra";
 import { $ } from "bun";
+/**
+ * vault-sync — Periodic vault ciphertext sync to a git remote
+ *
+ * Run by cron every 30 minutes. Cron does not pass the container's environment on, so this
+ * job does not read VAULT_GIT_REPO: the start-up makes the cipher directory a repository
+ * with that remote (prepare-replication), and "has an origin" is what turns replication on.
+ */
 
 // Same tracker the backup watcher uses: counter, last-success marker, notification file.
 const tracker = createFileFailureTracker({
@@ -21,39 +32,36 @@ const tracker = createFileFailureTracker({
     `# ⚠ Vault Sync Failure\n\nFailed ${n} times. Run \`doctor\` to diagnose.\n`,
 });
 
-// Skip if vault not mounted
-const mounted = await $`mountpoint -q ${WORKSPACE_MOUNT}`.quiet().nothrow();
-if (planSync({ mounted: mounted.exitCode === 0, hasStagedChanges: true }).action === "skip") {
-  process.exit(0);
-}
+const hasRemote = (await originOf(VAULT_CIPHER_DIR)) !== undefined;
+const mounted = (await $`mountpoint -q ${WORKSPACE_MOUNT}`.quiet().nothrow()).exitCode === 0;
 
-// Check for changes
-const addResult = await $`cd ${VAULT_CIPHER_DIR} && git add -A`.quiet().nothrow();
-const diffResult = await $`cd ${VAULT_CIPHER_DIR} && git diff --cached --quiet`.quiet().nothrow();
-// diffResult.exitCode === 0 means nothing staged (no changes)
-if (planSync({ mounted: true, hasStagedChanges: diffResult.exitCode !== 0 }).action === "skip") {
-  process.exit(0); // No changes
-}
+// Nowhere to push to (replication is opt-in), or the vault is locked: nothing to do.
+const gate = planSync({ hasRemote, mounted, hasStagedChanges: false, hasUnpushedCommits: false });
+if (gate.action === "skip" && gate.reason !== "no-changes") process.exit(0);
 
-// Commit
-await $`cd ${VAULT_CIPHER_DIR} && git commit -q -m "auto-sync ${new Date().toISOString()}"`.quiet();
+const identity = { fallbackName: "Vault", fallbackEmail: "vault@local" };
+try {
+  const plan = planSync({
+    hasRemote,
+    mounted,
+    hasStagedChanges: await stageChanges(VAULT_CIPHER_DIR),
+    hasUnpushedCommits: await hasUnpushedCommits(VAULT_CIPHER_DIR),
+  });
+  if (plan.action === "skip") process.exit(0); // quiet cycle
 
-// Push (with rebase retry)
-let pushOk = false;
-const push1 = await $`cd ${VAULT_CIPHER_DIR} && git push -q`.quiet().nothrow();
-if (push1.exitCode === 0) {
-  pushOk = true;
-} else {
-  const rebase = await $`cd ${VAULT_CIPHER_DIR} && git pull --rebase -q`.quiet().nothrow();
-  if (rebase.exitCode === 0) {
-    const push2 = await $`cd ${VAULT_CIPHER_DIR} && git push -q`.quiet().nothrow();
-    pushOk = push2.exitCode === 0;
+  if (plan.action === "commit-and-push") {
+    const committed = await commitStaged({
+      dir: VAULT_CIPHER_DIR,
+      message: `auto-sync ${new Date().toISOString()}`,
+      ...identity,
+    });
+    if (!committed) throw new Error("commit failed");
   }
-}
-
-if (pushOk) {
+  // Also for "push-only": a commit whose push failed earlier is still waiting.
+  if (!(await pushToOrigin({ dir: VAULT_CIPHER_DIR, ...identity }))) throw new Error("push failed");
   tracker.recordSuccess();
-} else {
+} catch (err) {
   tracker.recordFailure();
+  console.error(`vault-sync failed: ${err instanceof Error ? err.message : String(err)}`);
   process.exit(1);
 }

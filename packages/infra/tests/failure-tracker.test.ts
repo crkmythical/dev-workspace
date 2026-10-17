@@ -58,6 +58,15 @@ describe("FailureTracker (file backed)", () => {
     );
   });
 
+  it("a success clears the notification the failures left, and a success without one is fine", () => {
+    const t = tracker(1);
+    t.recordSuccess(); // no note yet: nothing to clear, nothing thrown
+    t.recordFailure();
+    expect(existsSync(note())).toBe(true);
+    t.recordSuccess();
+    expect(existsSync(note())).toBe(false);
+  });
+
   it("a corrupt counter file reads as zero rather than throwing", () => {
     tracker(); // creates the state dir
     writeFileSync(path.join(root, "state", "consecutive-failures"), "not a number");

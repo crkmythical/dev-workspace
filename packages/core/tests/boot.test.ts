@@ -66,6 +66,8 @@ describe("BOOT_PLAN: ordering rules", () => {
     ["resolve-auth", "init-vault", "the master password is the vault passphrase"],
     ["resolve-auth", "unlock-vault", "the master password is the vault passphrase"],
     ["init-vault", "unlock-vault", "there is nothing to unlock before init"],
+    ["init-vault", "prepare-replication", "the repository is made in the cipher directory"],
+    ["prepare-replication", "banner", "the banner reports the final state"],
     ["bring-up-egress", "notify-egress", "the note describes what bring-up observed"],
     ["unlock-vault", "notify-egress", "the note is written inside the vault"],
     ["unlock-vault", "prepare-desktops", "desktop HOME directories live inside the vault"],

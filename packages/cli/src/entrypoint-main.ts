@@ -11,7 +11,6 @@
  * note in .notifications say so.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { classifyRepoProbe } from "@sdw/core/backup";
 import { DESKTOP_CACHE_DIR, SELKIES_HOME, VNC_HOME } from "@sdw/core/desktop";
 import {
   CLASH_CONFIG_PATH,
@@ -24,6 +23,8 @@ import {
 import { ALL_VAULTS } from "@sdw/core/plugins";
 import {
   VAULT_CIPHER_DIR,
+  VAULT_GITATTRIBUTES,
+  VAULT_GITIGNORE,
   WORKSPACE_VAULT,
   explainUnlockFailure,
   unlockVault,
@@ -52,11 +53,13 @@ import {
   clashEgressPorts,
   cleanupStaleMount,
   enableAutostart,
+  ensureCipherRepo,
   ensureKasmPasswd,
   gocryptfsVolume,
   initVault,
   installedStacks,
   isInitialized,
+  probeRepository,
   syncEgressNotice,
   workspaceUnlockHooks,
   writeEgressStatus,
@@ -169,6 +172,22 @@ const steps: BootStepImpls = {
     }
   },
 
+  async "prepare-replication"() {
+    // Opt-in (VAULT_GIT_REPO). The vault this start-up creates is not a git repository, and the
+    // cron job that pushes it cannot read the environment, so the repository and its remote are
+    // set up here, every start, and the job just pushes whatever has an origin. The URL may carry
+    // a token: never print it.
+    const remote = config.git.vaultRepo;
+    if (!remote || !isInitialized(VAULT_CIPHER_DIR)) return;
+    const change = await ensureCipherRepo({
+      dir: VAULT_CIPHER_DIR,
+      remote,
+      gitignore: VAULT_GITIGNORE,
+      gitattributes: VAULT_GITATTRIBUTES,
+    });
+    if (change !== "unchanged") console.log(`Vault replication: ciphertext repository ${change}.`);
+  },
+
   async "unlock-vault"(state) {
     // One unlock path, shared with the interactive `unlock-vault` command, so the
     // post-unlock hooks (ssh / git credential links, feature-gated credentials) run
@@ -233,11 +252,7 @@ const steps: BootStepImpls = {
 
   async "prepare-backup"() {
     if (!config.backup.RESTIC_REPOSITORY) return;
-    const probe = await $`restic snapshots --no-lock`.quiet().nothrow();
-    const verdict = classifyRepoProbe({
-      exitCode: probe.exitCode,
-      stderr: probe.stderr.toString(),
-    });
+    const { verdict } = await probeRepository(process.env);
     switch (verdict) {
       case "ready":
         break;

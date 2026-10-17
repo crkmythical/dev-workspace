@@ -12,7 +12,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { type FailureTracker, reachedFailureThreshold } from "@sdw/core/shared/failure";
 import { NOTIFICATIONS_DIR } from "@sdw/core/shared/layout";
-import { writeNote } from "./notifications.ts";
+import { removeNote, writeNote } from "./notifications.ts";
 
 export interface FailureTrackerOptions {
   stateDir: string;
@@ -45,6 +45,9 @@ export function createFileFailureTracker(opts: FailureTrackerOptions): FailureTr
     recordSuccess() {
       writeFileSync(successFile, new Date().toISOString());
       writeFileSync(countFile, "0");
+      // A job that works again must not keep telling the user it is failing (`doctor` is
+      // already green; the note used to stay until someone deleted it).
+      removeNote(path.join(notificationsDir, opts.notificationFile));
     },
 
     recordFailure() {

@@ -64,12 +64,21 @@ failure of each one means, and which steps need the vault are data in
 | bring-up-egress | continue (reported) | |
 | resolve-auth | abort | |
 | init-vault, unlock-vault | continue (banner says LOCKED) | |
+| prepare-replication (between the two) | continue | |
 | notify-egress, prepare-desktops, prepare-backup | continue | yes |
 | banner | continue | |
 | supervisord | abort | |
 
 "Continue" means the failure is recorded, shown in the banner, and the workspace starts
 without that piece. Only a missing password or a missing supervisord stops the boot.
+
+### Shutdown
+
+`docker stop` sends SIGTERM to tini (PID 1), which passes it to `entrypoint-main.ts`; that
+hands it to supervisord, which stops every program in reverse start order and exits. The
+container stops in about 4 seconds with exit code 0 (measured). Both self-destruct paths end
+in the same SIGTERM to PID 1. Before this was wired up, Bun died on the signal and the kernel
+SIGKILLed whatever was still running.
 
 ## Egress
 
@@ -131,6 +140,32 @@ Two independent backup chains coexist:
 Both are opt-in (`VAULT_GIT_REPO` / `RESTIC_REPOSITORY`). Neither blocks the other.
 The backup-watcher holds inotify watches on `/workspace` and must be stopped before
 `fusermount -u` (handled by `lock-vault` and `destroy`).
+
+## Releasing the vault
+
+`lock-vault`, `lock-pentest` and self-destruct all go through `unmountVault`
+(`infra/gocryptfs.ts`): stop the holders we know about (desktops, the backup watcher), then
+`fusermount -u`. The escalating mode (`lock-pentest`, self-destruct) then kills whatever
+still uses the mount and retries, and finally detaches it lazily. `fuser` comes from `psmisc`
+in the image. Two rules, both found by running self-destruct from a terminal inside the
+container:
+
+- the calling process steps out of the mount first. A process standing in it blocks the
+  unmount, and after a lazy detach `getcwd` fails, so every later subprocess dies with ENOENT
+  (the keys were never erased);
+- the kill step never touches the caller or any of its ancestors (`lineage` / `killable` in
+  `core/vault/domain.ts`). Killing its shell hangs up the terminal and takes the caller down
+  with it.
+
+## Host services
+
+The host side (Cloudflare Tunnel, `host-watcher`) runs as a LaunchAgent on macOS and as
+systemd user units on Linux (`deploy/linux-systemd/`). When the container reports a completed
+self-destruct, the watcher runs `destroy.sh --force --paranoid`, which removes those very
+services. The service manager kills everything a removed service started, so the cleanup runs
+outside the watcher's service (`run_outside_service` in `scripts/host-watcher.sh`: a new
+session on macOS, a transient `systemd-run --user` unit on Linux). Run as its child it was cut
+off at the first line that removed the service, on both platforms.
 
 ## Remote Desktop: Selkies vs KasmVNC
 

@@ -53,6 +53,9 @@ export const BOOT_PLAN = [
   // The master password is also the vault passphrase: it must exist before the vault.
   { id: "resolve-auth", onFail: "abort" },
   { id: "init-vault", onFail: "degrade" },
+  // The ciphertext repository that the cron job pushes (VAULT_GIT_REPO). Lives in the cipher
+  // directory, outside the mount, so it does not need the vault open, only to exist.
+  { id: "prepare-replication", onFail: "degrade" },
   { id: "unlock-vault", onFail: "degrade" },
   // Everything below writes under the mount point, so it needs the vault.
   { id: "notify-egress", onFail: "degrade", when: vaultIsMounted },

@@ -37,7 +37,9 @@ async function portAccepts(port: number): Promise<boolean> {
 export function clashEgressPorts(log: (message: string) => void): EgressPorts {
   return {
     async startProxy() {
-      Bun.spawn([CLASH_BIN, "-d", CLASH_DIR], { stdout: "ignore", stderr: "ignore" });
+      // A daemon: it has to outlive this process. Without unref() the child keeps Bun's event
+      // loop alive, so a command that starts Clash and is done (`setup`) never returned.
+      Bun.spawn([CLASH_BIN, "-d", CLASH_DIR], { stdout: "ignore", stderr: "ignore" }).unref();
     },
 
     proxyListening: () => portAccepts(CLASH_HTTP_PORT),

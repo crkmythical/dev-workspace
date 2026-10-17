@@ -7,6 +7,8 @@ export * from "./failure-tracker.ts";
 export * from "./gocryptfs.ts";
 export * from "./holders.ts";
 export * from "./notifications.ts";
+export * from "./replication.ts";
+export * from "./restic.ts";
 export * from "./shred.ts";
 export * from "./supervisor.ts";
 export * from "./sync-crypto.ts";

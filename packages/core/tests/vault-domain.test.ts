@@ -181,10 +181,17 @@ describe("needsPassphrase", () => {
 });
 
 describe("Property 5/16: Sync gating (locked boundary + quiet cycle)", () => {
+  const base = {
+    hasRemote: true,
+    mounted: true,
+    hasStagedChanges: false,
+    hasUnpushedCommits: false,
+  };
+
   it("vault-sync never commits when not mounted (locked boundary)", () => {
     fc.assert(
-      fc.property(fc.boolean(), (hasStagedChanges) => {
-        const plan = planSync({ mounted: false, hasStagedChanges });
+      fc.property(fc.boolean(), fc.boolean(), (hasStagedChanges, hasUnpushedCommits) => {
+        const plan = planSync({ ...base, mounted: false, hasStagedChanges, hasUnpushedCommits });
         expect(plan.action).toBe("skip");
         if (plan.action === "skip") {
           expect(plan.reason).toBe("not-mounted");
@@ -194,14 +201,29 @@ describe("Property 5/16: Sync gating (locked boundary + quiet cycle)", () => {
     );
   });
 
-  it("vault-sync is a no-op on a quiet cycle (mounted, no staged changes)", () => {
-    const plan = planSync({ mounted: true, hasStagedChanges: false });
+  it("vault-sync is a no-op on a quiet cycle (mounted, nothing staged, nothing waiting)", () => {
+    const plan = planSync(base);
     expect(plan.action).toBe("skip");
     if (plan.action === "skip") expect(plan.reason).toBe("no-changes");
   });
 
-  it("vault-sync commits only when mounted AND changes exist", () => {
-    expect(planSync({ mounted: true, hasStagedChanges: true }).action).toBe("commit-and-push");
+  it("vault-sync commits only when mounted AND changes exist AND there is a remote", () => {
+    expect(planSync({ ...base, hasStagedChanges: true }).action).toBe("commit-and-push");
+    expect(planSync({ ...base, hasRemote: false, hasStagedChanges: true })).toEqual({
+      action: "skip",
+      reason: "no-remote",
+      exitCode: 0,
+    });
+  });
+
+  it("a commit whose push failed is pushed on a later quiet cycle", () => {
+    expect(planSync({ ...base, hasUnpushedCommits: true })).toEqual({ action: "push-only" });
+  });
+
+  it("new changes on top of an unpushed commit are committed, and everything goes out together", () => {
+    expect(planSync({ ...base, hasStagedChanges: true, hasUnpushedCommits: true }).action).toBe(
+      "commit-and-push",
+    );
   });
 });
 
