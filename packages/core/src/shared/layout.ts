@@ -10,5 +10,7 @@ export const WORKSPACE_MOUNT = "/workspace";
 /** Credentials stored inside the vault (ssh keys, tokens). */
 export const CREDENTIALS_DIR = `${WORKSPACE_MOUNT}/.credentials`;
 
+/** Notes for the user ("backup failing", "egress degraded"); inside the vault, so only readable while unlocked. */
+export const NOTIFICATIONS_DIR = `${WORKSPACE_MOUNT}/.notifications`;
 /** Container-local runtime state (not persisted, not inside the vault). */
 export const RUN_DIR = "/var/run";

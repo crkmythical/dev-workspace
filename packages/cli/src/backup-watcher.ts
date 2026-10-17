@@ -24,6 +24,7 @@ import {
   planDebounce,
   planPrune,
 } from "@sdw/core/backup";
+import { CLASH_HTTP_PORT } from "@sdw/core/egress";
 import { WORKSPACE_MOUNT } from "@sdw/core/shared/layout";
 import { loadConfig } from "@sdw/core/workspace";
 import { createFileFailureTracker } from "@sdw/infra";
@@ -140,7 +141,7 @@ async function runBackup() {
   pendingDuringFlight = false;
 
   const excludeArgs = BACKUP_EXCLUSION_SET.flatMap((p) => ["--exclude", p]);
-  const proxyUrl = "http://127.0.0.1:7890";
+  const proxyUrl = `http://127.0.0.1:${CLASH_HTTP_PORT}`;
 
   try {
     resticProc = Bun.spawn(["restic", "backup", WORKSPACE_MOUNT, ...excludeArgs], {
@@ -204,7 +205,7 @@ function onBackupFailure(detail: string) {
 // ─── Prune ───────────────────────────────────────────────────────────────────
 
 async function runPrune() {
-  const proxyUrl = "http://127.0.0.1:7890";
+  const proxyUrl = `http://127.0.0.1:${CLASH_HTTP_PORT}`;
   try {
     const proc = Bun.spawn(
       [

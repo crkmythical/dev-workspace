@@ -10,7 +10,7 @@ import {
   VNC_STREAM_PORT,
   desktopAnchor,
 } from "@sdw/core/desktop";
-import { CLASH_HTTP_PORT } from "@sdw/core/egress";
+import { CLASH_HTTP_PORT, egressHealth, egressStatus } from "@sdw/core/egress";
 import { WORKSPACE_MOUNT } from "@sdw/core/shared/layout";
 import { SYNC_SERVICE_PORT } from "@sdw/core/sync/layout";
 import {
@@ -20,7 +20,7 @@ import {
   VAULT_SYNC_STATE_DIR,
 } from "@sdw/core/vault";
 import { CODE_SERVER_PORT, type DoctorResult, loadConfig } from "@sdw/core/workspace";
-import { installedStacks } from "@sdw/infra";
+import { installedStacks, observeEgress, readEgressStatus } from "@sdw/infra";
 /**
  * doctor — Workspace health check
  */
@@ -28,20 +28,13 @@ import { $ } from "bun";
 
 const results: DoctorResult[] = [];
 
-// 1. Clash
-const clashProbe =
-  await $`curl -s --connect-timeout 2 -x http://127.0.0.1:${CLASH_HTTP_PORT} http://www.gstatic.com/generate_204 -o /dev/null`
-    .quiet()
-    .nothrow();
-results.push(
-  clashProbe.exitCode === 0
-    ? { component: "Clash proxy", status: "ok", detail: `port ${CLASH_HTTP_PORT} responding` }
-    : {
-        component: "Clash proxy",
-        status: "fail",
-        detail: `port ${CLASH_HTTP_PORT} not responding`,
-      },
-);
+// 1. Egress. Best effort, not enforced: this is the LIVE state of the proxy path, shown
+// next to what the start-up probe saw. Nothing stops a process that ignores the proxy
+// settings from connecting directly.
+results.push({
+  component: "Egress (Clash proxy)",
+  ...egressHealth(egressStatus(await observeEgress()), readEgressStatus(), CLASH_HTTP_PORT),
+});
 
 // 2. Vault mount
 const mountCheck = await $`mountpoint -q ${WORKSPACE_MOUNT}`.quiet().nothrow();

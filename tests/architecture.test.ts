@@ -17,6 +17,7 @@
  *   R8  process.env is read only at entry points (cli/src/*.ts, server/src/index.ts)
  *   R9  absolute path literals live only in layout.ts modules
  *   R10 no hub imports: "@sdw/core" and "@sdw/core/constants" no longer exist
+ *   R11 core and infra never call console.*: they log through an injected function
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -131,6 +132,10 @@ function findAbsolutePathLiterals(code: string): string[] {
   return [...code.matchAll(ABSOLUTE_PATH_LITERAL)].map((m) => m[2]);
 }
 
+function callsConsole(code: string): boolean {
+  return /\bconsole\s*\./.test(code);
+}
+
 function readsProcessEnv(code: string): boolean {
   return /\bprocess\.env\b/.test(code);
 }
@@ -181,6 +186,9 @@ function violationsOf(sources: Source[]): string[] {
   for (const s of sources) {
     if (readsProcessEnv(s.code) && !isEntryPoint(s.file)) {
       add("R8-process-env-only-at-entrypoints", s.file, "process.env");
+    }
+    if ((s.pkg === "core" || s.pkg === "infra") && callsConsole(s.code)) {
+      add("R11-core-and-infra-do-not-log-to-console", s.file, "console");
     }
     if (path.basename(s.file) !== "layout.ts") {
       for (const literal of new Set(findAbsolutePathLiterals(s.code))) {
@@ -277,6 +285,13 @@ describe("architecture: text rules", () => {
   test("detects process.env access but not the word in a comment", () => {
     expect(readsProcessEnv("const x = process.env.HOME;")).toBe(true);
     expect(readsProcessEnv(stripComments("// call loadConfig(process.env) once"))).toBe(false);
+  });
+
+  test("detects console calls but not the word in a comment or a string-free identifier", () => {
+    expect(callsConsole("console.log('x')")).toBe(true);
+    expect(callsConsole("  console . warn(x)")).toBe(true);
+    expect(callsConsole(stripComments("// console.log is for entry points"))).toBe(false);
+    expect(callsConsole("const myconsole = 1; reconsole.x")).toBe(false);
   });
 
   test("entry points are the cli's top-level files and the server index only", () => {

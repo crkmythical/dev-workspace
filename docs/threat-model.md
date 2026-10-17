@@ -4,19 +4,19 @@
 
 | Adversary | Capability | Mitigations |
 |-----------|-----------|-------------|
-| **Network observer** | Inspect traffic on local/ISP network | Clash proxy encrypts all egress; tunnel uses TLS |
-| **Host compromise** | Read host filesystem, Docker volumes | Vault encrypted at rest (gocryptfs); passphrase in memory only |
-| **Container escape** | Break out of Docker isolation | Minimal attack surface; no privileged mode; CAP_SYS_ADMIN only for FUSE |
+| **Network observer** | Inspect traffic on local/ISP network | Traffic that goes through Clash is encrypted to the proxy node (routing is best effort, see Egress below); the tunnel uses TLS |
+| **Host compromise** | Read host filesystem, Docker volumes | Vault content is encrypted at rest (gocryptfs). The passphrase is NOT memory-only (see Non-Guarantees): whoever can read the container's filesystem, environment or logs can unlock it |
+| **Container escape** | Break out of Docker isolation | Not privileged, but `CAP_SYS_ADMIN` (FUSE) and `seccomp:unconfined` (the desktop's bwrap sandbox) weaken isolation. Treat the container as a moderate boundary; use a dedicated VM for stronger separation |
 | **GitHub breach** | Access vault repository contents | Repository contains only gocryptfs ciphertext; AES-256 |
 | **Sync wire observer** | Intercept sync traffic | AEAD encryption + PNG camouflage; no plaintext metadata |
-| **Physical access** | Access to powered-off machine | Vault locked on container stop; no plaintext on disk |
+| **Physical access** | Access to powered-off machine | Vault locked on container stop; workspace content is not on disk in the clear. The credentials listed under Non-Guarantees are |
 | **Cloudflare compromise** | Access tunnel traffic | End-to-end encryption between browser and container; CF sees TLS only |
 
 ## Trust Boundaries
 
-1. **Passphrase → Memory**: User enters passphrase; key derived via HKDF; held in process memory only
+1. **Passphrase → vault**: the passphrase (typed, or `PASSWORD`) is handed to gocryptfs; in the browser the sync key derived from it (HKDF) is a non-extractable CryptoKey. See Non-Guarantees for where the passphrase also lives
 2. **Container → Host**: Docker isolation; single mapped port (localhost only)
-3. **Container → Internet**: All traffic via Clash; fail-closed on Clash failure
+3. **Container → Internet**: Proxy-aware traffic goes through Clash (`http_proxy` and friends point at it). This is best effort and is **not enforced** (see Egress)
 4. **Sync SPA → Server**: AEAD-encrypted envelopes; server cannot read plaintext
 5. **Vault → GitHub**: Only ciphertext pushed; git history contains no plaintext
 
@@ -32,11 +32,19 @@
 
 ## Security Invariants
 
-1. No plaintext credential or workspace content exists on disk outside the FUSE mount
-2. All network egress traverses Clash — no direct internet access from container
-3. Vault passphrase is never written to disk, logs, or environment variables
-4. Sync wire protocol reveals no file paths, names, or content in plaintext
-5. Container destruction leaves no recoverable traces on host
+1. Workspace content is written only inside the FUSE mount. Each writer checks that the vault is mounted first (`desktop-start`, `backup-watcher`, `vault-sync`, notifications, the vault-gated steps of the boot plan, and sync uploads, which need the key that only exists while unlocked), so nothing lands in the container's own filesystem while locked. The check is per writer, not one central guard
+2. The sync wire protocol reveals no file paths, names, or content in plaintext. Listing the shared directory needs proof of the sync key, and file content is never served back
+3. Replay protection claims a nonce only after the envelope has authenticated, so forged requests cannot flush genuine nonces out of the bounded window
+4. Container destruction leaves no recoverable traces on host (best effort; see Self-Destruct)
+
+## Non-Guarantees
+
+What this system does NOT promise, so nobody relies on it:
+
+- **Egress is best effort, not enforced.** `http_proxy`, `https_proxy` and `all_proxy` point at Clash, so proxy-aware tools use it. Nothing blocks a process that ignores them, or a command run under `noproxy <cmd>`, from connecting directly: there is no firewall rule, and all processes run as root, so per-user rules would not help either. Enforcing egress needs a separate, mark-based firewall layer. DNS servers are set directly in `docker-compose.yml`.
+- **Egress state is observed and reported, never assumed.** At start-up the proxy is brought up and probed. The result is `confirmed`, `degraded` (proxy up, probe failed) or `down` (proxy not listening). A non-confirmed result does **not** stop the workspace; it is shown in the start-up banner, in `doctor` (live), in `/var/run/egress-status`, and as `.notifications/egress-degraded.md` inside the vault once it is unlocked
+- **The vault passphrase is also the master password**, and it is not memory-only: it comes from `PASSWORD` (so it is in the container environment and in `.env`), or is generated; it is printed in the start-up banner (so it reaches the container log) and kept in code-server's `config.yaml` on the container filesystem. With `SYNC_ENABLED` it is additionally stored inside the vault. Anyone who can read the container filesystem, its environment or its logs can unlock the vault
+- **The Clash subscription URL** is a credential too; it lives in `.env` and in the `clash-config` volume, outside the vault
 
 ## Self-Destruct Attack Surface
 

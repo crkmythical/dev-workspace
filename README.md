@@ -49,7 +49,7 @@ docker compose up -d
   - **KasmVNC** (`/vnc/`) — VNC-over-WebSocket，高延迟隧道下更稳定
 - **Code Server** — 浏览器中的 VS Code
 - **加密 Vault** — gocryptfs 自动初始化/解锁
-- **代理** — Clash 全局模式（自动测速选最快节点，每小时刷新订阅，3 分钟健康检查）
+- **代理** — Clash 全局模式（自动测速选最快节点，每小时刷新订阅，3 分钟健康检查）。尽力而为、不强制：读取代理环境变量的工具走 Clash，`noproxy` 或忽略代理设置的进程会直连。启动横幅、`doctor`、`/var/run/egress-status` 会显示出口状态（confirmed / degraded / down），出口异常不会阻止工作区启动
 - **音频** — PulseAudio null-sink 桌面音频流
 - **基础系统** — Kali Linux（可通过 apt 安装渗透测试工具）
 
@@ -96,7 +96,7 @@ docker build -t dev-workspace:trixie -f image/Dockerfile --build-arg BASE_IMAGE=
 ## 容器内命令
 
 ```bash
-doctor              # 健康检查（报告双桌面 + 备份状态）
+doctor              # 健康检查（出口 / 双桌面 / 备份状态）
 noproxy <cmd>       # 绕过代理直连执行命令
 lock-vault          # 锁定加密工作区（先停止桌面和备份）
 unlock-vault        # 输入密码解锁

@@ -11,7 +11,8 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { type FailureTracker, reachedFailureThreshold } from "@sdw/core/shared/failure";
-import { WORKSPACE_MOUNT } from "@sdw/core/shared/layout";
+import { NOTIFICATIONS_DIR } from "@sdw/core/shared/layout";
+import { writeNote } from "./notifications.ts";
 
 export interface FailureTrackerOptions {
   stateDir: string;
@@ -27,7 +28,7 @@ export interface FailureTrackerOptions {
 export function createFileFailureTracker(opts: FailureTrackerOptions): FailureTracker {
   const countFile = path.join(opts.stateDir, "consecutive-failures");
   const successFile = path.join(opts.stateDir, "last-success");
-  const notificationsDir = opts.notificationsDir ?? path.join(WORKSPACE_MOUNT, ".notifications");
+  const notificationsDir = opts.notificationsDir ?? NOTIFICATIONS_DIR;
   mkdirSync(opts.stateDir, { recursive: true });
 
   const read = (): number => {
@@ -50,17 +51,12 @@ export function createFileFailureTracker(opts: FailureTrackerOptions): FailureTr
       const count = read() + 1;
       writeFileSync(countFile, String(count));
       if (!reachedFailureThreshold(count, opts.threshold)) return { count, notified: false };
-      try {
-        // The vault may be locked, in which case there is nowhere to write; that is not fatal.
-        mkdirSync(notificationsDir, { recursive: true });
-        writeFileSync(
-          path.join(notificationsDir, opts.notificationFile),
-          opts.notificationBody(count),
-        );
-        return { count, notified: true };
-      } catch {
-        return { count, notified: false };
-      }
+      // With the vault locked there is nowhere safe to write; that is not fatal.
+      const notified = writeNote(
+        path.join(notificationsDir, opts.notificationFile),
+        opts.notificationBody(count),
+      );
+      return { count, notified };
     },
   };
 }

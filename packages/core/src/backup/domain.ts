@@ -183,6 +183,36 @@ export function planDoctorBackupStatus(state: DoctorBackupState): DoctorBackupSt
   return "ok";
 }
 
+// --- repository probe (start-up) ---
+
+/**
+ * What `restic snapshots` says about the configured repository:
+ *   ready           readable with this password
+ *   missing         there is no repository at that location: safe to `restic init`
+ *   wrong-password  a repository is there but RESTIC_PASSWORD does not open it
+ *   unreachable     anything else (network, credentials, ...): do NOT init
+ *
+ * Only restic's explicit "no repository here" answer may lead to an init: exit code 10,
+ * or "repository does not exist" in its message (restic >= 0.17; the image pins 0.17.3).
+ * The phrase "Is there a repository at the following location?" is NOT enough, because
+ * restic prints it for ANY failure to read the config file, a network error included.
+ * A transient error must never be mistaken for a missing repository, or a second,
+ * empty repository could shadow the real one. A wrong password is exit code 12.
+ */
+export type RepoProbe = "ready" | "missing" | "wrong-password" | "unreachable";
+
+export function classifyRepoProbe(result: { exitCode: number; stderr: string }): RepoProbe {
+  if (result.exitCode === 0) return "ready";
+  const text = result.stderr.toLowerCase();
+  // "no key found" is also what a repository with unreadable key files reports; treat
+  // it like a wrong password so nothing is ever initialized over it.
+  if (result.exitCode === 12 || text.includes("wrong password") || text.includes("no key found")) {
+    return "wrong-password";
+  }
+  if (result.exitCode === 10 || text.includes("repository does not exist")) return "missing";
+  return "unreachable";
+}
+
 /**
  * Check if a relative path (from /workspace) should be excluded.
  * Checks ALL path segments — so nested occurrences like

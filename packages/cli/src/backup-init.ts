@@ -9,6 +9,7 @@
  * manual fallback/diagnostic tool.
  */
 import { evaluateBackupGate } from "@sdw/core/backup";
+import { CLASH_HTTP_PORT } from "@sdw/core/egress";
 import { loadConfig } from "@sdw/core/workspace";
 import { $ } from "bun";
 
@@ -22,7 +23,7 @@ if (gate.status === "misconfigured") {
   process.exit(1);
 }
 
-const proxyUrl = "http://127.0.0.1:7890";
+const proxyUrl = `http://127.0.0.1:${CLASH_HTTP_PORT}`;
 console.log("Initializing restic repository...");
 
 const proc = Bun.spawn(["restic", "init"], {

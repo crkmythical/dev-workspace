@@ -2,13 +2,56 @@
 
 ## Monorepo Structure
 
+Hexagonal: `core` holds the rules and use cases, `infra` implements core's ports, and
+`cli` / `server` / `spa` are driving adapters that wire them together.
+
 ```
 packages/
-├── core/       Shared pure logic (types, constants, AAD, reconcile, ReplayWindow, backup decisions)
-├── server/     Hono + Bun.serve() sync service (upload, download, doctor, WebSocket)
-├── cli/        Container CLI tools (init-vault, unlock-vault, lock-vault, vault-sync, backup-watcher, doctor, setup)
-└── spa/        Browser file sync SPA (File System Access API + E2E encryption)
+├── core/    Pure rules + use cases, one folder per bounded context. No node:/bun imports.
+│            shared/ vault/ sync/ backup/ desktop/ egress/ workspace/
+├── infra/   Adapters for core's ports: gocryptfs, supervisorctl, Clash, restic helpers,
+│            sync crypto/store, notifications, shred, ...
+├── cli/     Container commands (init-vault, unlock-vault, doctor, ...) and entrypoint-main
+├── server/  Hono sync service: thin routes over core's sync use cases
+└── spa/     Browser sync page (File System Access API + WebCrypto), shares core's client
 ```
+
+The dependency rules are executable, not aspirational: `tests/architecture.test.ts`
+(ratchet, R1-R10) fails the build on a new violation. In short: core imports no other
+package and no runtime; infra depends only on core; server and cli never import each
+other; `process.env` is read only in entry points (`loadConfig`); absolute paths live
+only in each context's `layout.ts`.
+
+Inside core the dependency points inward: `domain` <- `ports` <- `usecases`.
+
+## Start-up
+
+`cli/src/entrypoint-main.ts` is a composition root. The order of the steps, what a
+failure of each one means, and which steps need the vault are data in
+`core/workspace/boot.ts` (`BOOT_PLAN`), tested without a container.
+
+| Step | If it fails | Needs vault |
+|------|-------------|-------------|
+| preflight | abort | |
+| cleanup-stale-mounts | continue | |
+| render-clash-config | continue | |
+| git-globals, tune-inotify | continue | |
+| bring-up-egress | continue (reported) | |
+| resolve-auth | abort | |
+| init-vault, unlock-vault | continue (banner says LOCKED) | |
+| notify-egress, prepare-desktops, prepare-backup | continue | yes |
+| banner | continue | |
+| supervisord | abort | |
+
+"Continue" means the failure is recorded, shown in the banner, and the workspace starts
+without that piece. Only a missing password or a missing supervisord stops the boot.
+
+## Egress
+
+Routing through Clash is **best effort, not enforced** (see `docs/threat-model.md`).
+`core/egress` models what was observed: `confirmed`, `degraded` (proxy up, probe through
+it failed) or `down` (proxy not listening). It is reported in the start-up banner,
+`/var/run/egress-status`, `doctor` (live) and `.notifications/egress-degraded.md`.
 
 ## Runtime Stack
 
@@ -36,7 +79,7 @@ L1: Clash proxy (VLESS+WS+TLS)                  ← Traffic obfuscation
 
 ```
 Browser → Cloudflare Tunnel → Caddy(:8080) → code-server(:8082) / sync-service(:8081)
-Container egress → Clash(:7890) → Proxy nodes → Internet
+Proxy-aware egress → Clash(:7890) → Proxy nodes → Internet   (not enforced: see Egress)
 Vault sync → git push (via Clash) → GitHub (encrypted ciphertext)
 Realtime backup → restic (via Clash) → S3 (restic-encrypted, deduplicated snapshots)
 ```
@@ -44,7 +87,7 @@ Realtime backup → restic (via Clash) → S3 (restic-encrypted, deduplicated sn
 ## Key Design Decisions
 
 1. Single container (FUSE mount shared across all services)
-2. Fail-closed egress (no Clash = no internet)
+2. Best-effort egress through Clash (proxy environment variables); observed and reported, not enforced
 3. No plaintext on disk (gocryptfs FUSE only in memory)
 4. PNG camouflage on sync wire (DLP evasion)
 5. Replay protection (ring buffer nonce tracking)

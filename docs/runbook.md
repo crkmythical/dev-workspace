@@ -39,6 +39,7 @@ docker exec -it dev-workspace unlock-vault  # Use new password
 | Issue | Fix |
 |-------|-----|
 | Clash not connecting | Check subscription URL; verify provider loaded: `curl -s http://127.0.0.1:9090/providers/proxies/subscription \| jq '.proxies \| length'`; restart container if needed |
+| Start-up banner says `Egress: DEGRADED` or `DOWN` | The workspace started anyway. `doctor` shows the live state; `cat /var/run/egress-status` shows what the start-up probe saw; with the vault open, `/workspace/.notifications/egress-degraded.md` explains. DOWN: nothing listens on :7890 (check the Clash config and subscription URL). DEGRADED: proxy up but the probe failed, usually nodes still loading; retry `doctor` in a minute |
 | Vault unlock fails | Verify passphrase; check gocryptfs.conf exists |
 | Sync Page idle | Modify a file in the synced folder; check browser console |
 | code-server 502 | Wait 10s after container start; check `docker logs` |
