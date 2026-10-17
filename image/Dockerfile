@@ -61,9 +61,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && locale-gen \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Bun
-RUN curl -fsSL https://bun.sh/install | bash
+# Install Bun — pinned version + sha256 verification against the published
+# SHASUMS256.txt (the GitHub release zip is the same artifact bun.sh/install
+# fetches). Reproducible + tamper-evident; bump BUN_VERSION and both hashes
+# together (from .../releases/download/bun-v<ver>/SHASUMS256.txt).
+ARG BUN_VERSION=1.4.3
+ARG BUN_SHA256_AMD64=3e730528d89775f03f87f05c06787c4df4099d0a37f3f252e7b829cb23816e18
+ARG BUN_SHA256_ARM64=efa9813da5ed72423bf847f916e8d2c47c0d776add972354026a75e10da9aa21
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) bun_arch=x64;     bun_sha="$BUN_SHA256_AMD64" ;; \
+      arm64) bun_arch=aarch64; bun_sha="$BUN_SHA256_ARM64" ;; \
+      *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-${bun_arch}.zip" -o /tmp/bun.zip; \
+    echo "${bun_sha}  /tmp/bun.zip" | sha256sum -c -; \
+    unzip -q /tmp/bun.zip -d /tmp/bun; \
+    mkdir -p /root/.bun/bin; \
+    install -m 0755 "/tmp/bun/bun-linux-${bun_arch}/bun" /root/.bun/bin/bun; \
+    rm -rf /tmp/bun /tmp/bun.zip
 ENV PATH="/root/.bun/bin:${PATH}"
+RUN bun --version
 
 # Desktop layer — COMMON deps (both stacks): X server, XFCE, fonts, mesa, dbus.
 # XFCE is the session for BOTH stacks (selkies and kasmvnc). This eliminates the
@@ -140,9 +159,25 @@ RUN if [ "$DESKTOP_STACK" = "both" ] || [ "$DESKTOP_STACK" = "kasmvnc" ]; then \
       echo "Skipping kasmvnc install (DESKTOP_STACK=$DESKTOP_STACK)"; \
     fi
 
-# Install Caddy
-RUN curl -fsSL "https://caddyserver.com/api/download?os=linux&arch=$(dpkg --print-architecture)" -o /usr/bin/caddy \
-    && chmod +x /usr/bin/caddy
+# Install Caddy — pinned version + sha512 verification (caddy's checksums.txt
+# uses SHA-512). The standard GitHub release build ships the same default
+# modules the download API returns (reverse_proxy, file_server, basic_auth).
+ARG CADDY_VERSION=2.11.7
+ARG CADDY_SHA512_AMD64=a7a433a1b133efc3c8d10eb0b99d52a24b5ef5c322dc77f5282182b1c0402139ab83f3a99f0c52409df77d20123fb0b523edad8a66d8f5e49136197bf61ef0e7
+ARG CADDY_SHA512_ARM64=3db36ba90c7a6e8dda40ee3dd71fa08844c76b5fb08f61b31e5e78d2ed38e71c51dc7baed875e50d1ca1279196e84302967237386ae87c91ae9f2aaceada682e
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) caddy_sha="$CADDY_SHA512_AMD64" ;; \
+      arm64) caddy_sha="$CADDY_SHA512_ARM64" ;; \
+      *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}/caddy_${CADDY_VERSION}_linux_${arch}.tar.gz" -o /tmp/caddy.tar.gz; \
+    echo "${caddy_sha}  /tmp/caddy.tar.gz" | sha512sum -c -; \
+    tar -xzf /tmp/caddy.tar.gz -C /tmp caddy; \
+    install -m 0755 /tmp/caddy /usr/bin/caddy; \
+    rm -f /tmp/caddy.tar.gz /tmp/caddy; \
+    caddy version
 
 # Install restic (realtime backup to S3) — single static binary, no runtime deps.
 ARG RESTIC_VERSION=0.17.3
@@ -150,8 +185,10 @@ RUN curl -fsSL "https://github.com/restic/restic/releases/download/v${RESTIC_VER
     | bunzip2 > /usr/local/bin/restic \
     && chmod +x /usr/local/bin/restic
 
-# Install mise (runtime version manager) — retry on network failure
-RUN for i in 1 2 3; do curl -fsSL https://mise.jdx.dev/install.sh | bash && break || sleep 5; done
+# Install mise (runtime version manager) — pinned via MISE_VERSION; retry on
+# network failure. The installer verifies its own release checksum.
+ARG MISE_VERSION=v2026.10.12
+RUN for i in 1 2 3; do curl -fsSL https://mise.jdx.dev/install.sh | MISE_VERSION="${MISE_VERSION}" bash && break || sleep 5; done
 ENV PATH="/root/.local/bin:${PATH}"
 ENV MISE_DATA_DIR=/root/.local/share/mise
 
@@ -174,8 +211,10 @@ RUN ARCH=$(dpkg --print-architecture) && \
     curl -fsSL "https://github.com/MetaCubeX/mihomo/releases/download/v${CLASH_VERSION}/mihomo-linux-${ARCH}-v${CLASH_VERSION}.gz" \
     | gunzip > /usr/bin/clash && chmod +x /usr/bin/clash
 
-# Install code-server (latest)
-RUN curl -fsSL "https://code-server.dev/install.sh" | sh
+# Install code-server — pinned. The official installer fetches the matching
+# GitHub release; --version makes rebuilds deterministic.
+ARG CODE_SERVER_VERSION=4.141.0
+RUN curl -fsSL "https://code-server.dev/install.sh" | sh -s -- --version "${CODE_SERVER_VERSION}"
 
 # Filesystem prep
 RUN mkdir -p /workspace /vault/cipher /etc/supervisor/conf.d /var/run/vault-sync \
@@ -279,5 +318,13 @@ ENV http_proxy=http://127.0.0.1:7890 \
     https_proxy=http://127.0.0.1:7890 \
     all_proxy=socks5://127.0.0.1:7890 \
     no_proxy=localhost,127.0.0.0/8,172.16.0.0/12,10.0.0.0/8,169.254.0.0/16
+
+# Liveness: Caddy ingress (:8080) + code-server (:8082) both accepting TCP.
+# Assumption-free port probe (nc from netcat-openbsd). The generous
+# start-period covers Clash bootstrap + vault unlock before supervisord brings
+# the services up. For an app-level signal, swap to:
+#   CMD curl -fsS http://127.0.0.1:8080/ -o /dev/null || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=3 \
+  CMD nc -z 127.0.0.1 8080 && nc -z 127.0.0.1 8082 || exit 1
 
 ENTRYPOINT ["tini", "--", "/usr/local/lib/workspace/entrypoint.sh"]
