@@ -100,6 +100,10 @@ export const DESTRUCT_HKDF_SALT = "destruct-key-v1";
 export const DESTRUCT_HKDF_INFO = "self-destruct";
 export const DESTRUCT_RATE_LIMIT_WINDOW_MS = 60_000;
 export const DESTRUCT_RATE_LIMIT_MAX_ATTEMPTS = 3;
+// Global backstop: absolute cap on destruct attempts per window across ALL
+// clients. Bounds a brute force that rotates X-Forwarded-For to defeat the
+// per-IP budget (the per-IP key is client-influenced; this cap is not).
+export const DESTRUCT_RATE_LIMIT_GLOBAL_MAX = 10;
 export const DESTRUCT_RESPONSE_DELAY_MS = 200;
 
 // Remote desktop (Selkies stream)

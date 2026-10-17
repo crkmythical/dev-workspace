@@ -117,7 +117,12 @@ export async function uploadRoute(c: Context) {
       // (final path under SHARED_DIR) come from decrypted, attacker-influenced
       // data and must be validated before any filesystem use (defense-in-depth
       // against path traversal even though the payload is AEAD-authenticated).
-      const data = JSON.parse(plaintext.toString("utf-8"));
+      let data: Record<string, unknown>;
+      try {
+        data = JSON.parse(plaintext.toString("utf-8")) as Record<string, unknown>;
+      } catch {
+        return c.json({ error: "bad-finalize-json" }, 400);
+      }
 
       const idCheck = checkRelativePath(String(data.file_id ?? ""));
       if (!idCheck.ok || idCheck.normalized.includes("/")) {

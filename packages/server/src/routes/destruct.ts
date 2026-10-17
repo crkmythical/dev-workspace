@@ -3,36 +3,38 @@ import type { Context } from "hono";
 import { destroyCore } from "../../../cli/src/lib/destroy.ts";
 import {
   DESTRUCT_KEY_HASH_PATH,
+  DESTRUCT_RATE_LIMIT_GLOBAL_MAX,
   DESTRUCT_RATE_LIMIT_MAX_ATTEMPTS,
   DESTRUCT_RATE_LIMIT_WINDOW_MS,
   DESTRUCT_RESPONSE_DELAY_MS,
 } from "../../../core/src/constants.ts";
+import { RateLimiter } from "../../../core/src/rate-limit.ts";
 
-// Module-level rate limiter (per client IP).
-const attempts = new Map<string, { count: number; resetAt: number }>();
+// Per-IP budget with a global backstop. The per-IP key comes from a
+// client-influenced header, so the global cap is what actually bounds a
+// spoofed-IP brute force (see rate-limit.ts).
+const limiter = new RateLimiter({
+  windowMs: DESTRUCT_RATE_LIMIT_WINDOW_MS,
+  perKeyMax: DESTRUCT_RATE_LIMIT_MAX_ATTEMPTS,
+  globalMax: DESTRUCT_RATE_LIMIT_GLOBAL_MAX,
+});
 
 function getClientIP(c: Context): string {
+  // Prefer Cloudflare's edge-set CF-Connecting-IP: when the only ingress is the
+  // CF tunnel, the external client cannot overwrite it. Fall back to the first
+  // X-Forwarded-For hop, then a constant (which still shares the global cap).
+  const cf = c.req.header("cf-connecting-ip");
+  if (cf) return cf.trim();
   const xff = c.req.header("x-forwarded-for");
   if (xff) return xff.split(",")[0].trim();
   return "unknown";
 }
 
-function isRateLimited(ip: string): boolean {
-  const now = Date.now();
-  const entry = attempts.get(ip);
-  if (!entry || now > entry.resetAt) {
-    attempts.set(ip, { count: 1, resetAt: now + DESTRUCT_RATE_LIMIT_WINDOW_MS });
-    return false;
-  }
-  entry.count++;
-  return entry.count > DESTRUCT_RATE_LIMIT_MAX_ATTEMPTS;
-}
-
 export async function destructRoute(c: Context): Promise<Response> {
   const ip = getClientIP(c);
 
-  // Rate limit check
-  if (isRateLimited(ip)) {
+  // Rate limit check (per-IP + global backstop)
+  if (limiter.check(ip)) {
     return c.body(null, 429);
   }
 
