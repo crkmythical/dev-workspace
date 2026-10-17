@@ -1,0 +1,162 @@
+#!/usr/bin/env bun
+/**
+ * Generate cross-language wire-protocol golden vectors from the AUTHORITATIVE
+ * TypeScript implementation (packages/server crypto + packages/core aad/paths).
+ *
+ * The Rust PoC (rust/sync-service) consumes the SAME JSON in its parity tests,
+ * so both ends are proven byte-for-byte compatible on:
+ *   - HKDF-SHA256 key derivation
+ *   - AES-256-GCM (nonce + ciphertext||tag layout)
+ *   - AAD string framing
+ *   - the PNG-camouflage upload body
+ *   - relative-path validation
+ *
+ * Deterministic (fixed nonces + patterned plaintext) so regenerating is stable.
+ *
+ * Run from repo root: bun run packages/server/scripts/gen-wire-vectors.ts
+ */
+import crypto from "node:crypto";
+import { buildAad, buildChunkAad } from "../../core/src/aad.ts";
+import { HKDF_INFO, HKDF_SALT, PNG_HEADER } from "../../core/src/constants.ts";
+import { checkRelativePath } from "../../core/src/path-safety.ts";
+import { decrypt, deriveKey } from "../src/crypto.ts";
+
+const hex = (b: Uint8Array | Buffer): string => Buffer.from(b).toString("hex");
+
+/** Encrypt with an explicit nonce so the vector is reproducible. */
+function encryptFixed(key: Buffer, nonce: Buffer, plaintext: Buffer, aad: Uint8Array): Buffer {
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, nonce);
+  cipher.setAAD(Buffer.from(aad));
+  const ct = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return Buffer.concat([ct, tag]); // WebCrypto/wire layout: ciphertext || tag
+}
+
+// ── HKDF ──────────────────────────────────────────────────────────────────
+const passphrases = ["correct horse battery staple", "p", "日本語パスフレーズ🔐"];
+const hkdf = passphrases.map((passphrase) => ({
+  passphrase,
+  salt: HKDF_SALT,
+  info: HKDF_INFO,
+  key_hex: hex(deriveKey(passphrase)),
+}));
+
+// ── AAD framing ───────────────────────────────────────────────────────────
+const aadCases: Array<{ op: string; ts: number; extra: string[] }> = [
+  { op: "put-chunk", ts: 1700000000000, extra: ["file-abc", "0"] },
+  { op: "put-finalize", ts: 1699999999999, extra: ["file-xyz", "3"] },
+  { op: "doctor", ts: 0, extra: [] },
+];
+const aad = aadCases.map((c) => ({
+  ...c,
+  aad_hex: hex(buildAad(c.op, c.ts, ...c.extra)),
+}));
+
+// ── AEAD + PNG body ───────────────────────────────────────────────────────
+const key0 = deriveKey("correct horse battery staple");
+const nonceA = Buffer.from([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+const nonceB = Buffer.from([11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]);
+const pt = {
+  empty: Buffer.alloc(0),
+  hello: Buffer.from("hello world", "utf8"),
+  bytes256: Buffer.from(Array.from({ length: 256 }, (_, i) => i)),
+  k4: Buffer.from(Array.from({ length: 4096 }, (_, i) => i % 256)),
+};
+const aeadCases = [
+  {
+    label: "chunk-empty",
+    ts: 1700000000000,
+    file_id: "abc123",
+    chunk_idx: 0,
+    nonce: nonceA,
+    plaintext: pt.empty,
+  },
+  {
+    label: "chunk-hello",
+    ts: 1700000000001,
+    file_id: "abc123",
+    chunk_idx: 1,
+    nonce: nonceB,
+    plaintext: pt.hello,
+  },
+  {
+    label: "chunk-bytes256",
+    ts: 1700000000002,
+    file_id: "deadbeef",
+    chunk_idx: 7,
+    nonce: nonceA,
+    plaintext: pt.bytes256,
+  },
+  {
+    label: "chunk-4k",
+    ts: 1700000000003,
+    file_id: "deadbeef",
+    chunk_idx: 2,
+    nonce: nonceB,
+    plaintext: pt.k4,
+  },
+];
+const aead = aeadCases.map((c) => {
+  const aadBytes = buildChunkAad(c.ts, c.file_id, c.chunk_idx);
+  const ctWithTag = encryptFixed(key0, c.nonce, c.plaintext, aadBytes);
+  const body = Buffer.concat([Buffer.from(PNG_HEADER), c.nonce, ctWithTag]);
+  return {
+    label: c.label,
+    op: "put-chunk",
+    ts: c.ts,
+    file_id: c.file_id,
+    chunk_idx: c.chunk_idx,
+    key_hex: hex(key0),
+    aad_hex: hex(aadBytes),
+    nonce_hex: hex(c.nonce),
+    plaintext_hex: hex(c.plaintext),
+    ciphertext_with_tag_hex: hex(ctWithTag),
+    body_hex: hex(body),
+  };
+});
+
+// ── Path safety ───────────────────────────────────────────────────────────
+const pathInputs = [
+  "",
+  "a/b/c",
+  "a//b/./c",
+  "../etc",
+  "a/../b",
+  "/abs",
+  "a\\b",
+  "foo\u0000bar",
+  "./",
+  "a/b/",
+  ".",
+];
+const paths = pathInputs.map((input) => ({ input, result: checkRelativePath(input) }));
+
+// ── Self-check: TS must round-trip its own vectors ──────────────────────────
+for (const v of aead) {
+  const body = Buffer.from(v.body_hex, "hex");
+  const raw = body.subarray(PNG_HEADER.length);
+  const nonce = raw.subarray(0, 12);
+  const ctwt = raw.subarray(12);
+  const ct = ctwt.subarray(0, ctwt.length - 16);
+  const tag = ctwt.subarray(ctwt.length - 16);
+  const out = decrypt(
+    Buffer.from(v.key_hex, "hex"),
+    Buffer.from(nonce),
+    Buffer.from(ct),
+    Buffer.from(tag),
+    Buffer.from(v.aad_hex, "hex"),
+  );
+  if (out.toString("hex") !== v.plaintext_hex) {
+    throw new Error(`TS round-trip failed for ${v.label}`);
+  }
+}
+
+const outDoc = { png_header_hex: hex(PNG_HEADER), hkdf, aad, aead, paths };
+await Bun.write(
+  "rust/sync-service/testdata/wire-vectors.json",
+  `${JSON.stringify(outDoc, null, 2)}\n`,
+);
+console.log("✓ TS self-check passed; wrote rust/sync-service/testdata/wire-vectors.json");
+console.log(
+  `  ${hkdf.length} hkdf, ${aad.length} aad, ${aead.length} aead, ${paths.length} path vectors`,
+);
