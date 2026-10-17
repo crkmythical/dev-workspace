@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { reconcile } from "../src/reconcile.ts";
-import type { FileState } from "../src/types.ts";
+import { reconcile } from "../src/sync/reconcile.ts";
+import type { FileState } from "../src/sync/types.ts";
 
 describe("reconcile", () => {
   it("returns empty for identical states", () => {

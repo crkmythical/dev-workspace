@@ -1,12 +1,12 @@
 #!/usr/bin/env bun
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { WORKSPACE_MOUNT } from "@sdw/core/shared/layout";
 import {
   SYNC_FAILURE_THRESHOLD,
   VAULT_CIPHER_DIR,
   VAULT_SYNC_STATE_DIR,
-  WORKSPACE_MOUNT,
-} from "@sdw/core/constants";
-import { planSync } from "@sdw/core/vault";
+  planSync,
+} from "@sdw/core/vault";
 /**
  * vault-sync — Periodic vault ciphertext sync to GitHub
  */

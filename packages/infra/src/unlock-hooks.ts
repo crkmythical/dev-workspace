@@ -9,16 +9,15 @@
  */
 import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { CREDENTIALS_DIR, WORKSPACE_MOUNT } from "@sdw/core/shared/layout";
+import { SYNC_PASSPHRASE_PATH } from "@sdw/core/sync/layout";
 import {
-  CREDENTIALS_DIR,
   DESTRUCT_KEY_HASH_PATH,
   DESTRUCT_STATE_DIR,
   STATE_SOCKET_PATH,
-  SYNC_PASSPHRASE_PATH,
-  WORKSPACE_MOUNT,
-} from "@sdw/core/constants";
-import type { FeatureFlags } from "@sdw/core/features";
-import type { UnlockHook } from "@sdw/core/vault";
+  type UnlockHook,
+} from "@sdw/core/vault";
+import type { FeatureFlags } from "@sdw/core/workspace";
 import { $ } from "bun";
 import { deriveDestructKey, destructKeyToPassphrase } from "./destruct-key.ts";
 
@@ -164,15 +163,13 @@ export function miseInstallHook(): UnlockHook {
   };
 }
 
-/** Start the backup watcher under supervisord when a restic repo is configured. */
-export function startBackupWatcherHook(): UnlockHook {
+/** Start the backup watcher under supervisord (only when a restic repo is configured). */
+export function startBackupWatcherHook(opts: { enabled: boolean }): UnlockHook {
   return {
     name: "start-backup-watcher",
     async run({ spec }) {
-      if (spec.id !== "workspace") return;
-      if (process.env.RESTIC_REPOSITORY) {
-        await $`supervisorctl start backup-watcher`.quiet().nothrow();
-      }
+      if (spec.id !== "workspace" || !opts.enabled) return;
+      await $`supervisorctl start backup-watcher`.quiet().nothrow();
     },
   };
 }
@@ -198,6 +195,10 @@ export function workspaceUnlockHooks(opts: {
  * Extra hooks for an interactive unlock only. They need a running supervisord
  * (or are slow), so the container's boot path deliberately leaves them out.
  */
-export function interactiveUnlockExtras(): UnlockHook[] {
-  return [broadcastStateHook(), miseInstallHook(), startBackupWatcherHook()];
+export function interactiveUnlockExtras(opts: { backupEnabled: boolean }): UnlockHook[] {
+  return [
+    broadcastStateHook(),
+    miseInstallHook(),
+    startBackupWatcherHook({ enabled: opts.backupEnabled }),
+  ];
 }

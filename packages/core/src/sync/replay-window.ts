@@ -1,4 +1,4 @@
-import { REPLAY_TOLERANCE_MS, REPLAY_WINDOW_SIZE } from "./constants.ts";
+import { REPLAY_TOLERANCE_MS, REPLAY_WINDOW_SIZE } from "./protocol.ts";
 
 /**
  * Ring-buffer based replay window.

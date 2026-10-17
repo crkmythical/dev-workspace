@@ -1,13 +1,14 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
-import { PNG_HEADER, SHARED_DIR } from "@sdw/core/constants";
-import { parseFeatureFlags } from "@sdw/core/features";
-import { checkRelativePath } from "@sdw/core/path-safety";
+import { checkRelativePath } from "@sdw/core/sync";
+import { SHARED_DIR } from "@sdw/core/sync/layout";
+import { PNG_HEADER } from "@sdw/core/sync/protocol";
+import type { FeatureFlags } from "@sdw/core/workspace";
 import type { Context } from "hono";
 
-export async function downloadRoute(c: Context) {
+export async function downloadRoute(c: Context, features: FeatureFlags) {
   // Off unless SYNC_ENABLED is set: a disabled feature looks like a missing one.
-  if (!parseFeatureFlags(process.env).sync) return c.body(null, 404);
+  if (!features.sync) return c.body(null, 404);
 
   const filePath = c.req.query("path");
 

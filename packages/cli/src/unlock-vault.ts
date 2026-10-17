@@ -6,10 +6,12 @@
  * @sdw/core/vault and @sdw/infra, and are shared with the container's
  * boot-time auto-unlock, so both paths leave the system in the same state.
  */
-import { parseFeatureFlags } from "@sdw/core/features";
 import { WORKSPACE_VAULT, unlockVault } from "@sdw/core/vault";
+import { loadConfig } from "@sdw/core/workspace";
 import { gocryptfsVolume, interactiveUnlockExtras, workspaceUnlockHooks } from "@sdw/infra";
 import { readPassphrase } from "./lib/passphrase.ts";
+
+const config = loadConfig(process.env);
 
 const result = await unlockVault(
   WORKSPACE_VAULT,
@@ -17,8 +19,8 @@ const result = await unlockVault(
   {
     volume: gocryptfsVolume,
     hooks: [
-      ...workspaceUnlockHooks({ flags: parseFeatureFlags(process.env), announce: console.log }),
-      ...interactiveUnlockExtras(),
+      ...workspaceUnlockHooks({ flags: config.features, announce: console.log }),
+      ...interactiveUnlockExtras({ backupEnabled: Boolean(config.backup.RESTIC_REPOSITORY) }),
     ],
   },
 );

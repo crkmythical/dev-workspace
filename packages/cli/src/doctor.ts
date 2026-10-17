@@ -1,23 +1,25 @@
 #!/usr/bin/env bun
 import { existsSync, readFileSync } from "node:fs";
+import { BACKUP_STATE_DIR, evaluateBackupGate, planDoctorBackupStatus } from "@sdw/core/backup";
 import {
-  CLASH_HTTP_PORT,
-  CODE_SERVER_PORT,
-  DESKTOP_WEB_ROOT,
-  PENTEST_CIPHER_DIR,
-  PENTEST_MOUNT,
+  type DesktopTarget,
   SELKIES_DISPLAY,
   SELKIES_STREAM_PORT,
-  SYNC_SERVICE_PORT,
-  VAULT_CIPHER_DIR,
-  VAULT_SYNC_STATE_DIR,
+  SELKIES_WEB_ROOT,
   VNC_DISPLAY,
   VNC_STREAM_PORT,
-  WORKSPACE_MOUNT,
-} from "@sdw/core/constants";
-import { type DesktopTarget, desktopAnchor } from "@sdw/core/desktop";
-import { parseFeatureFlags } from "@sdw/core/features";
-import type { DoctorResult } from "@sdw/core/types";
+  desktopAnchor,
+} from "@sdw/core/desktop";
+import { CLASH_HTTP_PORT } from "@sdw/core/egress";
+import { WORKSPACE_MOUNT } from "@sdw/core/shared/layout";
+import { SYNC_SERVICE_PORT } from "@sdw/core/sync/layout";
+import {
+  PENTEST_CIPHER_DIR,
+  PENTEST_MOUNT,
+  VAULT_CIPHER_DIR,
+  VAULT_SYNC_STATE_DIR,
+} from "@sdw/core/vault";
+import { CODE_SERVER_PORT, type DoctorResult, loadConfig } from "@sdw/core/workspace";
 import { installedStacks } from "@sdw/infra";
 /**
  * doctor — Workspace health check
@@ -45,7 +47,7 @@ results.push(
 const mountCheck = await $`mountpoint -q ${WORKSPACE_MOUNT}`.quiet().nothrow();
 results.push(
   mountCheck.exitCode === 0
-    ? { component: "Vault mount", status: "ok", detail: "/workspace mounted" }
+    ? { component: "Vault mount", status: "ok", detail: `${WORKSPACE_MOUNT} mounted` }
     : { component: "Vault mount", status: "warn", detail: "not mounted — run unlock-vault" },
 );
 
@@ -65,7 +67,8 @@ results.push(
 );
 
 // 4. Sync service (an optional feature: off unless SYNC_ENABLED is set)
-if (parseFeatureFlags(process.env).sync) {
+const config = loadConfig(process.env);
+if (config.features.sync) {
   const syncProbe =
     await $`curl -s --connect-timeout 2 http://127.0.0.1:${SYNC_SERVICE_PORT}/sync/api/doctor -o /dev/null`
       .quiet()
@@ -161,18 +164,18 @@ for (const target of installedStacks()) {
     // static client is invisible to a port probe yet fatal (426/white-screen).
     // KasmVNC serves its own client from the same port, so this check is N/A there.
     if (!meta.servesOwnClient) {
-      const clientExists = existsSync(`${DESKTOP_WEB_ROOT}/index.html`);
+      const clientExists = existsSync(`${SELKIES_WEB_ROOT}/index.html`);
       results.push(
         clientExists
           ? {
               component: "Desktop client (static)",
               status: "ok",
-              detail: `${DESKTOP_WEB_ROOT}/index.html present`,
+              detail: `${SELKIES_WEB_ROOT}/index.html present`,
             }
           : {
               component: "Desktop client (static)",
               status: "warn",
-              detail: `${DESKTOP_WEB_ROOT}/index.html MISSING — browser will get 426`,
+              detail: `${SELKIES_WEB_ROOT}/index.html MISSING — browser will get 426`,
             },
       );
     }
@@ -230,9 +233,8 @@ if (existsSync(`${PENTEST_CIPHER_DIR}/gocryptfs.conf`)) {
 }
 
 // 8. Backup (S3/restic)
-import { BACKUP_STATE_DIR, evaluateBackupGate, planDoctorBackupStatus } from "@sdw/core";
 
-const backupGate = evaluateBackupGate(process.env);
+const backupGate = evaluateBackupGate(config.backup);
 const backupLastSuccessFile = `${BACKUP_STATE_DIR}/last-success`;
 const backupFailuresFile = `${BACKUP_STATE_DIR}/consecutive-failures`;
 const backupLastSuccess = existsSync(backupLastSuccessFile)
@@ -277,7 +279,7 @@ for (const r of results) {
 console.log(hasFailure ? "\nSome checks failed." : "\nAll checks passed.");
 
 // Warnings
-if (!process.env.VAULT_GIT_REPO) {
+if (!config.git.vaultRepo) {
   console.log("\n⚠ VAULT_GIT_REPO not configured — vault data is NOT backed up.");
   console.log("  If Docker Desktop updates or volumes are lost, data is gone.");
   console.log("  Set VAULT_GIT_REPO in .env to enable auto-backup.");

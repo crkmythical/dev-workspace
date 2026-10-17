@@ -3,8 +3,13 @@
  * Moved from cli/lib/vault.ts; the passphrase prompt stays in the CLI.
  */
 import { existsSync, mkdirSync } from "node:fs";
-import { DESTRUCT_COMPLETED_PATH } from "@sdw/core/constants";
-import type { UnmountMode, VaultSpec, VaultState, VolumeDriver } from "@sdw/core/vault";
+import {
+  DESTRUCT_COMPLETED_PATH,
+  type UnmountMode,
+  type VaultSpec,
+  type VaultState,
+  type VolumeDriver,
+} from "@sdw/core/vault";
 import { $ } from "bun";
 
 /** Check if a path is a FUSE mountpoint. */

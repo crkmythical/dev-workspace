@@ -6,7 +6,11 @@
  * Supported: firefox, chromium, idea, burpsuite, wireshark
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { DESKTOP_APPS_DIR, DESKTOP_APPS_REGISTRY } from "@sdw/core/constants";
+import {
+  DESKTOP_APPLICATIONS_DIR,
+  DESKTOP_APPS_DIR,
+  DESKTOP_APPS_REGISTRY,
+} from "@sdw/core/desktop";
 import { $ } from "bun";
 
 interface AppDef {
@@ -132,7 +136,7 @@ if (app.type === "apt") {
 // desktop sessions (selkies on :1 and kasmvnc on :2) — XFCE reads
 // /usr/share/applications regardless of per-stack HOME. Writing into a single
 // stack's HOME would hide the app from the other desktop.
-const appsDir = "/usr/share/applications";
+const appsDir = DESKTOP_APPLICATIONS_DIR;
 mkdirSync(appsDir, { recursive: true });
 writeFileSync(`${appsDir}/${appName}.desktop`, app.desktopEntry);
 

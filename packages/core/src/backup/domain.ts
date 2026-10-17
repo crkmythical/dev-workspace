@@ -15,9 +15,6 @@ export const BACKUP_DEBOUNCE_MS = 10_000;
  *  (safety net for inotify unreliability on gocryptfs FUSE). */
 export const BACKUP_FALLBACK_INTERVAL_MS = 300_000;
 
-/** Runtime state directory (non-FUSE, container-local). Loss on restart is non-fatal. */
-export const BACKUP_STATE_DIR = "/var/run/backup-state";
-
 /** Consecutive failures before writing a notification to /workspace/.notifications/. */
 export const BACKUP_FAILURE_THRESHOLD = 3;
 
@@ -96,6 +93,9 @@ export interface PruneState {
   nowMs: number;
 }
 
+/** Any string environment, e.g. process.env. */
+export type EnvLike = Readonly<Record<string, string | undefined>>;
+
 export interface BackupGateEnv {
   RESTIC_REPOSITORY?: string;
   RESTIC_PASSWORD?: string;
@@ -159,7 +159,7 @@ export function backoffDelayMs(consecutiveFailures: number): number {
 }
 
 /** Evaluate the opt-in gate from environment variables. */
-export function evaluateBackupGate(env: BackupGateEnv): GateResult {
+export function evaluateBackupGate(env: BackupGateEnv | EnvLike): GateResult {
   if (!env.RESTIC_REPOSITORY) return { status: "dormant" };
   const missing: string[] = [];
   if (!env.RESTIC_PASSWORD) missing.push("RESTIC_PASSWORD");

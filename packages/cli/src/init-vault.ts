@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 import { existsSync } from "node:fs";
-import { VAULT_CIPHER_DIR, WORKSPACE_MOUNT } from "@sdw/core/constants";
-import { decide } from "@sdw/core/vault";
+import { WORKSPACE_MOUNT } from "@sdw/core/shared/layout";
+import { VAULT_CIPHER_DIR, decide } from "@sdw/core/vault";
+import { loadConfig } from "@sdw/core/workspace";
 /**
  * init-vault — One-time gocryptfs vault initialization
  */
@@ -26,8 +27,9 @@ if (initResult.exitCode !== 0) {
 }
 
 // Init git repo
-await $`git config --global user.email "${process.env.GIT_USER_EMAIL || "vault@local"}"`.quiet();
-await $`git config --global user.name "${process.env.GIT_USER_NAME || "Vault"}"`.quiet();
+const { git } = loadConfig(process.env);
+await $`git config --global user.email "${git.userEmail ?? "vault@local"}"`.quiet();
+await $`git config --global user.name "${git.userName ?? "Vault"}"`.quiet();
 await $`cd ${VAULT_CIPHER_DIR} && git init -b main`.quiet();
 
 // Write .gitignore
@@ -57,7 +59,7 @@ await Bun.write(
 await $`cd ${VAULT_CIPHER_DIR} && git add -A && git commit -q -m "init vault"`.quiet();
 
 // Push to remote if configured
-const vaultRepo = process.env.VAULT_GIT_REPO;
+const vaultRepo = git.vaultRepo;
 if (vaultRepo) {
   await $`cd ${VAULT_CIPHER_DIR} && git remote add origin ${vaultRepo} && git push -u origin main`
     .quiet()

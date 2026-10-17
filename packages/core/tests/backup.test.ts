@@ -7,7 +7,6 @@ import {
   BACKUP_FALLBACK_INTERVAL_MS,
   BACKUP_PRUNE_CADENCE_MS,
   BACKUP_STALENESS_MS,
-  BACKUP_STATE_DIR,
   backoffDelayMs,
   evaluateBackupGate,
   isExcludedPath,
@@ -15,7 +14,8 @@ import {
   planDoctorBackupStatus,
   planPrune,
   shouldNotify,
-} from "../src/backup.ts";
+} from "../src/backup/domain.ts";
+import { BACKUP_STATE_DIR } from "../src/backup/layout.ts";
 
 const NOW = 1_700_000_000_000;
 

@@ -19,7 +19,7 @@ import {
   planDoctorBackupStatus,
   planPrune,
   shouldNotify,
-} from "../src/backup.ts";
+} from "../src/backup/domain.ts";
 
 // ─── Arbitraries ─────────────────────────────────────────────────────────────
 
@@ -223,9 +223,9 @@ describe("Feature: realtime-backup-s3, Property 7: Opt-in gate evaluation", () =
 describe("Feature: realtime-backup-s3, Property 8: Doctor backup status", () => {
   it("returns correct status for all state combinations", () => {
     const arbGateResult: fc.Arbitrary<GateResult> = fc.oneof(
-      fc.constant({ status: "dormant" as const }),
-      fc.constant({ status: "enabled" as const }),
-      fc.constant({ status: "misconfigured" as const, missing: ["RESTIC_PASSWORD"] }),
+      fc.constant<GateResult>({ status: "dormant" }),
+      fc.constant<GateResult>({ status: "enabled" }),
+      fc.constant<GateResult>({ status: "misconfigured", missing: ["RESTIC_PASSWORD"] }),
     );
 
     const arbDoctorState: fc.Arbitrary<DoctorBackupState> = fc.record({

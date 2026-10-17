@@ -8,11 +8,12 @@
  *
  * The vault passphrase is taken from $PASSWORD if set, else prompted / piped.
  */
-import { parseFeatureFlags } from "@sdw/core/features";
+import { loadConfig } from "@sdw/core/workspace";
 import { deriveDestructKey, destructKeyToPassphrase } from "@sdw/infra";
 import { readPassphrase } from "./lib/passphrase.ts";
 
-const passphrase = await readPassphrase("PASSWORD", "Vault passphrase: ");
+const config = loadConfig(process.env);
+const passphrase = await readPassphrase(config.password, "Vault passphrase: ");
 if (!passphrase) {
   console.error("ERROR: Passphrase cannot be empty.");
   process.exit(1);
@@ -20,6 +21,6 @@ if (!passphrase) {
 
 console.log(destructKeyToPassphrase(deriveDestructKey(passphrase)));
 
-if (!parseFeatureFlags(process.env).remoteDestruct) {
+if (!config.features.remoteDestruct) {
   console.error("Note: REMOTE_DESTRUCT_ENABLED is not set, so the remote endpoint is off.");
 }

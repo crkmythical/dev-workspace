@@ -17,19 +17,20 @@ import {
   BACKUP_KEEP_HOURLY,
   BACKUP_KEEP_WEEKLY,
   BACKUP_STATE_DIR,
-  WORKSPACE_MOUNT,
   backoffDelayMs,
   evaluateBackupGate,
   isExcludedPath,
   planDebounce,
   planPrune,
   shouldNotify,
-} from "@sdw/core";
-import { $ } from "bun";
+} from "@sdw/core/backup";
+import { WORKSPACE_MOUNT } from "@sdw/core/shared/layout";
+import { loadConfig } from "@sdw/core/workspace";
+import { $, type Subprocess } from "bun";
 
 // ─── Pre-flight ──────────────────────────────────────────────────────────────
 
-const gate = evaluateBackupGate(process.env);
+const gate = evaluateBackupGate(loadConfig(process.env).backup);
 if (gate.status === "dormant") {
   console.log("Backup not configured (RESTIC_REPOSITORY absent). Exiting cleanly.");
   process.exit(0);
@@ -56,7 +57,7 @@ let pendingDuringFlight = false;
 let consecutiveFailures = loadFailureCount();
 let lastFailureMs: number | null = null;
 let stopping = false;
-let resticProc: ReturnType<typeof Bun.spawn> | null = null;
+let resticProc: Subprocess<"ignore", "pipe", "pipe"> | null = null;
 
 // ─── inotify watcher ─────────────────────────────────────────────────────────
 

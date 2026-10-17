@@ -1,23 +1,4 @@
 #!/usr/bin/env bun
-import {
-  CLASH_CONTROLLER_PORT,
-  CLASH_HTTP_PORT,
-  DESKTOP_DEFAULT_RESOLUTION,
-  SELKIES_HOME,
-  VAULT_CIPHER_DIR,
-  VNC_HOME,
-} from "@sdw/core/constants";
-import { parseFeatureFlags } from "@sdw/core/features";
-import { WORKSPACE_VAULT, unlockVault } from "@sdw/core/vault";
-import {
-  cleanupStaleMount,
-  ensureKasmPasswd,
-  gocryptfsVolume,
-  initVault,
-  installedStacks,
-  isInitialized,
-  workspaceUnlockHooks,
-} from "@sdw/infra";
 /**
  * entrypoint-main — Container startup logic (called from entrypoint.sh)
  *
@@ -31,8 +12,41 @@ import {
  * 8. Generate auth + vault + desktop + backup
  * 9. exec supervisord
  */
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { DESKTOP_CACHE_DIR, SELKIES_HOME, VNC_HOME } from "@sdw/core/desktop";
+import {
+  CLASH_BIN,
+  CLASH_CONFIG_PATH,
+  CLASH_CONTROLLER_PORT,
+  CLASH_DIR,
+  CLASH_HTTP_PORT,
+  CLASH_PROVIDERS_DIR,
+  CLASH_TEMPLATE_PATH,
+} from "@sdw/core/egress";
+import { WORKSPACE_MOUNT } from "@sdw/core/shared/layout";
+import { PENTEST_MOUNT, VAULT_CIPHER_DIR, WORKSPACE_VAULT, unlockVault } from "@sdw/core/vault";
+import {
+  CODE_SERVER_CONFIG_DIR,
+  CODE_SERVER_CONFIG_PATH,
+  CODE_SERVER_PORT,
+  SUPERVISORD_BIN,
+  SUPERVISORD_CONF,
+  envValidationError,
+  findMissingRequiredEnv,
+  loadConfig,
+} from "@sdw/core/workspace";
+import {
+  cleanupStaleMount,
+  ensureKasmPasswd,
+  gocryptfsVolume,
+  initVault,
+  installedStacks,
+  isInitialized,
+  workspaceUnlockHooks,
+} from "@sdw/infra";
 import { $ } from "bun";
-import { envValidationError, findMissingRequiredEnv } from "./lib/env-validate.ts";
+
+const config = loadConfig(process.env);
 
 // 0. Defense-in-depth env validation (mirrors entrypoint.sh pre-flight).
 const missingEnv = findMissingRequiredEnv(process.env);
@@ -49,33 +63,30 @@ if (envError) {
 // or an edited compose would otherwise silently break the desktop. supervisord
 // inherits this process env, so setting it here is the single safety net.
 if (!process.env.DESKTOP_RESOLUTION) {
-  process.env.DESKTOP_RESOLUTION = DESKTOP_DEFAULT_RESOLUTION;
+  process.env.DESKTOP_RESOLUTION = config.desktopResolution;
 }
 
 // 1. Cleanup stale FUSE mounts from previous container lifecycle
-await cleanupStaleMount("/workspace");
-await cleanupStaleMount("/pentest/rootfs");
+await cleanupStaleMount(WORKSPACE_MOUNT);
+await cleanupStaleMount(PENTEST_MOUNT);
 
 // 2. Generate Clash config from template
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-const subUrl = process.env.CLASH_SUBSCRIPTION_URL;
-if (subUrl) {
-  const templatePath = "/etc/clash/config.yaml.template";
-  if (existsSync(templatePath)) {
-    const template = readFileSync(templatePath, "utf-8");
-    const config = template.replace("{{CLASH_SUBSCRIPTION_URL}}", subUrl);
-    mkdirSync("/etc/clash/providers", { recursive: true });
-    writeFileSync("/etc/clash/config.yaml", config);
+if (config.clashSubscriptionUrl) {
+  if (existsSync(CLASH_TEMPLATE_PATH)) {
+    const template = readFileSync(CLASH_TEMPLATE_PATH, "utf-8");
+    const rendered = template.replace("{{CLASH_SUBSCRIPTION_URL}}", config.clashSubscriptionUrl);
+    mkdirSync(CLASH_PROVIDERS_DIR, { recursive: true });
+    writeFileSync(CLASH_CONFIG_PATH, rendered);
     console.log("Clash config generated from template.");
   }
 }
 
 // 3. Git globals (optional — skip if not configured)
-if (process.env.GIT_USER_NAME) {
-  await $`git config --global user.name "${process.env.GIT_USER_NAME}"`.quiet();
+if (config.git.userName) {
+  await $`git config --global user.name "${config.git.userName}"`.quiet();
 }
-if (process.env.GIT_USER_EMAIL) {
-  await $`git config --global user.email "${process.env.GIT_USER_EMAIL}"`.quiet();
+if (config.git.userEmail) {
+  await $`git config --global user.email "${config.git.userEmail}"`.quiet();
 }
 await $`git config --global http.proxy http://127.0.0.1:${CLASH_HTTP_PORT}`.quiet();
 await $`git config --global https.proxy http://127.0.0.1:${CLASH_HTTP_PORT}`.quiet();
@@ -85,7 +96,7 @@ await $`sysctl -w fs.inotify.max_user_watches=524288`.quiet().nothrow();
 
 // 5. Start Clash
 console.log("Starting Clash...");
-Bun.spawn(["/usr/bin/clash", "-d", "/etc/clash"], { stdout: "ignore", stderr: "ignore" });
+Bun.spawn([CLASH_BIN, "-d", CLASH_DIR], { stdout: "ignore", stderr: "ignore" });
 
 let ready = false;
 for (let i = 0; i < 30; i++) {
@@ -149,22 +160,21 @@ console.log(
 );
 
 // 8. Generate auth for desktop and code-server
-const csConfigPath = "/root/.config/code-server/config.yaml";
-const envPassword = process.env.PASSWORD;
+const envPassword = config.password;
 let masterPassword: string;
-if (!existsSync(csConfigPath) || envPassword) {
-  mkdirSync("/root/.config/code-server", { recursive: true });
+if (!existsSync(CODE_SERVER_CONFIG_PATH) || envPassword) {
+  mkdirSync(CODE_SERVER_CONFIG_DIR, { recursive: true });
   masterPassword = envPassword || crypto.randomUUID().replace(/-/g, "").slice(0, 24);
   writeFileSync(
-    csConfigPath,
-    `bind-addr: 127.0.0.1:8082\nauth: password\npassword: ${masterPassword}\ncert: false\n`,
+    CODE_SERVER_CONFIG_PATH,
+    `bind-addr: 127.0.0.1:${CODE_SERVER_PORT}\nauth: password\npassword: ${masterPassword}\ncert: false\n`,
   );
   if (!envPassword) {
     console.log(`Generated password: ${masterPassword}`);
     console.log("  (set PASSWORD in .env to use a fixed password)");
   }
 } else {
-  const csConfig = readFileSync(csConfigPath, "utf-8");
+  const csConfig = readFileSync(CODE_SERVER_CONFIG_PATH, "utf-8");
   const m = csConfig.match(/^password:\s*(.+)$/m);
   masterPassword = m ? m[1].trim() : crypto.randomUUID().replace(/-/g, "").slice(0, 24);
 }
@@ -195,7 +205,7 @@ if (!vaultInitialized) {
 // on boot too. Hooks that need a running supervisord are interactive-only.
 const unlock = await unlockVault(WORKSPACE_VAULT, async () => masterPassword, {
   volume: gocryptfsVolume,
-  hooks: workspaceUnlockHooks({ flags: parseFeatureFlags(process.env), announce: console.log }),
+  hooks: workspaceUnlockHooks({ flags: config.features, announce: console.log }),
 });
 if (unlock.status === "unlocked") {
   console.log("Vault unlocked.");
@@ -205,7 +215,7 @@ if (unlock.status === "unlocked") {
   // 8c. Auto-start desktop(s): create per-stack HOME dirs + flip autostart=true
   // on every installed desktop group's supervisor conf so supervisord starts
   // them automatically. "both" mode → both desktop.conf and vnc.conf present.
-  mkdirSync("/tmp/.desktop-cache", { recursive: true });
+  mkdirSync(DESKTOP_CACHE_DIR, { recursive: true });
   const stacks = installedStacks();
   if (stacks.includes("selkies")) {
     mkdirSync(`${SELKIES_HOME}/.local/share/applications`, { recursive: true });
@@ -223,7 +233,7 @@ if (unlock.status === "unlocked") {
     .nothrow();
 
   // 8d. Auto-start backup watcher (if configured via RESTIC_REPOSITORY)
-  if (process.env.RESTIC_REPOSITORY) {
+  if (config.backup.RESTIC_REPOSITORY) {
     // Auto-init repo if not yet initialized (idempotent).
     const initCheck = await $`restic snapshots --no-lock`.quiet().nothrow();
     if (initCheck.exitCode !== 0) {
@@ -269,7 +279,7 @@ console.log(`║  Auth:      user / ${masterPassword.padEnd(29)}║`);
 console.log("╚══════════════════════════════════════════════════╝");
 console.log("");
 console.log("Starting supervisord...");
-const proc = Bun.spawn(["/usr/bin/supervisord", "-c", "/etc/supervisor/supervisord.conf"], {
+const proc = Bun.spawn([SUPERVISORD_BIN, "-c", SUPERVISORD_CONF], {
   stdout: "inherit",
   stderr: "inherit",
   env: { ...process.env },

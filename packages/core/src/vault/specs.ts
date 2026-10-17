@@ -1,15 +1,10 @@
 /**
  * Deployment defaults for the two vault instances. Only composition roots
- * (cli / server / entrypoint) should import these; they are replaced by an
- * injected Config when constants stop being global.
+ * (cli / server / entrypoint) should import these.
  */
-import {
-  PENTEST_CIPHER_DIR,
-  PENTEST_MOUNT,
-  VAULT_CIPHER_DIR,
-  WORKSPACE_MOUNT,
-} from "../constants.ts";
+import { WORKSPACE_MOUNT } from "../shared/layout.ts";
 import type { VaultSpec } from "./domain.ts";
+import { PENTEST_CIPHER_DIR, PENTEST_MOUNT, VAULT_CIPHER_DIR } from "./layout.ts";
 
 export const WORKSPACE_VAULT: VaultSpec = {
   id: "workspace",

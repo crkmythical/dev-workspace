@@ -7,7 +7,7 @@
  *   - the `destruct-passphrase` command (re-derive the passphrase on demand)
  */
 import crypto from "node:crypto";
-import { AES_KEY_LENGTH, DESTRUCT_HKDF_INFO, DESTRUCT_HKDF_SALT } from "@sdw/core/constants";
+import { DESTRUCT_HKDF_INFO, DESTRUCT_HKDF_SALT, DESTRUCT_KEY_LENGTH } from "@sdw/core/vault";
 
 /**
  * Derive a 32-byte destruct key from the vault passphrase via HKDF-SHA256.
@@ -16,7 +16,13 @@ import { AES_KEY_LENGTH, DESTRUCT_HKDF_INFO, DESTRUCT_HKDF_SALT } from "@sdw/cor
  */
 export function deriveDestructKey(passphrase: string): Buffer {
   return Buffer.from(
-    crypto.hkdfSync("sha256", passphrase, DESTRUCT_HKDF_SALT, DESTRUCT_HKDF_INFO, AES_KEY_LENGTH),
+    crypto.hkdfSync(
+      "sha256",
+      passphrase,
+      DESTRUCT_HKDF_SALT,
+      DESTRUCT_HKDF_INFO,
+      DESTRUCT_KEY_LENGTH,
+    ),
   );
 }
 

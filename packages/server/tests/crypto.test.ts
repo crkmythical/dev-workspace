@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { buildAad } from "../../core/src/aad.ts";
+import { buildAad } from "@sdw/core/sync";
 import { decrypt, deriveKey, encrypt, keyFingerprint } from "../src/crypto.ts";
 
 describe("server/crypto", () => {

@@ -3,7 +3,13 @@
  * Uses WebCrypto AES-256-GCM with HKDF-derived key from vault passphrase.
  * Files are PNG-camouflaged for DLP evasion.
  */
-import { CHUNK_SIZE, NONCE_LENGTH, PNG_HEADER, SIZE_LIMIT, TAG_LENGTH } from "@sdw/core/constants";
+import {
+  CHUNK_SIZE,
+  NONCE_LENGTH,
+  PNG_HEADER,
+  SIZE_LIMIT,
+  TAG_LENGTH,
+} from "@sdw/core/sync/protocol";
 
 let syncKey: CryptoKey | null = null;
 let dirHandle: FileSystemDirectoryHandle | null = null;

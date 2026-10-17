@@ -8,9 +8,10 @@
  * that actually exist without knowing how the image was built.
  */
 import { existsSync, readFileSync } from "node:fs";
-import { VNC_HOME } from "@sdw/core/constants";
 import {
+  DESKTOP_STACK_MARKER_PATH,
   type DesktopTarget,
+  VNC_HOME,
   desktopAnchor,
   desktopGroup,
   desktopStartOrder,
@@ -20,14 +21,11 @@ import {
 } from "@sdw/core/desktop";
 import { $ } from "bun";
 
-/** Path to the build-time stack marker written by the Dockerfile. */
-const STACK_MARKER_PATH = "/etc/sdw-desktop-stack";
-
 /** Which stacks are installed in this image. */
 export function installedStacks(): readonly DesktopTarget[] {
   try {
-    const raw = existsSync(STACK_MARKER_PATH)
-      ? readFileSync(STACK_MARKER_PATH, "utf-8")
+    const raw = existsSync(DESKTOP_STACK_MARKER_PATH)
+      ? readFileSync(DESKTOP_STACK_MARKER_PATH, "utf-8")
       : undefined;
     return parseStackMarker(raw);
   } catch {

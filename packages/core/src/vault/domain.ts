@@ -70,6 +70,9 @@ export function decide(state: VaultState, cmd: VaultCommand): Decision {
 
 // --- vault-sync (ciphertext replication) ---
 
+/** Consecutive failed pushes before a notification is written. */
+export const SYNC_FAILURE_THRESHOLD = 3;
+
 export interface SyncState {
   /** Is the workspace mount present? */
   mounted: boolean;

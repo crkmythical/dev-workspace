@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import fc from "fast-check";
-import { checkRelativePath, isSafeRelativePath } from "../src/path-safety.ts";
+import { checkRelativePath, isSafeRelativePath } from "../src/sync/path-safety.ts";
 
 /**
  * Property tests for path-safety (T1 — upload/download traversal hardening).

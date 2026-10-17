@@ -1,12 +1,10 @@
 #!/usr/bin/env bun
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import {
-  CLASH_SOCKS_PORT,
-  CREDENTIALS_DIR,
-  SYNC_PASSPHRASE_PATH,
-  VAULT_CIPHER_DIR,
-  WORKSPACE_MOUNT,
-} from "@sdw/core/constants";
+import { CLASH_BIN, CLASH_CONFIG_PATH, CLASH_DIR, CLASH_SOCKS_PORT } from "@sdw/core/egress";
+import { CREDENTIALS_DIR, WORKSPACE_MOUNT } from "@sdw/core/shared/layout";
+import { SYNC_PASSPHRASE_PATH } from "@sdw/core/sync/layout";
+import { VAULT_CIPHER_DIR } from "@sdw/core/vault";
+import { loadConfig } from "@sdw/core/workspace";
 /**
  * setup — Interactive or automated workspace configuration
  *
@@ -16,6 +14,8 @@ import {
  *   setup --clash-url URL    # Set specific values non-interactively
  */
 import { $ } from "bun";
+
+const config = loadConfig(process.env);
 
 // --- Parse args ---
 const args = process.argv.slice(2);
@@ -70,23 +70,23 @@ console.log("\n=== Secure Dev Workspace Setup ===\n");
 
 // Step 1: Clash subscription
 console.log("[1/4] Clash 代理订阅");
-let clashUrl = getArg("--clash-url") || process.env.CLASH_SUBSCRIPTION_URL || "";
+let clashUrl = getArg("--clash-url") || config.clashSubscriptionUrl;
 if (!clashUrl && !isAuto) {
   clashUrl = ask("  Clash 订阅链接 (回车使用默认)", DEFAULT_CLASH_URL);
 }
 if (!clashUrl) clashUrl = DEFAULT_CLASH_URL;
 if (clashUrl) {
   // Write subscription directly (don't test — network may not be available yet)
-  const fetchResult = await $`curl -fsSL --max-time 15 "${clashUrl}" -o /etc/clash/config.yaml.new`
+  const fetchResult = await $`curl -fsSL --max-time 15 "${clashUrl}" -o ${CLASH_CONFIG_PATH}.new`
     .quiet()
     .nothrow();
   if (fetchResult.exitCode === 0) {
-    await $`mv /etc/clash/config.yaml.new /etc/clash/config.yaml`.quiet();
+    await $`mv ${CLASH_CONFIG_PATH}.new ${CLASH_CONFIG_PATH}`.quiet();
     console.log("  ✓ 订阅配置已更新");
     // Restart clash
     await $`pkill -x clash`.quiet().nothrow();
     await Bun.sleep(1000);
-    Bun.spawn(["/usr/bin/clash", "-d", "/etc/clash"], { stdout: "ignore", stderr: "ignore" });
+    Bun.spawn([CLASH_BIN, "-d", CLASH_DIR], { stdout: "ignore", stderr: "ignore" });
     await Bun.sleep(3000);
     if (await testProxy()) {
       console.log("  ✓ 代理连接正常");
@@ -122,8 +122,8 @@ if (existsSync(`${VAULT_CIPHER_DIR}/gocryptfs.conf`)) {
       if (r.exitCode === 0) console.log("  ✓ Vault 初始化完成");
     }
     // Init git repo
-    await $`git config --global user.email "${process.env.GIT_USER_EMAIL || "vault@local"}"`.quiet();
-    await $`git config --global user.name "${process.env.GIT_USER_NAME || "Vault"}"`.quiet();
+    await $`git config --global user.email "${config.git.userEmail ?? "vault@local"}"`.quiet();
+    await $`git config --global user.name "${config.git.userName ?? "Vault"}"`.quiet();
     await $`cd ${VAULT_CIPHER_DIR} && git init -b main`.quiet();
     const gitignore =
       "node_modules/\ntarget/\nbuild/\ndist/\n.cache/\n**/*.log\n.idea/\n.vscode/\n__pycache__/\n.DS_Store\n*.tmp\n*.swp\nshared/\n";
@@ -140,7 +140,7 @@ if (existsSync(`${VAULT_CIPHER_DIR}/gocryptfs.conf`)) {
 
 // Step 3: GitHub backup
 console.log("\n[3/4] GitHub 备份 (可选)");
-let vaultRepo = getArg("--vault-repo") || process.env.VAULT_GIT_REPO || "";
+let vaultRepo = getArg("--vault-repo") || config.git.vaultRepo || "";
 if (!vaultRepo && !isAuto) {
   console.log("  备份 vault 密文到 GitHub，丢失数据可恢复。");
   console.log("  格式: https://ghp_TOKEN@github.com/user/repo.git");
@@ -165,8 +165,8 @@ if (!vaultRepo) {
 
 // Step 4: Git identity
 console.log("\n[4/4] Git 身份");
-let gitName = getArg("--git-name") || process.env.GIT_USER_NAME || "";
-let gitEmail = getArg("--git-email") || process.env.GIT_USER_EMAIL || "";
+let gitName = getArg("--git-name") || config.git.userName || "";
+let gitEmail = getArg("--git-email") || config.git.userEmail || "";
 if (!gitName && !isAuto) gitName = ask("  你的名字", "Developer");
 if (!gitEmail && !isAuto) gitEmail = ask("  你的邮箱", "dev@local");
 if (gitName) await $`git config --global user.name "${gitName}"`.quiet();

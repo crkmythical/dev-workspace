@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { RateLimiter } from "../src/rate-limit.ts";
+import { RateLimiter } from "../src/shared/rate-limit.ts";
 
 const CONFIG = { windowMs: 60_000, perKeyMax: 3, globalMax: 10 };
 

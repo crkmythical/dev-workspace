@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { ReplayWindow } from "../src/replay-window.ts";
+import { ReplayWindow } from "../src/sync/replay-window.ts";
 
 describe("ReplayWindow", () => {
   it("accepts fresh nonce", () => {

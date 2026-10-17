@@ -1,4 +1,5 @@
-import { SYNC_SERVICE_PORT } from "@sdw/core/constants";
+import { SPA_DIST_DIR, SYNC_SERVICE_PORT } from "@sdw/core/sync/layout";
+import { loadConfig } from "@sdw/core/workspace";
 /**
  * Sync service — Hono + Bun.serve()
  * Serves: SPA static files, encrypted upload/download API, doctor endpoint, WebSocket events.
@@ -9,26 +10,27 @@ import { doctorRoute } from "./routes/doctor.ts";
 import { downloadRoute } from "./routes/download.ts";
 import { uploadRoute } from "./routes/upload.ts";
 
+const { features } = loadConfig(process.env);
 const app = new Hono();
 
 // Static SPA
 app.get("/sync/", async (c) => {
-  const file = Bun.file("/opt/workspace/packages/spa/dist/index.html");
+  const file = Bun.file(`${SPA_DIST_DIR}/index.html`);
   if (await file.exists()) return c.html(await file.text());
   return c.html("<h1>Sync Page</h1><p>Build with: bun run build:spa</p>");
 });
 app.get("/sync/assets/*", async (c) => {
-  const filePath = c.req.path.replace("/sync/", "/opt/workspace/packages/spa/dist/");
+  const filePath = c.req.path.replace("/sync/", `${SPA_DIST_DIR}/`);
   const file = Bun.file(filePath);
   if (await file.exists()) return new Response(file);
   return c.notFound();
 });
 
 // API routes
-app.post("/sync/api/upload", uploadRoute);
-app.get("/sync/api/download", downloadRoute);
-app.get("/sync/api/doctor", doctorRoute);
-app.post("/sync/api/destruct", destructRoute);
+app.post("/sync/api/upload", (c) => uploadRoute(c, features));
+app.get("/sync/api/download", (c) => downloadRoute(c, features));
+app.get("/sync/api/doctor", (c) => doctorRoute(c, features));
+app.post("/sync/api/destruct", (c) => destructRoute(c, features));
 
 // WebSocket clients
 const wsClients = new Set<unknown>();

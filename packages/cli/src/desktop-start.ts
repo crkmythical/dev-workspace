@@ -8,8 +8,9 @@
  *   desktop-start vnc        start only the kasmvnc stack (/vnc/)
  */
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { DESKTOP_CACHE_DIR, SELKIES_HOME, VNC_HOME, WORKSPACE_MOUNT } from "@sdw/core/constants";
-import type { DesktopTarget } from "@sdw/core/desktop";
+import { DESKTOP_CACHE_DIR, type DesktopTarget, SELKIES_HOME, VNC_HOME } from "@sdw/core/desktop";
+import { WORKSPACE_MOUNT } from "@sdw/core/shared/layout";
+import { CODE_SERVER_CONFIG_PATH } from "@sdw/core/workspace";
 import {
   ensureKasmPasswd,
   installedStacks,
@@ -30,9 +31,8 @@ const URL_FOR: Record<DesktopTarget, string> = {
  * (the entrypoint already does this on auto-start). Returns "" if unavailable.
  */
 function masterPasswordFromConfig(): string {
-  const csConfigPath = "/root/.config/code-server/config.yaml";
-  if (!existsSync(csConfigPath)) return "";
-  const m = readFileSync(csConfigPath, "utf-8").match(/^password:\s*(.+)$/m);
+  if (!existsSync(CODE_SERVER_CONFIG_PATH)) return "";
+  const m = readFileSync(CODE_SERVER_CONFIG_PATH, "utf-8").match(/^password:\s*(.+)$/m);
   return m ? m[1].trim() : "";
 }
 

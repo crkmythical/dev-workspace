@@ -8,10 +8,11 @@
  * The entrypoint handles auto-init on first boot; this command exists as a
  * manual fallback/diagnostic tool.
  */
-import { evaluateBackupGate } from "@sdw/core";
+import { evaluateBackupGate } from "@sdw/core/backup";
+import { loadConfig } from "@sdw/core/workspace";
 import { $ } from "bun";
 
-const gate = evaluateBackupGate(process.env);
+const gate = evaluateBackupGate(loadConfig(process.env).backup);
 if (gate.status === "dormant") {
   console.error("RESTIC_REPOSITORY not configured. Nothing to initialize.");
   process.exit(1);

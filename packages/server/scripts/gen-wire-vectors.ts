@@ -16,9 +16,8 @@
  * Run from repo root: bun run packages/server/scripts/gen-wire-vectors.ts
  */
 import crypto from "node:crypto";
-import { buildAad, buildChunkAad } from "../../core/src/aad.ts";
-import { HKDF_INFO, HKDF_SALT, PNG_HEADER } from "../../core/src/constants.ts";
-import { checkRelativePath } from "../../core/src/path-safety.ts";
+import { buildAad, buildChunkAad, checkRelativePath } from "@sdw/core/sync";
+import { HKDF_INFO, HKDF_SALT, PNG_HEADER } from "@sdw/core/sync/protocol";
 import { decrypt, deriveKey } from "../src/crypto.ts";
 
 const hex = (b: Uint8Array | Buffer): string => Buffer.from(b).toString("hex");

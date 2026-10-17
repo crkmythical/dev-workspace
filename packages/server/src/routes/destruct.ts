@@ -1,14 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
+import { RateLimiter } from "@sdw/core/shared/rate-limit";
 import {
   DESTRUCT_KEY_HASH_PATH,
   DESTRUCT_RATE_LIMIT_GLOBAL_MAX,
   DESTRUCT_RATE_LIMIT_MAX_ATTEMPTS,
   DESTRUCT_RATE_LIMIT_WINDOW_MS,
   DESTRUCT_RESPONSE_DELAY_MS,
-} from "@sdw/core/constants";
-import { parseFeatureFlags } from "@sdw/core/features";
-import { RateLimiter } from "@sdw/core/rate-limit";
-import { destroyWorkspace } from "@sdw/core/vault";
+  destroyWorkspace,
+} from "@sdw/core/vault";
+import type { FeatureFlags } from "@sdw/core/workspace";
 import { createDestroyDeps } from "@sdw/infra";
 import type { Context } from "hono";
 
@@ -32,11 +32,11 @@ function getClientIP(c: Context): string {
   return "unknown";
 }
 
-export async function destructRoute(c: Context): Promise<Response> {
+export async function destructRoute(c: Context, features: FeatureFlags): Promise<Response> {
   // Off unless REMOTE_DESTRUCT_ENABLED is set. Checked before anything else so a
   // disabled endpoint is indistinguishable from a missing one, even if a stale
   // key hash is still on the persistent volume.
-  if (!parseFeatureFlags(process.env).remoteDestruct) {
+  if (!features.remoteDestruct) {
     return c.body(null, 404);
   }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { buildAad, buildChunkAad, buildFinalizeAad } from "../src/aad.ts";
+import { buildAad, buildChunkAad, buildFinalizeAad } from "../src/sync/aad.ts";
 
 describe("buildAad", () => {
   it("joins op and timestamp", () => {

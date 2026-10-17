@@ -12,7 +12,7 @@
  * primary HOME-fd holder on the gocryptfs mount) stopped first. That guarantees
  * no process holds /workspace/.desktop* fds before a FUSE unmount (EBUSY safety).
  */
-import { SELKIES_STREAM_PORT, VNC_STREAM_PORT } from "../constants.ts";
+import { SELKIES_STREAM_PORT, VNC_STREAM_PORT } from "./layout.ts";
 
 /** A single desktop stack target. */
 export type DesktopTarget = "selkies" | "vnc";

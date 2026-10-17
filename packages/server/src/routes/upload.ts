@@ -2,18 +2,10 @@ import crypto from "node:crypto";
 import { existsSync } from "node:fs";
 import { appendFile, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { buildAad } from "@sdw/core/aad";
-import {
-  NONCE_LENGTH,
-  PNG_HEADER_SIZE,
-  SHARED_DIR,
-  SYNC_PASSPHRASE_PATH,
-  TAG_LENGTH,
-  UPLOAD_TRACKING_DIR,
-} from "@sdw/core/constants";
-import { parseFeatureFlags } from "@sdw/core/features";
-import { checkRelativePath } from "@sdw/core/path-safety";
-import { ReplayWindow } from "@sdw/core/replay-window";
+import { ReplayWindow, buildAad, checkRelativePath } from "@sdw/core/sync";
+import { SHARED_DIR, SYNC_PASSPHRASE_PATH, UPLOAD_TRACKING_DIR } from "@sdw/core/sync/layout";
+import { NONCE_LENGTH, PNG_HEADER_SIZE, TAG_LENGTH } from "@sdw/core/sync/protocol";
+import type { FeatureFlags } from "@sdw/core/workspace";
 import type { Context } from "hono";
 import { decrypt, deriveKey } from "../crypto.ts";
 
@@ -55,9 +47,9 @@ async function getSyncKey(): Promise<Buffer | null> {
   }
 }
 
-export async function uploadRoute(c: Context) {
+export async function uploadRoute(c: Context, features: FeatureFlags) {
   // Off unless SYNC_ENABLED is set: a disabled feature looks like a missing one.
-  if (!parseFeatureFlags(process.env).sync) return c.body(null, 404);
+  if (!features.sync) return c.body(null, 404);
 
   try {
     const key = await getSyncKey();

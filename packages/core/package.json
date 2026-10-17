@@ -3,17 +3,16 @@
   "version": "0.1.0",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./types": "./src/types.ts",
-    "./constants": "./src/constants.ts",
-    "./aad": "./src/aad.ts",
-    "./reconcile": "./src/reconcile.ts",
-    "./path-safety": "./src/path-safety.ts",
-    "./replay-window": "./src/replay-window.ts",
-    "./rate-limit": "./src/rate-limit.ts",
-    "./features": "./src/workspace/features.ts",
-    "./desktop": "./src/desktop/domain.ts",
-    "./vault": "./src/vault/index.ts"
+    "./backup": "./src/backup/index.ts",
+    "./desktop": "./src/desktop/index.ts",
+    "./egress": "./src/egress/index.ts",
+    "./shared/layout": "./src/shared/layout.ts",
+    "./shared/rate-limit": "./src/shared/rate-limit.ts",
+    "./sync": "./src/sync/index.ts",
+    "./sync/layout": "./src/sync/layout.ts",
+    "./sync/protocol": "./src/sync/protocol.ts",
+    "./vault": "./src/vault/index.ts",
+    "./workspace": "./src/workspace/index.ts"
   },
   "devDependencies": {
     "bun-types": "^1.2.0",
