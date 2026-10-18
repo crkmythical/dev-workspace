@@ -21,13 +21,18 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=en_US.UTF-8
 ENV TZ=Asia/Shanghai
 
-# Apt sources: Kali keeps its official repos (deb822 /etc/apt/sources.list.d/
-# kali.sources — do NOT delete it). Debian bases switch to APT_MIRROR: Aliyun by
-# default (fast inside mainland China, very slow elsewhere: build with
-# --build-arg APT_MIRROR=deb.debian.org there).
+# Apt sources. Kali keeps its official repos (deb822 /etc/apt/sources.list.d/
+# kali.sources — do NOT delete it); KALI_MIRROR only swaps the host inside it. The default,
+# the official redirector, picks a mirror by location and can pick a very slow one (~14 KB/s
+# was seen): build with e.g. --build-arg KALI_MIRROR=mirrors.tuna.tsinghua.edu.cn there.
+# Debian bases switch to APT_MIRROR: Aliyun by default (fast inside mainland China, very
+# slow elsewhere: build with --build-arg APT_MIRROR=deb.debian.org there).
 ARG APT_MIRROR=mirrors.aliyun.com
+ARG KALI_MIRROR=http.kali.org
 RUN . /etc/os-release && \
-    if [ "$ID" != "kali" ]; then \
+    if [ "$ID" = "kali" ]; then \
+      sed -i "s#http://http.kali.org/kali#http://${KALI_MIRROR}/kali#" /etc/apt/sources.list.d/kali.sources; \
+    else \
       rm -f /etc/apt/sources.list.d/*; \
       CN="${VERSION_CODENAME:-trixie}"; \
       { echo "deb http://${APT_MIRROR}/debian ${CN} main contrib non-free non-free-firmware"; \

@@ -69,11 +69,21 @@ export const CORE_ENV_GROUPS: readonly EnvGroup[] = [
       {
         name: "APT_MIRROR",
         doc: [
-          "Apt mirror host for Debian bases (Kali keeps its own repositories).",
+          "Apt mirror host for Debian bases (a Kali base uses KALI_MIRROR instead).",
           "  mirrors.aliyun.com  fast inside mainland China, very slow elsewhere (default)",
           "  deb.debian.org      the official CDN, for everywhere else",
         ],
         example: "mirrors.aliyun.com",
+      },
+      {
+        name: "KALI_MIRROR",
+        doc: [
+          "Apt mirror host for a Kali base (the same repositories, a different host).",
+          "  http.kali.org                    the official redirector, picks one by location (default)",
+          "  mirrors.tuna.tsinghua.edu.cn     a fast mirror inside mainland China",
+          "The redirector can pick a very slow mirror from some networks (~14 KB/s was seen).",
+        ],
+        example: "http.kali.org",
       },
       {
         name: "DESKTOP_STACK",

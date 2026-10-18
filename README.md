@@ -93,7 +93,7 @@ docker compose build
 docker compose up -d
 ```
 
-受限网络（例如需要镜像仓库）：把 `BASE_IMAGE` 指向可达的镜像地址即可。Debian 系基础镜像的 apt 源由 `APT_MIRROR` 决定，默认 `mirrors.aliyun.com`（大陆内很快，境外很慢），境外构建请设 `APT_MIRROR=deb.debian.org`；Kali 基础镜像沿用自己的源。
+受限网络（例如需要镜像仓库）：把 `BASE_IMAGE` 指向可达的镜像地址即可。Debian 系基础镜像的 apt 源由 `APT_MIRROR` 决定，默认 `mirrors.aliyun.com`（大陆内很快，境外很慢），境外构建请设 `APT_MIRROR=deb.debian.org`。Kali 基础镜像沿用 Kali 自己的源，主机由 `KALI_MIRROR` 决定，默认官方重定向 `http.kali.org`（按位置选镜像，个别网络下只有约 14 KB/s），慢的话设 `KALI_MIRROR=mirrors.tuna.tsinghua.edu.cn`。
 
 也可以不改 `.env`，直接命令行覆盖构建另一个 tag：
 
