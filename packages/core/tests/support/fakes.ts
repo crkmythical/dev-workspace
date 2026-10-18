@@ -71,6 +71,10 @@ export function fakeHolders(calls: string[]): HolderControl {
     async stopAll() {
       calls.push("holders.stopAll");
     },
+    async restore() {
+      calls.push("holders.restore");
+      return ["backup watcher"];
+    },
   };
 }
 

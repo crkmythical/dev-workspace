@@ -3,6 +3,7 @@ import {
   DESTROY_PHASES,
   type DestroyDeps,
   type UnlockHook,
+  cancelLock,
   destroyWorkspace,
   lockVault,
   unlockVault,
@@ -98,6 +99,22 @@ describe("lockVault", () => {
     const forced = await lockVault(WORKSPACE, deps, { mode: "lazy" });
     expect(forced).toEqual({ status: "locked" });
     expect(calls).toEqual(["holders.stopAll", "unmount:workspace:lazy"]);
+  });
+
+  it("a lock the user declines to force puts back what it stopped", async () => {
+    const calls: string[] = [];
+    const deps = {
+      volume: fakeVolume("unlocked", calls, { unmount: { graceful: false } }),
+      holders: fakeHolders(calls),
+    };
+    expect(await lockVault(WORKSPACE, deps)).toEqual({ status: "busy" });
+    expect(await cancelLock(deps)).toEqual(["backup watcher"]);
+    // Stopped first, unmount refused, then started again: in that order, and nothing else.
+    expect(calls).toEqual(["holders.stopAll", "unmount:workspace:graceful", "holders.restore"]);
+  });
+
+  it("has nothing to put back for holders that cannot be restored", async () => {
+    expect(await cancelLock({ holders: { stopAll: async () => {} } })).toEqual([]);
   });
 
   it("lets the volume tell the user what it had to do to release the mount", async () => {

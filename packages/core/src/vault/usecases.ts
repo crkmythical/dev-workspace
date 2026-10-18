@@ -54,6 +54,15 @@ export async function lockVault(
   return released ? { status: "locked" } : { status: "busy" };
 }
 
+/**
+ * The lock came back "busy" and the caller chose not to force it. The vault stays mounted, so
+ * what the attempt stopped (desktops, the backup watcher) must run again: left stopped, the
+ * workspace would go on without its backups and nobody would be told.
+ */
+export async function cancelLock(deps: Pick<LockDeps, "holders">): Promise<string[]> {
+  return (await deps.holders.restore?.()) ?? [];
+}
+
 // --- unlock ---
 
 export interface UnlockDeps {

@@ -5,7 +5,7 @@
  * Thin driving adapter over lockVault(): desktops and the backup watcher are
  * stopped first (they hold fds on the mount), then the vault is unmounted.
  */
-import { WORKSPACE_VAULT, lockVault } from "@sdw/core/vault";
+import { WORKSPACE_VAULT, cancelLock, lockVault } from "@sdw/core/vault";
 import { broadcastState, gocryptfsVolume, supervisorHolders } from "@sdw/infra";
 
 const deps = { volume: gocryptfsVolume, holders: supervisorHolders, log: console.log };
@@ -28,6 +28,9 @@ if (result.status === "busy") {
   const answer = prompt("Force unmount? [y/N]: ");
   if (answer?.toLowerCase() !== "y") {
     console.log("Aborted.");
+    // The vault stays mounted, so what the attempt stopped has to run again.
+    const restarted = await cancelLock(deps);
+    if (restarted.length > 0) console.log(`Started again: ${restarted.join(", ")}.`);
     process.exit(1);
   }
   const lazy = await lockVault(WORKSPACE_VAULT, deps, { mode: "lazy" });

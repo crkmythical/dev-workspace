@@ -33,6 +33,12 @@ export interface VolumeDriver {
 export interface HolderControl {
   /** Idempotent. Must not throw when nothing is running. */
   stopAll(): Promise<void>;
+  /**
+   * Start again what `stopAll` stopped, for a lock that then did not happen (the unmount was
+   * busy and the user declined to force it). Returns what it started, for the user to be told.
+   * Optional: a vault with nothing to stop has nothing to restore.
+   */
+  restore?(): Promise<string[]>;
 }
 
 export interface Shredder {
