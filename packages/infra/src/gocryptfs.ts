@@ -50,14 +50,31 @@ export async function initVault(cipherDir: string, passphrase?: string): Promise
   return result.exitCode === 0;
 }
 
+/** The gocryptfs command line for a mount. Pure, so it can be tested without FUSE. */
+export function gocryptfsMountArgs(
+  cipherDir: string,
+  mountPoint: string,
+  opts: { allowOther?: boolean } = {},
+): string[] {
+  return [
+    "gocryptfs",
+    "-q",
+    "-nonempty",
+    ...(opts.allowOther ? ["-allow_other"] : []),
+    cipherDir,
+    mountPoint,
+  ];
+}
+
 /** Mount gocryptfs vault. Returns { ok, stderr }. */
 export async function mountVault(
   cipherDir: string,
   mountPoint: string,
   passphrase: string,
+  opts: { allowOther?: boolean } = {},
 ): Promise<{ ok: boolean; stderr: string }> {
   mkdirSync(mountPoint, { recursive: true });
-  const proc = Bun.spawn(["gocryptfs", "-q", "-nonempty", cipherDir, mountPoint], {
+  const proc = Bun.spawn(gocryptfsMountArgs(cipherDir, mountPoint, opts), {
     stdin: new Response(`${passphrase}\n`).body!,
     stdout: "pipe",
     stderr: "pipe",
@@ -182,7 +199,9 @@ export const gocryptfsVolume: VolumeDriver = {
   },
   init: (spec, passphrase) => initVault(spec.cipherDir, passphrase),
   async mount(spec, passphrase) {
-    const { ok, stderr } = await mountVault(spec.cipherDir, spec.mountPoint, passphrase);
+    const { ok, stderr } = await mountVault(spec.cipherDir, spec.mountPoint, passphrase, {
+      allowOther: spec.allowOther,
+    });
     return { ok, detail: stderr };
   },
   unmount: (spec, mode, report) => unmountVault(spec.mountPoint, mode, report),

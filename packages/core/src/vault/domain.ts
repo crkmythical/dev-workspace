@@ -15,6 +15,13 @@ export interface VaultSpec {
   id: VaultId;
   cipherDir: string;
   mountPoint: string;
+  /**
+   * Let users other than the one who mounted it use the volume. FUSE refuses every other uid by
+   * default, and a volume that holds a root file system needs it: its programs drop to their own
+   * system user (tor runs as debian-tor, apt downloads as _apt) and would get "Permission denied"
+   * on every file, their own executables included.
+   */
+  allowOther?: boolean;
 }
 
 /** "destroyed" is terminal: the self-destruct completion marker exists. */

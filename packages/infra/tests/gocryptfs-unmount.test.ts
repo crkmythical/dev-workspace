@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { stepOutOf } from "../src/gocryptfs.ts";
+import { gocryptfsMountArgs, stepOutOf } from "../src/gocryptfs.ts";
 
 /**
  * A process releasing a mount must not be standing in it. Found by running self-destruct
@@ -67,5 +67,23 @@ describe("stepOutOf", () => {
     rmSync(mount, { recursive: true });
     stepOutOf(mount);
     expect(process.cwd()).toBe("/");
+  });
+});
+
+describe("gocryptfsMountArgs", () => {
+  it("mounts for the user who mounts it by default (the workspace vault)", () => {
+    expect(gocryptfsMountArgs("/c", "/m")).toEqual(["gocryptfs", "-q", "-nonempty", "/c", "/m"]);
+  });
+
+  it("lets other users in when the volume asks for it (a root file system)", () => {
+    expect(gocryptfsMountArgs("/c", "/m", { allowOther: true })).toEqual([
+      "gocryptfs",
+      "-q",
+      "-nonempty",
+      "-allow_other",
+      "/c",
+      "/m",
+    ]);
+    expect(gocryptfsMountArgs("/c", "/m", { allowOther: false })).not.toContain("-allow_other");
   });
 });
