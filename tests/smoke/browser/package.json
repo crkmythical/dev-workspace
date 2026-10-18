@@ -1,0 +1,12 @@
+{
+  "name": "@sdw/smoke-browser",
+  "private": true,
+  "type": "module",
+  "description": "Browser checks of the smoke test (a real Chrome drives the pages). Not part of the root workspace.",
+  "scripts": {
+    "check": "node check.mjs"
+  },
+  "dependencies": {
+    "playwright-core": "1.64.1"
+  }
+}

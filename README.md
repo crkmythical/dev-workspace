@@ -166,6 +166,17 @@ launchctl unload ~/Library/LaunchAgents/com.cloudflare.tunnel.plist
 | RESTIC_REPOSITORY | 设置后启用实时备份（还需 `RESTIC_PASSWORD` 与 S3 凭证）；仓库不存在时启动时自动创建。备份的是**明文**工作区（含 `.credentials/`），仅由 `RESTIC_PASSWORD` 保护，自毁不会删除它，要把它当作 vault 的一部分对待 |
 | COMPOSE_FILE | 默认不设。Linux + AppArmor 的宿主机取消注释，见上文 |
 
+## 验证（smoke test）
+
+单元测试（`bun test`）不启动镜像。`tests/smoke/` 把真镜像和一个假上游一起起来，从外面检查启动、认证、vault、备份与复制、出口降级、自毁，加上 `--services` 时对真实的 S3 端点、sshd、git HTTP、Shadowsocks 节点，以及用真实 Chrome 看同步页和桌面画面。它有自己的 compose 项目、端口和网络，不读 `.env`，可以放心在已有真实工作区的机器上跑：
+
+```bash
+make smoke IMAGE=dev-workspace:latest     # 测一个已有的镜像
+make smoke-build                          # 先按生产基础（Kali）构建再测
+```
+
+用法、检查清单和它证明 / 不证明什么见 [`tests/smoke/README.md`](tests/smoke/README.md)；CI 里对应 `.github/workflows/smoke.yml`（手动触发，或改动了镜像 / compose / 测试本身的 PR）。
+
 ## CI/CD（GitHub Actions）
 
 镜像在推送 `v*` tag 时自动构建并推送，配置文件：`.github/workflows/build-image.yml`。

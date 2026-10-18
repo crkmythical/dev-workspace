@@ -1,0 +1,9 @@
+#!/bin/bash
+# Stand-in for apt-get (smoke test only): records the call and succeeds, unless /etc/fake-apt-fail
+# exists (then it fails the way apt does for a package it cannot find).
+echo "apt-get $* | proxy=${http_proxy:-}" >>/var/log/fake-apt-get.log
+if [ -e /etc/fake-apt-fail ]; then
+  echo "E: Unable to locate package ${*: -1}" >&2
+  exit 100
+fi
+exit 0

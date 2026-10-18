@@ -1,0 +1,71 @@
+#!/bin/bash
+# Stand-in for debootstrap (smoke test only): builds a tiny merged-/usr root file system holding
+# bash and a few tools, plus the libraries they need, in a second instead of downloading ~2 GB.
+# It takes debootstrap's arguments, records what it was asked and with which proxy settings,
+# and can be told to fail for one suite:
+#   /etc/fake-debootstrap-fail   its content is the suite that "fails" (for the fallback test)
+#   /var/log/fake-debootstrap.log
+set -eu
+
+suite="" target="" mirror="" include=""
+positional=0
+for arg in "$@"; do
+  case "$arg" in
+    --include=*) include="${arg#--include=}" ;;
+    -*) ;;
+    *)
+      case $positional in
+        0) suite="$arg" ;;
+        1) target="$arg" ;;
+        2) mirror="$arg" ;;
+      esac
+      positional=$((positional + 1))
+      ;;
+  esac
+done
+{
+  echo "suite=$suite target=$target mirror=$mirror proxy=${http_proxy:-}"
+  echo "include=$include"
+} >>/var/log/fake-debootstrap.log
+
+if [ "$suite" = "$(cat /etc/fake-debootstrap-fail 2>/dev/null || true)" ]; then
+  echo "E: Failed getting release file ${mirror}/dists/${suite}/Release" >&2
+  exit 1
+fi
+
+mkdir -p "$target"/usr/bin "$target"/usr/lib "$target"/usr/sbin "$target"/usr/lib64
+for link in bin sbin lib lib64; do
+  [ -e "$target/$link" ] || ln -s "usr/$link" "$target/$link"
+done
+mkdir -p "$target"/proc "$target"/sys "$target"/dev/pts "$target"/tmp "$target"/run \
+  "$target"/etc "$target"/root "$target"/var
+
+copy_with_libs() {
+  local f="$1" lib
+  mkdir -p "$target$(dirname "$f")"
+  cp -L "$f" "$target$f"
+  # ldd lists the dynamic loader as well
+  ldd "$f" 2>/dev/null | grep -o '/[^ ]*' | while read -r lib; do
+    [ -f "$lib" ] || continue
+    mkdir -p "$target$(dirname "$lib")"
+    [ -e "$target$lib" ] || cp -L "$lib" "$target$lib"
+  done
+}
+
+for tool in bash cat ls tr wc grep id env head sed sleep; do
+  src="$(command -v "$tool")"
+  real="$(readlink -f "$src")"
+  mkdir -p "$target/usr/bin"
+  copy_with_libs "$real"
+  # Keep the name the tool was found under, in /usr/bin of the new root.
+  [ -e "$target/usr/bin/$tool" ] || cp -L "$real" "$target/usr/bin/$tool"
+done
+
+# What base-files gives root on Debian: a login shell reads .profile, which reads .bashrc.
+cat >"$target/root/.profile" <<'EOF'
+if [ "$BASH" ]; then
+  if [ -f ~/.bashrc ]; then . ~/.bashrc; fi
+fi
+EOF
+echo "root:x:0:0:root:/root:/bin/bash" >"$target/etc/passwd"
+echo "fake-debootstrap: $suite rootfs ready" >&2
