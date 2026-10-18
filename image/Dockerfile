@@ -307,6 +307,17 @@ RUN cp /opt/workspace/image/etc/desktop/start-xfce.sh /usr/local/bin/start-xfce.
     cp /opt/workspace/image/etc/desktop/start-audio.sh /usr/local/bin/start-audio.sh && \
     chmod +x /usr/local/bin/start-xfce.sh /usr/local/bin/start-audio.sh
 
+# No per-session ssh-agent / gpg-agent in the desktops (system-wide xfce4-session default, below
+# any per-user setting). xfce4-session starts an ssh-agent that detaches into a session of its own
+# and listens on a socket in the session's HOME, which is inside the vault. A listening unix socket
+# pins the mount without being an open file (fuser does not see it), so the agent outlived the
+# "stopped" desktop, one more per start, and lock-vault could never unmount cleanly (measured: 3
+# leftover agents, the unmount refused for 20 s with no process holding a file). The property goes
+# INTO the package's own file: it also holds the Failsafe session (window manager, panel, desktop).
+RUN f=/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-session.xml && \
+    sed -i 's#</channel>#  <property name="startup" type="empty">\n    <property name="ssh-agent" type="empty">\n      <property name="enabled" type="bool" value="false"/>\n    </property>\n    <property name="gpg-agent" type="empty">\n      <property name="enabled" type="bool" value="false"/>\n    </property>\n  </property>\n</channel>#' "$f" && \
+    grep -q 'name="ssh-agent"' "$f" && grep -q 'FailsafeSessionName' "$f"
+
 # Copy monorepo packages (workspace code)
 COPY packages/ /opt/workspace/packages/
 COPY package.json bunfig.toml bun.lock /opt/workspace/
