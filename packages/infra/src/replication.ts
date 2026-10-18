@@ -20,6 +20,9 @@ export async function originOf(dir: string): Promise<string | undefined> {
   return r.stdout.toString().trim() || undefined;
 }
 
+/** What git runs for ssh:// and git@host: remotes when nobody is there to answer a question. */
+export const UNATTENDED_SSH = "ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes";
+
 export type EnsureResult = "created" | "remote-updated" | "unchanged";
 
 /**
@@ -44,6 +47,20 @@ export async function ensureCipherRepo(opts: {
   if (!existsSync(`${dir}/.gitignore`)) await Bun.write(`${dir}/.gitignore`, opts.gitignore);
   if (!existsSync(`${dir}/.gitattributes`)) {
     await Bun.write(`${dir}/.gitattributes`, opts.gitattributes);
+  }
+
+  // The job that pushes runs from cron: nobody can answer ssh's "trust this host?" question,
+  // and without an answer it refuses ("Host key verification failed", seen in a test with a real
+  // sshd; the job's only message was "push failed"). The first sight of a server is trusted and
+  // pinned in ~/.ssh/known_hosts (the vault's credentials); a key that changes later is still
+  // refused. BatchMode keeps a key that needs a passphrase from hanging the job. A command the
+  // user set for this repository is theirs and stays.
+  const sshCommand = await $`git -C ${dir} config --local --get core.sshCommand`.quiet().nothrow();
+  if (sshCommand.exitCode !== 0) {
+    const set = await $`git -C ${dir} config --local core.sshCommand ${UNATTENDED_SSH}`
+      .quiet()
+      .nothrow();
+    if (set.exitCode !== 0) throw new Error("could not set core.sshCommand");
   }
 
   const current = await originOf(dir);

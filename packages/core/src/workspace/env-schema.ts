@@ -146,6 +146,8 @@ export const CORE_ENV_GROUPS: readonly EnvGroup[] = [
           "Git remote the vault's CIPHERTEXT is replicated to every 30 minutes.",
           "  https://<token>@github.com/user/dev-vault.git  (HTTPS + token, simplest)",
           "  git@github.com:user/dev-vault.git              (SSH, needs a key in the vault)",
+          "An SSH server's host key is trusted the first time it is seen and pinned in the vault's",
+          "~/.ssh/known_hosts; a key that changes later is refused. The key must have no passphrase.",
           "Leave empty to disable replication. At start-up the cipher directory is made a git",
           "repository with this as its origin; the URL (token included) is kept in its .git/config",
           "on the cipher volume, outside the vault.",

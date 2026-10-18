@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { $ } from "bun";
 import {
+  UNATTENDED_SSH,
   commitStaged,
   ensureCipherRepo,
   hasUnpushedCommits,
@@ -108,6 +109,26 @@ describe("ensureCipherRepo", () => {
     expect(await ensure()).toBe("unchanged");
     expect(readFileSync(path.join(cipher, ".gitignore"), "utf-8")).toBe("mine\n");
     expect(await originOf(cipher)).toBe(remote);
+  });
+
+  it("makes ssh remotes work unattended: trust a new host once, never ask, never hang", async () => {
+    await ensure();
+    const configured = await $`git -C ${cipher} config --local --get core.sshCommand`.quiet();
+    expect(configured.stdout.toString().trim()).toBe(UNATTENDED_SSH);
+    expect(UNATTENDED_SSH).toContain("StrictHostKeyChecking=accept-new"); // not "no": a changed key is refused
+    expect(UNATTENDED_SSH).toContain("BatchMode=yes");
+  });
+
+  it("also does so for a repository made earlier, and leaves a command the user chose alone", async () => {
+    await $`git -C ${cipher} init -q -b main`.quiet();
+    await ensure();
+    const first = await $`git -C ${cipher} config --local --get core.sshCommand`.quiet();
+    expect(first.stdout.toString().trim()).toBe(UNATTENDED_SSH);
+
+    await $`git -C ${cipher} config --local core.sshCommand ${"ssh -i /my/key"}`.quiet();
+    await ensure();
+    const kept = await $`git -C ${cipher} config --local --get core.sshCommand`.quiet();
+    expect(kept.stdout.toString().trim()).toBe("ssh -i /my/key");
   });
 
   it("throws, rather than pretending, when git cannot work in the directory", async () => {
