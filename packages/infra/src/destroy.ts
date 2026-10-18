@@ -41,7 +41,10 @@ export function createDestroyEffects(opts: DestroyOptions = {}): DestroyEffects 
     async shredTree(dir) {
       if (!existsSync(dir)) return;
       await $`find ${dir} -type f -exec shred -n1 -z {} +`.quiet().nothrow();
-      await $`rm -rf ${dir}/*`.quiet().nothrow();
+      // Everything inside, hidden entries too: the shell glob `*` skips dotfiles, which used to
+      // leave the replication repository (.git, with 20 zeroed files in the smoke test) and
+      // .gitignore behind. The directory itself is a volume root and stays.
+      await $`find ${dir} -mindepth 1 -delete`.quiet().nothrow();
     },
 
     async scrubCredentials() {
