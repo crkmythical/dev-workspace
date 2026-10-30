@@ -6,5 +6,10 @@
 //! on the real image at the single stage-3 cutover.
 
 pub mod cmd;
+pub mod desktop;
+pub mod destroy;
 pub mod destruct_key;
 pub mod gocryptfs;
+pub mod holders;
+pub mod shred;
+pub mod supervisor;
