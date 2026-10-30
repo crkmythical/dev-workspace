@@ -158,24 +158,29 @@ style) or `sdw <command>`; one binary + per-command symlinks will replace the Bu
 
 Done so far (cargo-gated; pure helpers unit-tested, the shell/FUSE I/O waits for the one smoke):
 
-- **cli**: `destruct-passphrase`, `push`, `pull`, `lock-vault`, `self-destruct`; the argv[0]
-  dispatcher, the passphrase reader and the confirm prompt. destruct-passphrase and the croc
-  argv were checked against the TS byte-for-byte; the destructive path (lock/destroy) reuses the
-  use-case tests from stage 2.
-- **infra**: `destruct_key` (HKDF, TS-parity vectors), `gocryptfs` (VolumeDriver: mount/unmount
-  with the fuser+/proc kill escalation), `shred`, `supervisor` (with_autostart, unit-tested),
-  `desktop`, `holders` (HolderControl), `destroy` (DestroyEffects), `state`, `time`, and the
-  shared `cmd` process helper.
-- **core**: `vault/destruct` constants (dedup groundwork) and the desktop/egress/workspace
-  **layout** constant modules the adapters consume (deferred from stage 2).
+- **cli — 13 of 18 commands**: destruct-passphrase, push, pull, lock-vault, self-destruct,
+  backup-init, init-vault, unlock-vault, desktop-start, desktop-stop, init-pentest,
+  unlock-pentest, lock-pentest; plus the argv[0] dispatcher, passphrase reader and confirm
+  prompt. destruct-passphrase / croc argv were checked against the TS byte-for-byte; the vault
+  commands reuse the stage-2 use-case tests.
+- **infra — the adapters those commands need**: `destruct_key` (HKDF, TS vectors), `gocryptfs`
+  (VolumeDriver, fuser+/proc kill escalation), `shred`, `supervisor` (with_autostart tested),
+  `desktop`, `holders` (+ NoHolders), `destroy` (DestroyEffects), `egress` (clash via curl +
+  serde_json), `restic`, `replication` (git), `notifications` (mount-guard tested), `caddy`,
+  `unlock_hooks` (bcrypt), `state`, `time`, and the shared `cmd` helper.
+- **core**: `vault/destruct` + `sync/layout` constants (dedup groundwork) and the
+  desktop/egress/workspace **layout** modules the adapters consume (deferred from stage 2).
 
-Still to do: the remaining commands (init-vault, unlock-vault, doctor, setup, backup-init,
-desktop-start/stop/install, the five pentest commands); the egress/restic/replication/caddy/
-unlock-hooks/failure-tracker/notifications adapters; the entrypoint orchestrator and the
-backup-watcher (inotify) + vault-sync daemons; folding the sync-service's sync primitives and
-destruct constants into core; then the Dockerfile cutover (build + install `sdw` and its
-symlinks, point entrypoint.sh / backup-watcher.conf / the vault-sync cron at it, drop the Bun
-install) and the full 298-check smoke on Colima.
+Still to do:
+- **5 commands**: doctor, setup (both large), desktop-install (apt/curl installer), and the two
+  heavy pentest commands — `pentest` (unshare/chroot) and `pentest-bootstrap` (debootstrap).
+- **1 adapter**: failure-tracker (shared by the two daemons).
+- **entrypoint + daemons**: the entrypoint orchestrator (binds core BOOT_PLAN to the adapters and
+  supervises), backup-watcher (inotify via the `notify` crate), vault-sync (cron).
+- **dedup**: fold the sync-service's sync primitives + destruct constants into core.
+- **cutover**: Dockerfile builds + installs `sdw` and its per-command symlinks (replacing
+  install-bins), points entrypoint.sh / backup-watcher.conf / the vault-sync cron at it, drops the
+  Bun install; then the full 298-check smoke on Colima.
 
 ## croc — the CLI file-transfer path
 
