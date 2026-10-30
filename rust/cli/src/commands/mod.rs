@@ -1,4 +1,6 @@
 pub mod backup_init;
+pub mod desktop_start;
+pub mod desktop_stop;
 pub mod destruct_passphrase;
 pub mod init_vault;
 pub mod lock_vault;
