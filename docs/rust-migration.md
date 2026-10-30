@@ -99,7 +99,7 @@ faithful port of its `packages/core` counterpart, and its tests mirror the TS te
 gate is `cargo test` + clippy `-D warnings` + rustfmt; nothing consumes the crate yet
 (it joins infra/cli at stage 3).
 
-Ported so far (127 tests):
+Ported so far (161 tests):
 
 - `vault/domain` — lifecycle `decide`, unlock-failure explainer, `lineage`/`killable`
   (self-destruct kill-safety), `plan_sync`, the DESTROY_PHASES table.
@@ -112,8 +112,13 @@ Ported so far (127 tests):
 - `egress/domain` — observed-status model, notice/description, the persisted report,
   the doctor row, `render_clash_config`, the start-up timing policy.
 - `egress/ports` + `egress/usecases` — `bring_up_egress` (start the proxy, bounded
-  waits, one re-fetch on a lost race, probe). First hexagonal use case; the port is
-  sync (the bring-up is sequential) so core stays runtime-free.
+  waits, one re-fetch on a lost race, probe). The ports are sync (the use cases are
+  sequential) so core stays runtime-free; a method returns Result only where the TS
+  caught a throw.
+- `vault/ports` + `vault/usecases` — lock (holders-before-unmount, busy/force/cancel),
+  unlock (lazy passphrase, ordered hooks, isolated failures), destroy (ordered phases
+  that survive a failure, honest keys_destroyed, marker last). Exercised with in-memory
+  fakes that record call order.
 - `desktop/domain` — the supervisord topology and FUSE-safe start/stop ordering.
 - `workspace/features` — the optional-feature flags.
 - `workspace/auth` + `workspace/banner` — master-password resolution, code-server
@@ -129,10 +134,21 @@ Ported so far (127 tests):
 - `sync/reconcile` (+ `sync/types`) — the three-way reconciler (SPA side).
 - `shared/failure` — the consecutive-failure threshold and tracker trait.
 
-Remaining in stage 2: the vault and sync client use cases (+ their ports), then the
-env-schema data table. The sync primitives the sync-service already has (aad, crypto,
-wire, path-safety, replay, rate-limit) and the destruct constants fold into core so
-there is one copy (dedup, done as part of stage 3's merge).
+Stage 2's pure-logic port is **complete**: every `packages/core` module that is pure
+and not already implemented elsewhere now has a faithful Rust twin with mirrored tests.
+The egress and vault use cases were the only ones to port; the sync "use cases"
+(`receiveUpload`/`listShared`) are the SERVER receive path, which the sync-service crate
+already implements in full, and `sync/client.ts` is browser WebCrypto the SPA keeps.
+
+Deliberately left for stage 3's merge (porting them now would triplicate smoke-validated
+code or build adapters nothing can run yet):
+
+- The sync primitives the sync-service already has (aad, crypto, wire, path-safety,
+  replay, rate-limit) and the destruct constants fold into core so there is one copy.
+- `workspace/env-schema`'s CORE_ENV_GROUPS data table (only the `.env.example` generator
+  reads it; it moves when the generator becomes a Rust subcommand).
+- The `*/layout.ts` paths and `workspace/types.ts` that only adapters consume — they
+  land with the adapters that need them.
 
 ## croc — the CLI file-transfer path
 
