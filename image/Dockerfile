@@ -1,3 +1,17 @@
+# BASE_IMAGE is a global ARG: it must be declared before the first FROM so the final
+# `FROM ${BASE_IMAGE}` (after the rust-builder stage) can still see it.
+ARG BASE_IMAGE=kalilinux/kali-rolling
+
+# --- Rust build stage: the sync-service daemon --------------------------------------------------
+# Compiled to a static musl binary so it drops into any base (glibc or not) with no runtime deps.
+# Pure-Rust crypto (no OpenSSL/ring), so musl-dev is all the toolchain it needs. --locked pins the
+# committed Cargo.lock. rust:1-alpine tracks the latest stable 1.x; CI can pin it tighter.
+FROM rust:1-alpine AS rust-builder
+RUN apk add --no-cache musl-dev
+WORKDIR /build
+COPY rust/ ./rust/
+RUN cd rust && cargo build --release --locked && cp target/release/sync-service /sync-service
+
 # Base image toggle.
 #   Default: kalilinux/kali-rolling — the production base, full pentest toolchain
 #   via apt. Kali tracks Debian testing, so it satisfies the Selkies desktop's
@@ -7,7 +21,6 @@
 #   Alternative: build with `--build-arg BASE_IMAGE=debian:trixie-slim` for a
 #   leaner non-pentest base (also ships libva 2.22, matches the LSIO debiantrixie
 #   reference). Do NOT use bookworm without vendoring a newer libva.
-ARG BASE_IMAGE=kalilinux/kali-rolling
 FROM ${BASE_IMAGE}
 
 # Desktop streaming stack selector (build-time):
@@ -330,6 +343,11 @@ RUN cd packages/spa && bunx vite build
 # Put a launcher for every command in packages/cli/package.json's `bin` map on PATH.
 # That map is the only list of commands (add one there, never here).
 RUN bun run /opt/workspace/packages/cli/scripts/install-bins.ts /usr/local/bin
+
+# The sync-service daemon (Rust). Replaces `bun run packages/server` — see supervisord.conf and
+# docs/rust-migration.md. It serves /sync/* (the SPA from packages/spa/dist, built above, plus the
+# upload/download/doctor/destruct API) and reads SYNC_ENABLED / REMOTE_DESTRUCT_ENABLED from env.
+COPY --from=rust-builder /sync-service /usr/local/bin/sync-service
 
 # Copy entrypoint (minimal shell → exec bun)
 COPY scripts/entrypoint.sh /usr/local/lib/workspace/entrypoint.sh

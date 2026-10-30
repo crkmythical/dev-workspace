@@ -56,10 +56,11 @@ cargo build --release      # ~0.8 MB static binary
 cargo run                  # expects the vault-backed container paths to exist
 ```
 
-## Not yet shipped in the image
+## Shipped in the image
 
-This crate is complete and green, but the image still runs the TS service. The
-cutover (build the binary in `image/Dockerfile`, point `supervisord` at it, drop
-the `bun run .../server` program) is one change that must pass the smoke suite
-(`30-sync`, `20-auth`, `80-destruct`, `55-browser`) before it lands. See
+`image/Dockerfile` builds this crate in a musl `rust-builder` stage and copies the
+static binary to `/usr/local/bin/sync-service`; `image/supervisord.conf` runs it in
+place of `bun run .../server`. Validated by the smoke suite (checks 10/20/30/55/80
+pass 93/0, including a real-browser upload into the vault and remote destruct). The
+TS `packages/server` stays only as the parity source for `gen-wire-vectors.ts`. See
 `docs/rust-migration.md`.

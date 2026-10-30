@@ -52,7 +52,7 @@ vectors, not by the smoke suite (there is no half-Rust image to boot).
 | Stage | Content | Gate | Status |
 |-------|---------|------|--------|
 | 0 | Cargo workspace, release profile, CI (`cargo fmt`/`clippy`/`test`) | cargo | **done** |
-| 1 | Graduate the sync-service daemon | cargo, then smoke `30-sync`/`20-auth`/`80-destruct`/`55-browser` | **code done & green; image cutover pending smoke** |
+| 1 | Graduate the sync-service daemon + wire it into the image | cargo, then smoke | **done — smoke 93/0 (checks 10/20/30/55/80)** |
 | +croc | Add croc as the CLI file-transfer path | cargo, then a new smoke check | designed (below), not built |
 | 2 | Port `core` pure logic (vault/backup/egress/desktop/workspace) | cargo + vectors/proptest | not started |
 | 3 | `infra`+`cli`+entrypoint → one multi-call binary; Bun leaves the image | cargo, then full smoke (298) | not started |
@@ -76,10 +76,19 @@ Tests (all green, `cargo test`): wire-vector parity (8), bcrypt↔Bun parity (1)
 HTTP routes incl. a real encrypted chunk+finalize and the destruct decision path
 (13), unit tests for features/rate-limit/store (9). Release binary ~0.8 MB.
 
-**Remaining before it ships:** the image cutover — build the binary in
-`image/Dockerfile`, point `image/supervisord.conf` at it, drop the
-`bun run .../server/src/index.ts` program — then pass the smoke checks above. Not
-done here because the smoke suite needs Colima, which is deferred.
+**Shipped:** `image/Dockerfile` builds the binary in a musl `rust-builder` stage and
+copies it to `/usr/local/bin/sync-service`; `image/supervisord.conf` runs that
+instead of `bun run .../server`. The TS `packages/server` stays in the tree (its
+`gen-wire-vectors.ts` is the parity source) but no longer runs.
+
+Validated 2026-10-30 on Colima/qemu (arm64): smoke checks 10/20/30/55/80 pass **93/0**
+against an image carrying this binary — boot, Caddy-proxied SPA+API, the full
+upload/replay/auth/path-safety protocol on the real FUSE vault, a real-Chrome upload
+landing in the vault byte-for-byte, and remote destruct (rate-limited, bcrypt-verified,
+CLI-triggered to an inert container). The `rust-builder` stage was confirmed to compile
+the binary in-image. A full from-scratch production build was not completed locally
+(mise's java/node downloads crawl at ~99 kB/s on this network, unrelated to this
+change); CI builds it from scratch.
 
 ## croc — the CLI file-transfer path
 

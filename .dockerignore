@@ -12,3 +12,5 @@ docs/
 parallels/
 client/
 poc/
+rust/target/
+rust/**/target/
