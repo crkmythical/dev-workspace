@@ -11,5 +11,6 @@ pub mod egress;
 pub mod plugins;
 pub mod shared;
 pub mod sync;
+pub mod transfer;
 pub mod vault;
 pub mod workspace;
