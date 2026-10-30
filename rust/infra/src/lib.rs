@@ -12,4 +12,6 @@ pub mod destruct_key;
 pub mod gocryptfs;
 pub mod holders;
 pub mod shred;
+pub mod state;
 pub mod supervisor;
+pub mod time;

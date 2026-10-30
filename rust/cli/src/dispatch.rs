@@ -6,7 +6,13 @@ const BIN_NAME: &str = "sdw";
 
 /// Commands wired up so far. The rest of packages/cli lands here over the course of stage 3;
 /// until then an unknown command is an error and the image keeps running Bun.
-const COMMANDS: &[&str] = &["destruct-passphrase", "push", "pull"];
+const COMMANDS: &[&str] = &[
+    "destruct-passphrase",
+    "lock-vault",
+    "pull",
+    "push",
+    "self-destruct",
+];
 
 pub fn run(args: Vec<String>) -> i32 {
     let arg0 = args.first().map(|s| basename(s)).unwrap_or_default();
@@ -31,8 +37,10 @@ fn basename(path: &str) -> &str {
 fn dispatch(command: &str, args: &[String]) -> i32 {
     match command {
         "destruct-passphrase" => commands::destruct_passphrase::run(args),
+        "lock-vault" => commands::lock_vault::run(args),
         "push" => commands::push::run(args),
         "pull" => commands::pull::run(args),
+        "self-destruct" => commands::self_destruct::run(args),
         other => {
             eprintln!("sdw: unknown command '{other}'");
             eprint_usage();

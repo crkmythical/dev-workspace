@@ -11,5 +11,6 @@
 pub mod commands;
 mod dispatch;
 pub mod passphrase;
+pub mod prompt;
 
 pub use dispatch::run;
