@@ -99,27 +99,40 @@ faithful port of its `packages/core` counterpart, and its tests mirror the TS te
 gate is `cargo test` + clippy `-D warnings` + rustfmt; nothing consumes the crate yet
 (it joins infra/cli at stage 3).
 
-Ported so far (46 tests):
+Ported so far (127 tests):
 
 - `vault/domain` — lifecycle `decide`, unlock-failure explainer, `lineage`/`killable`
   (self-destruct kill-safety), `plan_sync`, the DESTROY_PHASES table.
+- `vault/specs` + `vault/layout` + `shared/layout` — the workspace vault and the
+  container filesystem roots the specs assemble from.
 - `backup/domain` — the debounce/fallback/retry state machine, prune cadence, backoff,
   the opt-in gate, doctor status, the restic repo-probe classifier, path exclusion.
+- `backup/loop` — the watcher's state machine as pure transitions (replayed on a fake
+  clock in the tests: one edit never storms; failures back off and keep retrying).
 - `egress/domain` — observed-status model, notice/description, the persisted report,
   the doctor row, `render_clash_config`, the start-up timing policy.
+- `egress/ports` + `egress/usecases` — `bring_up_egress` (start the proxy, bounded
+  waits, one re-fetch on a lost race, probe). First hexagonal use case; the port is
+  sync (the bring-up is sequential) so core stays runtime-free.
 - `desktop/domain` — the supervisord topology and FUSE-safe start/stop ordering.
 - `workspace/features` — the optional-feature flags.
 - `workspace/auth` + `workspace/banner` — master-password resolution, code-server
   config render/parse, the start-up banner.
 - `workspace/boot` — BOOT_PLAN and run_boot (step order, abort/degrade, vault gates).
 - `workspace/config` — load_config (the typed environment view) and env validation.
+- `workspace/env_schema` — the EnvGroup/EnvVarSpec *types* (the CORE_ENV_GROUPS data
+  table stays TS until stage 3; only the .env.example generator reads it).
+- `plugins` (+ `plugins/pentest`) — the plugin contract and registry: `plugins()` and
+  `all_vaults()`, the pentest vault (allow_other) and PENTEST_VAULT_PASSWORD.
+- `transfer/croc` (+ `transfer/layout`) — the croc send/receive argv builders (secrets
+  never on the command line) and the Clash SOCKS endpoint.
 - `sync/reconcile` (+ `sync/types`) — the three-way reconciler (SPA side).
 - `shared/failure` — the consecutive-failure threshold and tracker trait.
 
-Remaining in stage 2: the plugin registry and the env schema (the big data table).
-Then the sync primitives the sync-service already has (aad, crypto, wire, path-safety,
-replay, rate-limit) fold into core so there is one copy (dedup, done as part of stage
-3's merge).
+Remaining in stage 2: the vault and sync client use cases (+ their ports), then the
+env-schema data table. The sync primitives the sync-service already has (aad, crypto,
+wire, path-safety, replay, rate-limit) and the destruct constants fold into core so
+there is one copy (dedup, done as part of stage 3's merge).
 
 ## croc — the CLI file-transfer path
 
