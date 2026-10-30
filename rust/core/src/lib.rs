@@ -4,4 +4,5 @@
 //! tests mirror the TypeScript tests so the two implementations cannot drift apart while
 //! both exist (see docs/rust-migration.md). The infra/cli crates provide the adapters.
 
+pub mod backup;
 pub mod vault;
