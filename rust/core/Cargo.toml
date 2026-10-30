@@ -1,0 +1,12 @@
+[package]
+name = "sdw-core"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Pure domain logic and use cases (a Rust port of packages/core); no I/O, no runtime deps"
+
+[lib]
+path = "src/lib.rs"
+
+[dev-dependencies]
+proptest = "1"
