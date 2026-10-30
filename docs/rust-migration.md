@@ -55,7 +55,7 @@ vectors, not by the smoke suite (there is no half-Rust image to boot).
 | 1 | Graduate the sync-service daemon + wire it into the image | cargo, then smoke | **done — smoke 93/0 (checks 10/20/30/55/80)** |
 | +croc | Add croc as the CLI file-transfer path | cargo, then smoke | **done — smoke 4/4 (services/40-croc)** |
 | 2 | Port `core` pure logic (vault/backup/egress/desktop/workspace) | cargo + proptest | **in progress** — see below |
-| 3 | `infra`+`cli`+entrypoint → one multi-call binary; Bun leaves the image | cargo, then full smoke (298) | not started |
+| 3 | `infra`+`cli`+entrypoint → one multi-call binary; Bun leaves the image | cargo, then full smoke (298) | **in progress** — see below |
 
 ## Stage 1 — what is done
 
@@ -149,6 +149,33 @@ code or build adapters nothing can run yet):
   reads it; it moves when the generator becomes a Rust subcommand).
 - The `*/layout.ts` paths and `workspace/types.ts` that only adapters consume — they
   land with the adapters that need them.
+
+## Stage 3 — progress
+
+Two new crates consume `core`: `rust/infra` (the port adapters, `sdw-infra`) and `rust/cli`
+(the multi-call binary `sdw`, `sdw-infra`). `sdw` dispatches on `argv[0]`'s basename (busybox
+style) or `sdw <command>`; one binary + per-command symlinks will replace the Bun launchers.
+
+Done so far (cargo-gated; pure helpers unit-tested, the shell/FUSE I/O waits for the one smoke):
+
+- **cli**: `destruct-passphrase`, `push`, `pull`, `lock-vault`, `self-destruct`; the argv[0]
+  dispatcher, the passphrase reader and the confirm prompt. destruct-passphrase and the croc
+  argv were checked against the TS byte-for-byte; the destructive path (lock/destroy) reuses the
+  use-case tests from stage 2.
+- **infra**: `destruct_key` (HKDF, TS-parity vectors), `gocryptfs` (VolumeDriver: mount/unmount
+  with the fuser+/proc kill escalation), `shred`, `supervisor` (with_autostart, unit-tested),
+  `desktop`, `holders` (HolderControl), `destroy` (DestroyEffects), `state`, `time`, and the
+  shared `cmd` process helper.
+- **core**: `vault/destruct` constants (dedup groundwork) and the desktop/egress/workspace
+  **layout** constant modules the adapters consume (deferred from stage 2).
+
+Still to do: the remaining commands (init-vault, unlock-vault, doctor, setup, backup-init,
+desktop-start/stop/install, the five pentest commands); the egress/restic/replication/caddy/
+unlock-hooks/failure-tracker/notifications adapters; the entrypoint orchestrator and the
+backup-watcher (inotify) + vault-sync daemons; folding the sync-service's sync primitives and
+destruct constants into core; then the Dockerfile cutover (build + install `sdw` and its
+symlinks, point entrypoint.sh / backup-watcher.conf / the vault-sync cron at it, drop the Bun
+install) and the full 298-check smoke on Colima.
 
 ## croc — the CLI file-transfer path
 
