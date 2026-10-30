@@ -109,11 +109,17 @@ Ported so far (46 tests):
   the doctor row, `render_clash_config`, the start-up timing policy.
 - `desktop/domain` — the supervisord topology and FUSE-safe start/stop ordering.
 - `workspace/features` — the optional-feature flags.
+- `workspace/auth` + `workspace/banner` — master-password resolution, code-server
+  config render/parse, the start-up banner.
+- `workspace/boot` — BOOT_PLAN and run_boot (step order, abort/degrade, vault gates).
+- `workspace/config` — load_config (the typed environment view) and env validation.
+- `sync/reconcile` (+ `sync/types`) — the three-way reconciler (SPA side).
+- `shared/failure` — the consecutive-failure threshold and tracker trait.
 
-Remaining in stage 2: `workspace` config/boot/auth/banner, `sync` reconcile (the SPA
-side), `shared` failure, the plugin registry. Then the sync primitives the
-sync-service already has (aad, crypto, wire, path-safety, replay, rate-limit) fold
-into core so there is one copy (dedup, done as part of stage 3's merge).
+Remaining in stage 2: the plugin registry and the env schema (the big data table).
+Then the sync primitives the sync-service already has (aad, crypto, wire, path-safety,
+replay, rate-limit) fold into core so there is one copy (dedup, done as part of stage
+3's merge).
 
 ## croc — the CLI file-transfer path
 

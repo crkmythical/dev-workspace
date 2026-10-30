@@ -7,6 +7,8 @@
 
 pub const SELKIES_STREAM_PORT: u16 = 6080;
 pub const VNC_STREAM_PORT: u16 = 6081;
+/// Default KasmVNC geometry when DESKTOP_RESOLUTION is unset.
+pub const DESKTOP_DEFAULT_RESOLUTION: &str = "1920x1080";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DesktopTarget {
