@@ -36,6 +36,15 @@ impl SupervisorHolders {
     }
 }
 
+/// A HolderControl that holds nothing — the pentest vault, where no supervised service holds the
+/// mount and escalation (killing the mount's users) is what releases it.
+pub struct NoHolders;
+
+impl HolderControl for NoHolders {
+    fn stop_all(&self) {}
+    // restore keeps the default (empty): there is nothing to put back.
+}
+
 impl HolderControl for SupervisorHolders {
     fn stop_all(&self) {
         // The second call of a forced retry sees everything stopped already; the first one knows.

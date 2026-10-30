@@ -11,11 +11,14 @@ const COMMANDS: &[&str] = &[
     "desktop-start",
     "desktop-stop",
     "destruct-passphrase",
+    "init-pentest",
     "init-vault",
+    "lock-pentest",
     "lock-vault",
     "pull",
     "push",
     "self-destruct",
+    "unlock-pentest",
     "unlock-vault",
 ];
 
@@ -45,11 +48,14 @@ fn dispatch(command: &str, args: &[String]) -> i32 {
         "desktop-start" => commands::desktop_start::run(args),
         "desktop-stop" => commands::desktop_stop::run(args),
         "destruct-passphrase" => commands::destruct_passphrase::run(args),
+        "init-pentest" => commands::init_pentest::run(args),
         "init-vault" => commands::init_vault::run(args),
+        "lock-pentest" => commands::lock_pentest::run(args),
         "lock-vault" => commands::lock_vault::run(args),
         "push" => commands::push::run(args),
         "pull" => commands::pull::run(args),
         "self-destruct" => commands::self_destruct::run(args),
+        "unlock-pentest" => commands::unlock_pentest::run(args),
         "unlock-vault" => commands::unlock_vault::run(args),
         other => {
             eprintln!("sdw: unknown command '{other}'");
