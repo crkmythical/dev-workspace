@@ -6,6 +6,7 @@
 //! The infra/cli crates provide the adapters.
 
 pub mod backup;
+pub mod desktop;
 pub mod egress;
 pub mod vault;
 pub mod workspace;
