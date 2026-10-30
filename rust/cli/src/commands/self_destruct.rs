@@ -10,12 +10,12 @@ use crate::prompt::prompt_line;
 use sdw_core::plugins::all_vaults;
 use sdw_core::vault::usecases::{destroy_workspace, DestroyDeps, DestroyOptions as DestroyRun};
 use sdw_core::workspace::config::load_config;
+use sdw_infra::cmd;
 use sdw_infra::destroy::{DestroyOptions as EffectsOptions, ShellDestroyEffects};
 use sdw_infra::gocryptfs::GocryptfsVolume;
 use sdw_infra::holders::SupervisorHolders;
 use sdw_infra::shred::FileShredder;
 use sdw_infra::time::now_iso;
-use sdw_infra::cmd;
 
 fn parse_flags(args: &[String]) -> (bool, bool, bool) {
     let has = |flag: &str| args.iter().any(|a| a == flag);

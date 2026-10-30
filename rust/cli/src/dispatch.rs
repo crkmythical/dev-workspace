@@ -7,6 +7,7 @@ const BIN_NAME: &str = "sdw";
 /// Commands wired up so far. The rest of packages/cli lands here over the course of stage 3;
 /// until then an unknown command is an error and the image keeps running Bun.
 const COMMANDS: &[&str] = &[
+    "backup-init",
     "destruct-passphrase",
     "lock-vault",
     "pull",
@@ -36,6 +37,7 @@ fn basename(path: &str) -> &str {
 
 fn dispatch(command: &str, args: &[String]) -> i32 {
     match command {
+        "backup-init" => commands::backup_init::run(args),
         "destruct-passphrase" => commands::destruct_passphrase::run(args),
         "lock-vault" => commands::lock_vault::run(args),
         "push" => commands::push::run(args),

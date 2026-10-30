@@ -1,3 +1,4 @@
+pub mod backup_init;
 pub mod destruct_passphrase;
 pub mod lock_vault;
 pub mod pull;

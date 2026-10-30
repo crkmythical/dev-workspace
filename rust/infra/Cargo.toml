@@ -13,3 +13,4 @@ sdw-core = { path = "../core" }
 hkdf = "0.12"
 sha2 = "0.10"
 base64 = "0.22.1"
+serde_json = "1"
