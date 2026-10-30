@@ -217,6 +217,24 @@ RUN curl -fsSL "https://github.com/restic/restic/releases/download/v${RESTIC_VER
     | bunzip2 > /usr/local/bin/restic \
     && chmod +x /usr/local/bin/restic
 
+# Install croc (peer-to-peer, end-to-end encrypted file transfer for `push`/`pull`) — pinned +
+# sha256 against the release checksums.txt. Single static Go binary, like restic.
+ARG CROC_VERSION=11.5.5
+ARG CROC_SHA256_AMD64=2dee9b7ede849971532c597ef3fd29507bfc970330758cfed13657be04f34243
+ARG CROC_SHA256_ARM64=c8606c6b4450e4a50b3ef25bd486ed4f9fa4a1ac6e2ecefb2bcbdbbfce1a51a9
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) croc_arch="64bit"; croc_sha="$CROC_SHA256_AMD64" ;; \
+      arm64) croc_arch="ARM64"; croc_sha="$CROC_SHA256_ARM64" ;; \
+      *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://github.com/schollz/croc/releases/download/v${CROC_VERSION}/croc_v${CROC_VERSION}_Linux-${croc_arch}.tar.gz" -o /tmp/croc.tar.gz; \
+    echo "${croc_sha}  /tmp/croc.tar.gz" | sha256sum -c -; \
+    tar -xzf /tmp/croc.tar.gz -C /usr/local/bin croc; \
+    rm -f /tmp/croc.tar.gz; \
+    croc --version
+
 # Install mise (runtime version manager) — pinned via MISE_VERSION; retry on
 # network failure. The installer verifies its own release checksum.
 ARG MISE_VERSION=v2026.10.12

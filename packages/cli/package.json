@@ -15,6 +15,8 @@
     "lock-vault": "./src/lock-vault.ts",
     "pentest": "./src/plugins/pentest/commands/enter.ts",
     "pentest-bootstrap": "./src/plugins/pentest/commands/bootstrap.ts",
+    "pull": "./src/pull.ts",
+    "push": "./src/push.ts",
     "self-destruct": "./src/self-destruct.ts",
     "setup": "./src/setup.ts",
     "unlock-pentest": "./src/plugins/pentest/commands/unlock.ts",

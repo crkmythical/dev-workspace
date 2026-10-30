@@ -53,7 +53,7 @@ vectors, not by the smoke suite (there is no half-Rust image to boot).
 |-------|---------|------|--------|
 | 0 | Cargo workspace, release profile, CI (`cargo fmt`/`clippy`/`test`) | cargo | **done** |
 | 1 | Graduate the sync-service daemon + wire it into the image | cargo, then smoke | **done — smoke 93/0 (checks 10/20/30/55/80)** |
-| +croc | Add croc as the CLI file-transfer path | cargo, then a new smoke check | designed (below), not built |
+| +croc | Add croc as the CLI file-transfer path | cargo, then smoke | **done — smoke 4/4 (services/40-croc)** |
 | 2 | Port `core` pure logic (vault/backup/egress/desktop/workspace) | cargo + vectors/proptest | not started |
 | 3 | `infra`+`cli`+entrypoint → one multi-call binary; Bun leaves the image | cargo, then full smoke (298) | not started |
 
@@ -97,19 +97,27 @@ through a relay that only ever sees ciphertext. It is added **alongside** the sy
 page (which keeps its unique zero-install, browser-only, lands-in-the-vault
 property), as the path for large or scripted transfers.
 
-Integration (at the image-cutover milestone, smoke-gated):
+Shipped:
 
-- Pin `croc` in `image/Dockerfile` with a checksum, like `restic`/`caddy`.
-- Self-host the relay (`croc relay`); never the default public relay. New env:
-  `CROC_RELAY`, `CROC_PASS`.
-- Route through Clash: `croc --socks5 <clash-socks> --relay $CROC_RELAY …`
-  (croc resolves the relay's DNS proxy-side with `socks5h`). This keeps the
-  egress posture; the relay only sees ciphertext.
-- Two commands, `push` / `pull` (today thin wrappers over the croc CLI; after
-  stage 3 they are two subcommands of the Rust multi-call binary). Transfers land
-  in `/workspace` (the vault mount).
-- Threat-model note: the relay sees metadata (timing, sizes, endpoint IPs); the
-  codephrase is the shared secret.
+- `image/Dockerfile` pins `croc` with a sha256, like `restic`/`caddy`.
+- `CROC_RELAY` (host:port of a self-hosted `croc relay`) and `CROC_PASS` (its
+  password) are documented in the env schema (`.env.example`). Empty = off. The
+  public default relay is never used.
+- Two commands, `push` / `pull` (`packages/cli/src/{push,pull}.ts`), over a pure
+  arg-builder in `packages/core/src/transfer/croc.ts`. They route through Clash by
+  default (`--socks5 127.0.0.1:7890`, Clash's mixed port); `push --direct` is for a
+  LAN relay. `pull` lands files in `/workspace` (the vault) by default.
+- Neither secret is ever on the command line: the relay password is `CROC_PASS`
+  and the code phrase is `CROC_SECRET` (croc v11 refuses `send --code` on argv — a
+  property the smoke test caught — so the code never shows in a process listing).
+- `push` / `pull` migrate to subcommands of the Rust multi-call binary at stage 3;
+  the pure `buildCrocSend` / `buildCrocReceive` and their tests carry over.
+
+Validated 2026-10-30 (services/40-croc.sh, Colima/qemu arm64): a self-hosted relay,
+an end-to-end round-trip into the vault with the bytes intact, and the relay's logs
+holding only ciphertext (never the payload) — **4/4**. Threat-model note: the relay
+still sees metadata (timing, sizes, endpoint IPs); the code phrase is the shared
+secret.
 
 ## tailcat — optional alternative ingress (not default)
 

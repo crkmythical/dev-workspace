@@ -248,6 +248,29 @@ export const CORE_ENV_GROUPS: readonly EnvGroup[] = [
     ],
   },
   {
+    title: "FILE TRANSFER (optional — croc, end-to-end encrypted)",
+    vars: [
+      {
+        name: "CROC_RELAY",
+        doc: [
+          "Self-hosted croc relay (host:port) for the `push` / `pull` commands. croc is",
+          "end-to-end encrypted (a code phrase, then AES-256-GCM); the relay only sees",
+          "ciphertext. Transfers go through Clash by default (`push --direct` for a relay on",
+          "the LAN). Leave empty to keep push/pull off. Do not use croc's public default relay.",
+        ],
+        example: "relay.example.com:9009",
+        optIn: true,
+      },
+      {
+        name: "CROC_PASS",
+        doc: ["Password of the relay above (its `croc relay` CROC_PASS). Empty if it has none."],
+        example: "",
+        optIn: true,
+        external: "croc",
+      },
+    ],
+  },
+  {
     title: "OPTIONAL FEATURES — all OFF unless enabled here",
     vars: [
       {
@@ -279,6 +302,9 @@ export const CORE_ENV_GROUPS: readonly EnvGroup[] = [
 export const INTERNAL_ENV: readonly string[] = [
   // Set by the start-up for Caddy's basic_auth; derived from the master password.
   "DESKTOP_BCRYPT_HASH",
+  // The croc code phrase, set transiently by `push` / `pull` from --code (croc reads it); never
+  // user-configured, so not in the schema.
+  "CROC_SECRET",
 ];
 
 export const flattenEnv = (groups: readonly EnvGroup[]): EnvVarSpec[] =>
