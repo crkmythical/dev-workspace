@@ -9,6 +9,7 @@ const BIN_NAME: &str = "sdw";
 const COMMANDS: &[&str] = &[
     "backup-init",
     "destruct-passphrase",
+    "init-vault",
     "lock-vault",
     "pull",
     "push",
@@ -39,6 +40,7 @@ fn dispatch(command: &str, args: &[String]) -> i32 {
     match command {
         "backup-init" => commands::backup_init::run(args),
         "destruct-passphrase" => commands::destruct_passphrase::run(args),
+        "init-vault" => commands::init_vault::run(args),
         "lock-vault" => commands::lock_vault::run(args),
         "push" => commands::push::run(args),
         "pull" => commands::pull::run(args),

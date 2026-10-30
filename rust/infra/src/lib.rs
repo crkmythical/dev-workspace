@@ -13,6 +13,7 @@ pub mod egress;
 pub mod gocryptfs;
 pub mod holders;
 pub mod notifications;
+pub mod replication;
 pub mod restic;
 pub mod shred;
 pub mod state;
