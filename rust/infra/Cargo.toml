@@ -1,0 +1,15 @@
+[package]
+name = "sdw-infra"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Adapters that back the core ports with the container's real tools (gocryptfs/FUSE, Clash, restic, git, supervisord, croc)."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+sdw-core = { path = "../core" }
+hkdf = "0.12"
+sha2 = "0.10"
+base64 = "0.22.1"
