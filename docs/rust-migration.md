@@ -54,7 +54,7 @@ vectors, not by the smoke suite (there is no half-Rust image to boot).
 | 0 | Cargo workspace, release profile, CI (`cargo fmt`/`clippy`/`test`) | cargo | **done** |
 | 1 | Graduate the sync-service daemon + wire it into the image | cargo, then smoke | **done — smoke 93/0 (checks 10/20/30/55/80)** |
 | +croc | Add croc as the CLI file-transfer path | cargo, then smoke | **done — smoke 4/4 (services/40-croc)** |
-| 2 | Port `core` pure logic (vault/backup/egress/desktop/workspace) | cargo + vectors/proptest | not started |
+| 2 | Port `core` pure logic (vault/backup/egress/desktop/workspace) | cargo + proptest | **in progress** — see below |
 | 3 | `infra`+`cli`+entrypoint → one multi-call binary; Bun leaves the image | cargo, then full smoke (298) | not started |
 
 ## Stage 1 — what is done
@@ -89,6 +89,31 @@ CLI-triggered to an inert container). The `rust-builder` stage was confirmed to 
 the binary in-image. A full from-scratch production build was not completed locally
 (mise's java/node downloads crawl at ~99 kB/s on this network, unrelated to this
 change); CI builds it from scratch.
+
+## Stage 2 — progress
+
+A Rust `core` crate (`rust/core`, `sdw-core`): pure domain logic, no I/O, the only
+dependency serde (for the persisted forms the TS builds with JSON). Each module is a
+faithful port of its `packages/core` counterpart, and its tests mirror the TS tests
+(proptest standing in for fast-check) so the two cannot drift while both exist. The
+gate is `cargo test` + clippy `-D warnings` + rustfmt; nothing consumes the crate yet
+(it joins infra/cli at stage 3).
+
+Ported so far (46 tests):
+
+- `vault/domain` — lifecycle `decide`, unlock-failure explainer, `lineage`/`killable`
+  (self-destruct kill-safety), `plan_sync`, the DESTROY_PHASES table.
+- `backup/domain` — the debounce/fallback/retry state machine, prune cadence, backoff,
+  the opt-in gate, doctor status, the restic repo-probe classifier, path exclusion.
+- `egress/domain` — observed-status model, notice/description, the persisted report,
+  the doctor row, `render_clash_config`, the start-up timing policy.
+- `desktop/domain` — the supervisord topology and FUSE-safe start/stop ordering.
+- `workspace/features` — the optional-feature flags.
+
+Remaining in stage 2: `workspace` config/boot/auth/banner, `sync` reconcile (the SPA
+side), `shared` failure, the plugin registry. Then the sync primitives the
+sync-service already has (aad, crypto, wire, path-safety, replay, rate-limit) fold
+into core so there is one copy (dedup, done as part of stage 3's merge).
 
 ## croc — the CLI file-transfer path
 
