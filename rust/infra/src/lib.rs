@@ -5,4 +5,6 @@
 //! key derivation) are unit-tested here; the process-spawning shells are validated by tests/smoke
 //! on the real image at the single stage-3 cutover.
 
+pub mod cmd;
 pub mod destruct_key;
+pub mod gocryptfs;
