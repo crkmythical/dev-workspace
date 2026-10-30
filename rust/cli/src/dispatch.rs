@@ -14,6 +14,7 @@ const COMMANDS: &[&str] = &[
     "pull",
     "push",
     "self-destruct",
+    "unlock-vault",
 ];
 
 pub fn run(args: Vec<String>) -> i32 {
@@ -45,6 +46,7 @@ fn dispatch(command: &str, args: &[String]) -> i32 {
         "push" => commands::push::run(args),
         "pull" => commands::pull::run(args),
         "self-destruct" => commands::self_destruct::run(args),
+        "unlock-vault" => commands::unlock_vault::run(args),
         other => {
             eprintln!("sdw: unknown command '{other}'");
             eprint_usage();

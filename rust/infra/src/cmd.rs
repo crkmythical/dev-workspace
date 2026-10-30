@@ -69,3 +69,16 @@ pub fn inherit(program: &str, args: &[&str]) -> i32 {
         }
     }
 }
+
+/// Run silently in a working directory; true iff it exited 0. For tools with no `-C` equivalent.
+pub fn ok_cwd(cwd: &str, program: &str, args: &[&str]) -> bool {
+    Command::new(program)
+        .args(args)
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
