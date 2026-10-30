@@ -1,36 +1,47 @@
-//! POST /sync/api/upload — faithful port of packages/server/src/routes/upload.ts.
-//! Uses std::fs synchronously (PoC): the handler has no `.await`, so no lock is
-//! ever held across a suspension point.
+//! POST /sync/api/upload — port of packages/server/src/routes/upload.ts over the
+//! receiveUpload() use case (packages/core/src/sync/usecases.ts).
+//!
+//! Order IS the security argument and is preserved exactly:
+//!   feature gate -> key available -> framing -> timestamp -> authenticate ->
+//!   claim the replay slot -> act.
+//! Nothing touches storage before the envelope authenticates, and the replay slot
+//! is claimed only after it does. Filesystem work runs on a blocking thread.
 
 use axum::{
     body::Bytes,
     extract::State,
     http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
     Json,
 };
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
-use std::fs;
-use std::io::Write;
-use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::aad::build_aad;
-use crate::constants::{SHARED_DIR, UPLOAD_TRACKING_DIR};
 use crate::crypto::decrypt;
 use crate::path_safety::{check_relative_path, PathCheck};
+use crate::store;
+use crate::util::now_ms;
 use crate::wire::parse_upload_body;
 use crate::AppState;
 
-fn err(status: StatusCode, msg: &str) -> (StatusCode, Json<Value>) {
-    (status, Json(json!({ "error": msg })))
+fn err(status: StatusCode, msg: &str) -> Response {
+    (status, Json(json!({ "error": msg }))).into_response()
 }
 
-pub async fn upload(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    body: Bytes,
-) -> (StatusCode, Json<Value>) {
+/// One safe path segment (a file id names a temp file).
+fn flat_segment(input: &str) -> Option<String> {
+    match check_relative_path(input) {
+        PathCheck::Ok(n) if !n.contains('/') => Some(n),
+        _ => None,
+    }
+}
+
+pub async fn upload(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {
+    // Off unless SYNC_ENABLED: a disabled feature looks like a missing one.
+    if !state.features.sync {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
     let key = match state.sync_key() {
         Some(k) => k,
         None => return err(StatusCode::SERVICE_UNAVAILABLE, "vault-locked"),
@@ -49,7 +60,17 @@ pub async fn upload(
             .to_string()
     };
     let op = hdr("x-sync-op", "put-chunk");
-    let ts: i64 = hdr("x-sync-ts", "0").parse().unwrap_or(0);
+    let now = now_ms();
+    // A missing timestamp falls back to "now" (the AAD then will not match and the
+    // envelope fails to authenticate, exactly as before); a present-but-unparseable
+    // one is a bad timestamp.
+    let ts: i64 = match headers.get("x-sync-ts").and_then(|v| v.to_str().ok()) {
+        None => now,
+        Some(s) => match s.parse::<i64>() {
+            Ok(n) => n,
+            Err(_) => return err(StatusCode::BAD_REQUEST, "bad-timestamp"),
+        },
+    };
     let file_id_hdr = hdr("x-sync-fileid", "");
     let chunk_idx = hdr("x-sync-chunkidx", "0");
 
@@ -59,91 +80,92 @@ pub async fn upload(
         Err(_) => return err(StatusCode::BAD_REQUEST, "aead-failure"),
     };
 
-    // Replay protection. Only an authentic envelope may claim a window slot: the
-    // window is bounded, so forgeries that could claim slots would flush genuine
-    // nonces out and let a captured request be replayed.
+    // Only an authentic envelope may claim a replay-window slot.
     {
         let nonce_hex = hex::encode(frame.nonce);
         let mut rw = state.replay.lock().unwrap();
-        if !rw.check(&nonce_hex, ts, now_ms()) {
+        if !rw.check(&nonce_hex, ts, now) {
             return err(StatusCode::BAD_REQUEST, "replay-detected");
         }
     }
 
-    let _ = fs::create_dir_all(UPLOAD_TRACKING_DIR);
-    let _ = fs::create_dir_all(SHARED_DIR);
+    let dirs = state.dirs.clone();
 
     if op == "put-chunk" {
-        let id = match check_relative_path(&file_id_hdr) {
-            PathCheck::Ok(n) if !n.contains('/') => n,
-            _ => return err(StatusCode::BAD_REQUEST, "bad-file-id"),
+        let Some(id) = flat_segment(&file_id_hdr) else {
+            return err(StatusCode::BAD_REQUEST, "bad-file-id");
         };
-        let temp = Path::new(UPLOAD_TRACKING_DIR).join(format!(".uploading-{id}"));
-        if append_file(&temp, &plaintext).is_err() {
+        let res =
+            tokio::task::spawn_blocking(move || store::append_chunk(&dirs, &id, &plaintext)).await;
+        if !matches!(res, Ok(Ok(()))) {
             return err(StatusCode::INTERNAL_SERVER_ERROR, "internal");
         }
+        let idx = chunk_idx.parse::<i64>().unwrap_or(0);
         return (
             StatusCode::OK,
-            Json(json!({ "status": "chunk-received", "chunk_idx": chunk_idx.parse::<i64>().unwrap_or(0) })),
-        );
+            Json(json!({ "status": "chunk-received", "chunk_idx": idx })),
+        )
+            .into_response();
     }
 
     if op == "put-finalize" {
-        let data: Value = match serde_json::from_slice(&plaintext) {
-            Ok(v) => v,
-            Err(_) => return err(StatusCode::BAD_REQUEST, "bad-finalize-json"),
+        let data = match serde_json::from_slice::<Value>(&plaintext) {
+            Ok(v) if v.is_object() => v,
+            _ => return err(StatusCode::BAD_REQUEST, "bad-finalize-json"),
         };
-        let file_id = data.get("file_id").and_then(Value::as_str).unwrap_or("");
-        let file_path = data.get("file_path").and_then(Value::as_str).unwrap_or("");
-
-        let id = match check_relative_path(file_id) {
-            PathCheck::Ok(n) if !n.contains('/') => n,
-            _ => return err(StatusCode::BAD_REQUEST, "bad-file-id"),
+        let Some(id) = flat_segment(data.get("file_id").and_then(Value::as_str).unwrap_or(""))
+        else {
+            return err(StatusCode::BAD_REQUEST, "bad-file-id");
         };
-        let rel = match check_relative_path(file_path) {
+        let rel = match check_relative_path(
+            data.get("file_path").and_then(Value::as_str).unwrap_or(""),
+        ) {
             PathCheck::Ok(n) => n,
             PathCheck::Err(_) => return err(StatusCode::BAD_REQUEST, "bad-file-path"),
         };
 
-        let temp = Path::new(UPLOAD_TRACKING_DIR).join(format!(".uploading-{id}"));
-        if !temp.exists() {
-            return err(StatusCode::BAD_REQUEST, "no-chunks");
+        {
+            let dirs = dirs.clone();
+            let id = id.clone();
+            let present = tokio::task::spawn_blocking(move || store::has_chunks(&dirs, &id))
+                .await
+                .unwrap_or(false);
+            if !present {
+                return err(StatusCode::BAD_REQUEST, "no-chunks");
+            }
         }
 
         if let Some(expected) = data.get("content_sha256").and_then(Value::as_str) {
-            let bytes = match fs::read(&temp) {
-                Ok(b) => b,
-                Err(_) => return err(StatusCode::INTERNAL_SERVER_ERROR, "internal"),
+            let got = {
+                let dirs = dirs.clone();
+                let id = id.clone();
+                tokio::task::spawn_blocking(move || store::sha256_hex(&dirs, &id)).await
             };
-            let mut hsh = Sha256::new();
-            hsh.update(&bytes);
-            if hex::encode(hsh.finalize()) != expected {
-                let _ = fs::remove_file(&temp);
+            let got = match got {
+                Ok(Ok(h)) => h,
+                _ => return err(StatusCode::INTERNAL_SERVER_ERROR, "internal"),
+            };
+            if got != expected {
+                let dirs = dirs.clone();
+                let id = id.clone();
+                let _ = tokio::task::spawn_blocking(move || store::discard(&dirs, &id)).await;
                 return err(StatusCode::BAD_REQUEST, "checksum-mismatch");
             }
         }
 
-        let final_path = Path::new(SHARED_DIR).join(&rel);
-        if let Some(parent) = final_path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        if fs::rename(&temp, &final_path).is_err() {
+        let res = {
+            let rel = rel.clone();
+            tokio::task::spawn_blocking(move || store::commit(&dirs, &id, &rel)).await
+        };
+        if !matches!(res, Ok(Ok(()))) {
             return err(StatusCode::INTERNAL_SERVER_ERROR, "internal");
         }
-        return (StatusCode::OK, Json(json!({ "status": "upload-complete", "path": rel })));
+        return (
+            StatusCode::OK,
+            Json(json!({ "status": "upload-complete", "path": rel })),
+        )
+            .into_response();
     }
 
     err(StatusCode::BAD_REQUEST, "unknown-op")
-}
-
-fn append_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
-    let mut f = fs::OpenOptions::new().create(true).append(true).open(path)?;
-    f.write_all(data)
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
 }

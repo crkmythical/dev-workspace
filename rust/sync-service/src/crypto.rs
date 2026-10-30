@@ -23,15 +23,32 @@ pub fn derive_key(passphrase: &str) -> [u8; AES_KEY_LENGTH] {
 pub fn encrypt(key: &[u8], nonce: &[u8], plaintext: &[u8], aad: &[u8]) -> Result<Vec<u8>, String> {
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
     cipher
-        .encrypt(Nonce::from_slice(nonce), Payload { msg: plaintext, aad })
+        .encrypt(
+            Nonce::from_slice(nonce),
+            Payload {
+                msg: plaintext,
+                aad,
+            },
+        )
         .map_err(|e| e.to_string())
 }
 
 /// Decrypt `ciphertext || tag`. Fails on tag/AAD mismatch.
-pub fn decrypt(key: &[u8], nonce: &[u8], ct_with_tag: &[u8], aad: &[u8]) -> Result<Vec<u8>, String> {
+pub fn decrypt(
+    key: &[u8],
+    nonce: &[u8],
+    ct_with_tag: &[u8],
+    aad: &[u8],
+) -> Result<Vec<u8>, String> {
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
     cipher
-        .decrypt(Nonce::from_slice(nonce), Payload { msg: ct_with_tag, aad })
+        .decrypt(
+            Nonce::from_slice(nonce),
+            Payload {
+                msg: ct_with_tag,
+                aad,
+            },
+        )
         .map_err(|e| e.to_string())
 }
 

@@ -1,0 +1,17 @@
+# Rust workspace for the Secure Dev Workspace.
+#
+# Today it holds the sync-service (the tunnel-exposed daemon). The migration adds
+# `core`, `infra` and a `cli` multi-call binary as further members (see docs/rust-migration.md),
+# at which point the Bun runtime leaves the image.
+[workspace]
+resolver = "2"
+members = ["sync-service"]
+
+# One small, static binary is the point: optimise for size, strip, and abort on panic
+# (no unwinding tables). Tests run under the dev profile, so this does not affect them.
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

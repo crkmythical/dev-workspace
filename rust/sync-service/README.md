@@ -1,74 +1,65 @@
-# sync-service (Rust/Axum PoC)
+# sync-service (Rust / Axum)
 
-A proof-of-concept reimplementation of the TypeScript `sync-service`
-(`packages/server`) in Rust + Axum, built to answer one question: **can the
-tunnel-exposed daemon be a single memory-safe static binary without breaking
-the wire protocol it shares with the browser SPA?**
+The tunnel-exposed file-sync daemon, in Rust: one small, memory-safe static
+binary with no runtime, speaking the exact wire protocol and HTTP contract of the
+TypeScript service it replaces (`packages/server` + `packages/core/sync`).
 
-## What it proves
+It began as a proof of concept (does a Rust daemon fit without breaking the wire
+protocol the browser SPA shares?). That question is answered; this is now the
+full surface, and the TS service is what it is checked against.
 
-The daemon speaks the exact same wire protocol as the TS server, verified by
-`tests/parity.rs` against golden vectors generated from the **authoritative TS
-implementation**:
+## What it serves
 
-| Contract | Source of truth | Rust module |
-|----------|-----------------|-------------|
-| HKDF-SHA256 key derivation | `packages/infra/src/sync-crypto.ts` | `src/crypto.rs` |
-| AES-256-GCM (`ciphertext‖tag`) | `packages/infra/src/sync-crypto.ts` | `src/crypto.rs` |
-| AAD framing `op\|ts\|…` | `packages/core/src/sync/aad.ts` | `src/aad.rs` |
-| PNG camouflage body | `packages/core/src/sync/protocol.ts`, `envelope.ts` | `src/wire.rs` |
-| List authenticator (`X-Sync-Auth`) | `packages/core/src/sync/usecases.ts` (`listShared`) | `src/list_auth.rs` |
-| Relative-path validation | `packages/core/src/sync/path-safety.ts` | `src/path_safety.rs` |
-| Replay window | `packages/core/src/sync/replay-window.ts` | `src/replay.rs` |
+Caddy proxies all of `/sync/*` here (`:8081`).
 
-If the TS and Rust sides ever drift, the parity tests fail.
+| Route | Behaviour |
+|-------|-----------|
+| `GET /sync/` , `GET /sync/assets/*` | the compiled SPA (served with correct MIME; a later step can move this to Caddy) |
+| `POST /sync/api/upload` | `put-chunk` / `put-finalize`, authenticated-then-stored, replay-protected |
+| `GET /sync/api/download` | authenticated directory listing only (no file content) |
+| `GET /sync/api/doctor` | `disabled` / `vault-locked` / `ready`, same JSON as the TS route |
+| `POST /sync/api/destruct` | remote self-destruct: feature-gated, rate-limited, bcrypt-verified |
+
+`SYNC_ENABLED` and `REMOTE_DESTRUCT_ENABLED` gate the API and the destruct route;
+a feature that is off answers 404, indistinguishable from a route that is absent.
+Filesystem work runs on blocking threads (`spawn_blocking`). The WebSocket
+`/sync/api/events` channel is not reimplemented: it had no sender and no browser
+consumer.
+
+The destruct route keeps the irreversible step behind a trait. In production the
+trigger launches the existing `self-destruct` CLI (which shreds the keys, stops
+every service and SIGTERMs PID 1), so the destruction logic lives in one place
+during the migration; tests use a fake trigger and never cross the boundary.
+
+## How the two copies are kept honest
+
+The browser SPA stays TypeScript (File System Access API + WebCrypto), so the
+shared wire logic exists twice. Two seams pin them together:
+
+- **`tests/parity.rs`** replays golden vectors from the authoritative TS side
+  (`bun run packages/server/scripts/gen-wire-vectors.ts`): HKDF, AES-256-GCM,
+  AAD framing, the PNG body, the list authenticator, path validation.
+- **`tests/bcrypt_parity.rs`** pins that the `bcrypt` crate verifies hashes
+  `Bun.password` produced — the remote destruct depends on it.
+- **`tests/routes.rs`** drives the HTTP surface (gates, doctor shape, listing
+  auth, a real encrypted chunk+finalize through the store, and the whole destruct
+  decision path) to the same status codes `tests/smoke` asserts on the real image.
+
+If either side drifts, a test fails.
 
 ## Run
 
 ```bash
-# 1. (Re)generate golden vectors from the TS implementation (repo root):
-bun run packages/server/scripts/gen-wire-vectors.ts
-
-# 2. Prove the Rust side reproduces them:
-cd rust/sync-service && cargo test
-
-# 3. Run the daemon (expects the vault-backed paths to exist in a container):
-cargo run
+cargo test                 # parity + bcrypt + routes + units
+cargo clippy --all-targets -- -D warnings
+cargo build --release      # ~0.8 MB static binary
+cargo run                  # expects the vault-backed container paths to exist
 ```
 
-## Scope / non-goals
+## Not yet shipped in the image
 
-This is a PoC, intentionally narrow:
-
-- **Implemented**: `/sync/api/upload` (put-chunk, put-finalize), `/sync/api/download`
-  (authenticated listing only, see below), `/sync/api/doctor`, replay protection,
-  path safety, vault-lock detection via the passphrase file.
-- **Listing needs proof of the sync key.** `GET /sync/api/download` requires
-  `X-Sync-Ts` and `X-Sync-Auth` (base64 of `nonce‖tag`, an AEAD over an empty
-  message with AAD `list|<ts>`), exactly like the TS server. File content is not
-  served at all: the old `?path=` branch answered in plaintext without any
-  authentication and is answered with 404 now.
-- **Replay-window order.** A nonce is claimed only *after* its envelope
-  authenticates, in upload and listing alike. The window is a bounded ring buffer;
-  if forgeries could claim slots, a flood of them would push a genuine nonce out and
-  let a captured request be replayed. `tests/parity.rs` pins this for listing; the
-  upload route follows the same order but is untested here (it needs the
-  container's vault paths).
-- **Out of scope**: `/sync/api/destruct` (shells out and crosses the irreversible
-  self-destruct boundary — not needed to prove wire parity), the WebSocket
-  `/sync/api/events` channel, the per-IP/global destruct rate limiter (ported
-  cleanly from `packages/core/src/shared/rate-limit.ts` if this graduates), SPA
-  static-file serving (Caddy can serve the SPA directly), and the `SYNC_ENABLED`
-  runtime flag (the TS server answers 404 on every sync route unless it is set; this
-  PoC always serves).
-- **PoC shortcuts**: file I/O uses synchronous `std::fs` inside async handlers
-  (no `.await` is held across a lock); production would use `tokio::fs` +
-  `spawn_blocking` or an actor owning the vault FS.
-
-## The tradeoff this PoC makes concrete
-
-The browser SPA stays TypeScript (File System Access API + WebCrypto), so the
-shared `packages/core` wire logic now exists **twice** — once in TS, once here.
-`gen-wire-vectors.ts` + `tests/parity.rs` are the seam that keeps the two copies
-honest. Adopting Rust for the daemon means accepting (and automating) that
-duplication; this PoC shows it is small and testable.
+This crate is complete and green, but the image still runs the TS service. The
+cutover (build the binary in `image/Dockerfile`, point `supervisord` at it, drop
+the `bun run .../server` program) is one change that must pass the smoke suite
+(`30-sync`, `20-auth`, `80-destruct`, `55-browser`) before it lands. See
+`docs/rust-migration.md`.

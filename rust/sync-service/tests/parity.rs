@@ -28,7 +28,10 @@ fn unhex(s: &str) -> Vec<u8> {
 #[test]
 fn png_header_matches_ts() {
     let v = vectors();
-    assert_eq!(hex::encode(PNG_HEADER), v["png_header_hex"].as_str().unwrap());
+    assert_eq!(
+        hex::encode(PNG_HEADER),
+        v["png_header_hex"].as_str().unwrap()
+    );
 }
 
 #[test]
@@ -37,7 +40,11 @@ fn hkdf_matches_ts() {
     for item in v["hkdf"].as_array().unwrap() {
         let passphrase = item["passphrase"].as_str().unwrap();
         let want = item["key_hex"].as_str().unwrap();
-        assert_eq!(hex::encode(derive_key(passphrase)), want, "hkdf: {passphrase:?}");
+        assert_eq!(
+            hex::encode(derive_key(passphrase)),
+            want,
+            "hkdf: {passphrase:?}"
+        );
     }
 }
 
@@ -55,7 +62,11 @@ fn aad_matches_ts() {
             .collect();
         let extra_refs: Vec<&str> = extra.iter().map(String::as_str).collect();
         let got = build_aad(op, ts, &extra_refs);
-        assert_eq!(hex::encode(got), item["aad_hex"].as_str().unwrap(), "aad: {op}");
+        assert_eq!(
+            hex::encode(got),
+            item["aad_hex"].as_str().unwrap(),
+            "aad: {op}"
+        );
     }
 }
 
@@ -101,11 +112,23 @@ fn path_safety_matches_ts() {
         match check_relative_path(input) {
             PathCheck::Ok(norm) => {
                 assert_eq!(result["ok"].as_bool(), Some(true), "expected ok: {input:?}");
-                assert_eq!(result["normalized"].as_str(), Some(norm.as_str()), "normalized: {input:?}");
+                assert_eq!(
+                    result["normalized"].as_str(),
+                    Some(norm.as_str()),
+                    "normalized: {input:?}"
+                );
             }
             PathCheck::Err(reason) => {
-                assert_eq!(result["ok"].as_bool(), Some(false), "expected err: {input:?}");
-                assert_eq!(result["reason"].as_str(), Some(reason.as_str()), "reason: {input:?}");
+                assert_eq!(
+                    result["ok"].as_bool(),
+                    Some(false),
+                    "expected err: {input:?}"
+                );
+                assert_eq!(
+                    result["reason"].as_str(),
+                    Some(reason.as_str()),
+                    "reason: {input:?}"
+                );
             }
         }
     }
@@ -128,7 +151,11 @@ fn list_auth_matches_ts() {
         );
 
         let replay = Mutex::new(ReplayWindow::new());
-        assert_eq!(authenticate_list(&key, ts, auth, &replay, ts), Ok(()), "accept: {label}");
+        assert_eq!(
+            authenticate_list(&key, ts, auth, &replay, ts),
+            Ok(()),
+            "accept: {label}"
+        );
         // The same authenticator again is a replay.
         assert_eq!(
             authenticate_list(&key, ts, auth, &replay, ts),

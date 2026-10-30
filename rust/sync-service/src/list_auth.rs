@@ -45,10 +45,11 @@ pub fn authenticate_list(
 
     decrypt(key, nonce, tag, &build_aad("list", ts, &[])).map_err(|_| ListAuthError::BadTag)?;
 
-    let claimed = replay
-        .lock()
-        .expect("replay window lock poisoned")
-        .check(&hex::encode(nonce), ts, now_ms);
+    let claimed =
+        replay
+            .lock()
+            .expect("replay window lock poisoned")
+            .check(&hex::encode(nonce), ts, now_ms);
     if claimed {
         Ok(())
     } else {
