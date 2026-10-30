@@ -8,6 +8,7 @@
 pub mod backup;
 pub mod desktop;
 pub mod egress;
+pub mod plugins;
 pub mod shared;
 pub mod sync;
 pub mod vault;
