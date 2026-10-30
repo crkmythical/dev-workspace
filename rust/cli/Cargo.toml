@@ -1,0 +1,18 @@
+[package]
+name = "sdw-cli"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "The container's command surface as one multi-call binary (dispatches on argv[0]); replaces the Bun CLI."
+
+[lib]
+name = "sdw_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sdw"
+path = "src/main.rs"
+
+[dependencies]
+sdw-core = { path = "../core" }
+sdw-infra = { path = "../infra" }

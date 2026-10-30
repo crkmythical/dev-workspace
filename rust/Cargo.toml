@@ -5,7 +5,7 @@
 # at which point the Bun runtime leaves the image.
 [workspace]
 resolver = "2"
-members = ["core", "infra", "sync-service"]
+members = ["cli", "core", "infra", "sync-service"]
 
 # One small, static binary is the point: optimise for size, strip, and abort on panic
 # (no unwinding tables). Tests run under the dev profile, so this does not affect them.
