@@ -114,6 +114,32 @@ pub fn parse_fuser_pids(stdout: &str) -> Vec<u32> {
     out
 }
 
+/// Socket inodes from the contents of `/proc/net/unix` whose bound path is the mount point or
+/// under it. `fuser` does not report a process that only holds such a bound/listening socket, yet
+/// it pins the mount; the unmount escalation maps these inodes back to owning PIDs via
+/// `/proc/<pid>/fd`. The file is whitespace-separated columns ending in an optional Path: column 6
+/// (0-based) is the inode, column 7 the path. The header row, unnamed sockets (no path column) and
+/// abstract sockets (`@...`, not a filesystem path) have no path under the mount and are skipped.
+pub fn socket_inodes_under_mount(proc_net_unix: &str, mount_point: &str) -> Vec<u64> {
+    let mount = mount_point.trim_end_matches('/');
+    let prefix = format!("{mount}/");
+    let mut out = Vec::new();
+    for line in proc_net_unix.lines() {
+        let cols: Vec<&str> = line.split_whitespace().collect();
+        if cols.len() < 8 {
+            continue;
+        }
+        let Ok(inode) = cols[6].parse::<u64>() else {
+            continue;
+        };
+        let path = cols[7];
+        if path == mount || path.starts_with(&prefix) {
+            out.push(inode);
+        }
+    }
+    out
+}
+
 /// `pid` followed by every process above it, up to PID 1. Stops at a process whose parent cannot
 /// be read (it has exited) and never loops.
 pub fn lineage<F: Fn(u32) -> Option<u32>>(pid: u32, parent_of: F) -> Vec<u32> {
@@ -625,6 +651,29 @@ mod tests {
         assert_eq!(parse_fuser_pids("\n"), Vec::<u32>::new());
         assert_eq!(parse_fuser_pids("/workspace:  555c 561f"), vec![555, 561]);
         assert_eq!(parse_fuser_pids("0 12 000"), vec![12]);
+    }
+
+    #[test]
+    fn socket_inodes_under_mount_cases() {
+        // Column 6 is the inode, column 7 the bound path. Header, unnamed and abstract have none.
+        let sample = concat!(
+            "Num RefCount Protocol Flags Type St Inode Path\n",
+            "a: 2 0 10000 1 1 55501 /workspace/.desktop/agent.sock\n",
+            "a: 2 0 10000 1 1 55502 /workspace/shared/app.sock\n",
+            "a: 2 0 10000 1 1 55503 /run/other.sock\n",
+            "a: 3 0 0 2 1 55504\n",
+            "a: 2 0 10000 1 1 55505 @/abstract/workspace\n",
+        );
+        assert_eq!(
+            socket_inodes_under_mount(sample, "/workspace"),
+            vec![55501, 55502]
+        );
+        // A trailing slash is tolerated, and /workspace-other must not match /workspace.
+        let sample2 = concat!(
+            "a: 2 0 10000 1 1 42 /workspace-other/x.sock\n",
+            "a: 2 0 10000 1 1 43 /workspace/y.sock\n",
+        );
+        assert_eq!(socket_inodes_under_mount(sample2, "/workspace/"), vec![43]);
     }
 
     #[test]

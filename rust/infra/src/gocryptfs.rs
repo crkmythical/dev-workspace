@@ -6,7 +6,9 @@
 
 use crate::cmd;
 use sdw_core::vault::destruct::DESTRUCT_COMPLETED_PATH;
-use sdw_core::vault::domain::{killable, lineage, parse_fuser_pids, VaultSpec, VaultState};
+use sdw_core::vault::domain::{
+    killable, lineage, parse_fuser_pids, socket_inodes_under_mount, VaultSpec, VaultState,
+};
 use sdw_core::vault::ports::{MountOutcome, UnmountMode, VolumeDriver};
 use std::fs;
 use std::path::Path;
@@ -103,15 +105,59 @@ enum Scope {
 
 /// SIGKILL the processes using a mount, except this one and everything above it (core `killable`).
 /// Needs `fuser` (psmisc); without it nothing is found and nothing is killed.
+/// PIDs holding a bound/listening unix socket whose path is at or under `mount_point` — holders
+/// `fuser` does not report (a bound socket pins the mount without an open fd it sees). Reads the
+/// socket inodes from /proc/net/unix (core selects the ones under the mount), then maps each to its
+/// owner by the `socket:[inode]` symlink in /proc/<pid>/fd. Empty when /proc is unavailable.
+fn socket_holder_pids(mount_point: &str) -> Vec<u32> {
+    let Ok(content) = fs::read_to_string("/proc/net/unix") else {
+        return Vec::new();
+    };
+    let inodes = socket_inodes_under_mount(&content, mount_point);
+    if inodes.is_empty() {
+        return Vec::new();
+    }
+    let wanted: std::collections::HashSet<String> =
+        inodes.iter().map(|i| format!("socket:[{i}]")).collect();
+    let mut pids = Vec::new();
+    let Ok(entries) = fs::read_dir("/proc") else {
+        return pids;
+    };
+    for entry in entries.flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|s| s.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let Ok(fds) = fs::read_dir(format!("/proc/{pid}/fd")) else {
+            continue;
+        };
+        for fd in fds.flatten() {
+            if let Ok(target) = fs::read_link(fd.path()) {
+                if wanted.contains(target.to_string_lossy().as_ref()) {
+                    pids.push(pid);
+                    break;
+                }
+            }
+        }
+    }
+    pids
+}
+
 fn kill_holders(mount_point: &str, scope: Scope, report: &dyn Fn(&str)) {
     let (_, stdout) = match scope {
         Scope::Filesystem => cmd::capture("fuser", &["-m", mount_point]),
         Scope::Directory => cmd::capture("fuser", &[mount_point]),
     };
-    let victims = killable(
-        &parse_fuser_pids(&stdout),
-        &lineage(std::process::id(), parent_of),
-    );
+    let mut holders = parse_fuser_pids(&stdout);
+    if let Scope::Filesystem = scope {
+        // fuser misses a process that only holds a bound/listening unix socket under the mount; add
+        // those so a clean unmount succeeds instead of falling back to lazy. killable drops dupes.
+        holders.extend(socket_holder_pids(mount_point));
+    }
+    let victims = killable(&holders, &lineage(std::process::id(), parent_of));
     for pid in &victims {
         // Ignore failures: the process may already be gone. `kill` from procps is in the image.
         cmd::ok("kill", &["-KILL", &pid.to_string()]);
