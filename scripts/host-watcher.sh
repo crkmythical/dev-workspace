@@ -54,12 +54,22 @@ do_cleanup() {
 
 daemon_mode() {
   echo "[$(date -Iseconds)] host-watcher started (container: $CONTAINER)"
-  docker events --filter "container=${CONTAINER}" --filter "event=die" | while read -r _line; do
+  # Read events through a FIFO with the producer backgrounded, so it can be stopped cleanly.
+  # A plain `docker events | while read` leaves the producer blocked on the closed pipe after we
+  # break out (an orphan until its next write hits SIGPIPE); killing it by PID avoids that.
+  local fifo producer
+  fifo="$(mktemp -u)"
+  mkfifo "$fifo"
+  docker events --filter "container=${CONTAINER}" --filter "event=die" > "$fifo" &
+  producer=$!
+  while read -r _line; do
     if check_destruct; then
       do_cleanup
       break
     fi
-  done
+  done < "$fifo"
+  kill "$producer" 2>/dev/null || true
+  rm -f "$fifo"
 }
 
 once_mode() {

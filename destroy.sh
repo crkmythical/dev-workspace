@@ -40,7 +40,12 @@ echo "Destroying workspace..."
 
 # Standard cleanup
 docker compose down -v 2>/dev/null || true
-docker volume rm vault-data cache-data clash-config 2>/dev/null || true
+# `down -v` removes the project's volumes; this is a prefix-tolerant backstop. The volumes are
+# named <project>_vault-data etc., so the old unprefixed `docker volume rm vault-data` matched
+# nothing. Also catches destruct-state if it was ever created outside the compose project.
+docker volume ls --format '{{.Name}}' \
+  | grep -E '(^|_)(vault-data|cache-data|clash-config|destruct-state)$' \
+  | xargs -r docker volume rm 2>/dev/null || true
 # Remove all dev-workspace image tags (latest, trixie, etc.)
 docker image ls --format '{{.Repository}}:{{.Tag}}' | grep '^dev-workspace:' | xargs -r docker image rm 2>/dev/null || true
 
@@ -71,9 +76,6 @@ if [[ "$PARANOID" == "true" ]]; then
     systemctl --user daemon-reload 2>/dev/null || true
     echo "  ✗ systemd user services removed"
   fi
-
-  # Remove destruct-state volume (may survive compose down if externally created)
-  docker volume rm destruct-state 2>/dev/null || true
 
   # Remove cloudflared credentials and config
   rm -rf ~/.cloudflared/ 2>/dev/null || true
