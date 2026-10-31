@@ -9,6 +9,7 @@ pub mod init_pentest;
 pub mod init_vault;
 pub mod lock_pentest;
 pub mod lock_vault;
+pub mod pentest_bootstrap;
 pub mod pentest_enter;
 pub mod pull;
 pub mod push;
