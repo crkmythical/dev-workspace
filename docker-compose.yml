@@ -38,7 +38,7 @@ services:
     <<: *workspace-base
     image: dev-workspace:${WORKSPACE_VARIANT:-trixie}
     build:
-      context: .
+      context: ./src
       dockerfile: image/Dockerfile
       args:
         BASE_IMAGE: ${BASE_IMAGE:-debian:trixie-slim}

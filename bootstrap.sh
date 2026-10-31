@@ -52,8 +52,8 @@ fi
 
 # 7. Setup scripts
 echo "Running host setup..."
-bash scripts/setup-docker.sh || true
-bash scripts/setup-cloudflared.sh || true
+bash deploy/scripts/setup-docker.sh || true
+bash deploy/scripts/setup-cloudflared.sh || true
 
 # 8. Start
 docker compose up -d
@@ -61,7 +61,7 @@ docker compose up -d
 # 8.5. Offer host-watcher installation
 read -rp "Install host-watcher (auto-cleanup on self-destruct)? [y/N]: " watcher
 if [[ "${watcher:-}" =~ ^[Yy]$ ]]; then
-  bash scripts/host-watcher.sh --install
+  bash deploy/scripts/host-watcher.sh --install
 fi
 
 # 9. Instructions

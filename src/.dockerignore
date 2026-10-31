@@ -1,0 +1,14 @@
+# Build context is ./src (see docker-compose.yml). Paths are relative to it.
+.env
+node_modules/
+packages/*/node_modules/
+dist/
+out/
+*.tar
+*.tar.gz
+*.log
+.DS_Store
+rust/target/
+rust/**/target/
+# Unit/smoke tests are never COPYd into the image; keep them out of the context.
+tests/

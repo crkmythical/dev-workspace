@@ -89,7 +89,7 @@ docker compose up -d
 ## 5. 远程访问(可选,Cloudflare Tunnel,零入站端口)
 ```bash
 # 宿主机执行(不是容器内)
-./scripts/setup-cloudflared.sh --hostname workspace.example.com
+./deploy/scripts/setup-cloudflared.sh --hostname workspace.example.com
 # macOS:
 launchctl load ~/Library/LaunchAgents/com.cloudflare.tunnel.plist
 # Linux: bash deploy/linux-systemd/install.sh --cloudflared
@@ -115,4 +115,4 @@ launchctl load ~/Library/LaunchAgents/com.cloudflare.tunnel.plist
 在 `.env` 设置,或 `APT_MIRROR=... docker compose build`。
 
 ---
-更深入的架构与运维见 `docs/architecture.md`、`docs/runbook.md`、`docs/threat-model.md`;完整环境变量见 `.env.example`。
+更深入的架构与运维见 `deploy/docs/architecture.md`、`deploy/docs/runbook.md`、`deploy/docs/threat-model.md`;完整环境变量见 `.env.example`。

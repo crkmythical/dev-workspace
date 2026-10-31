@@ -8,6 +8,9 @@ on:
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src
     steps:
       - uses: actions/checkout@v4
 
@@ -32,7 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: rust
+        working-directory: src/rust
     steps:
       - uses: actions/checkout@v4
 
@@ -44,7 +47,7 @@ jobs:
       - name: Cache
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: rust
+          workspaces: src/rust
 
       - name: Format check
         run: cargo fmt --all --check

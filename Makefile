@@ -11,32 +11,32 @@ image-import:
 	docker load -i workspace.tar
 
 dev:
-	cd packages/spa && bun run dev
+	cd src/packages/spa && bun run dev
 
 test:
-	bun test
+	cd src && bun test
 
 lint:
-	bunx biome check .
+	cd src && bunx biome check .
 
 format:
-	bunx biome format . --write
+	cd src && bunx biome format . --write
 
 build-spa:
-	cd packages/spa && bun run build
+	cd src/packages/spa && bun run build
 env-example:
-	cargo run -q --manifest-path rust/Cargo.toml -p sdw-cli -- env-example
+	cargo run -q --manifest-path src/rust/Cargo.toml -p sdw-cli -- env-example
 
-# Boots an image next to a fake upstream and checks it (tests/smoke/README.md). Needs Docker.
+# Boots an image next to a fake upstream and checks it (src/tests/smoke/README.md). Needs Docker.
 #   make smoke IMAGE=dev-workspace:trixie    test an image you already have
 #   make smoke-build                         build the production (Kali) image first
 IMAGE ?= dev-workspace:latest
 smoke:
-	tests/smoke/run.sh --image $(IMAGE) --services
+	src/tests/smoke/run.sh --image $(IMAGE) --services
 
 smoke-build:
-	tests/smoke/run.sh --build --services
+	src/tests/smoke/run.sh --build --services
 
 clean:
 	rm -f workspace.tar
-	rm -rf packages/*/node_modules node_modules
+	rm -rf src/packages/*/node_modules src/node_modules

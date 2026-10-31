@@ -22,7 +22,7 @@ out/
 Thumbs.db
 
 # Pre-downloaded build artifacts (local build acceleration)
-image/*.tar.gz
+src/image/*.tar.gz
 
 # PoC / temporary files
 .poc-tmp/

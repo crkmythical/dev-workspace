@@ -51,8 +51,8 @@ jobs:
       - name: Build and push (per-arch)
         uses: docker/build-push-action@v6
         with:
-          context: .
-          file: image/Dockerfile
+          context: ./src
+          file: ./src/image/Dockerfile
           platforms: ${{ matrix.platform }}
           push: true
           tags: |

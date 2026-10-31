@@ -14,12 +14,12 @@ on:
         default: default
   pull_request:
     paths:
-      - 'image/**'
-      - 'scripts/**'
-      - 'rust/**'
-      - 'packages/**'
+      - 'src/image/**'
+      - 'src/rust/**'
+      - 'src/packages/**'
+      - 'src/tests/smoke/**'
+      - 'deploy/scripts/**'
       - 'docker-compose*.yml'
-      - 'tests/smoke/**'
       - '.github/workflows/smoke.yml'
 
 concurrency:
@@ -55,8 +55,8 @@ jobs:
       - name: Build the image
         uses: docker/build-push-action@v6
         with:
-          context: .
-          file: image/Dockerfile
+          context: ./src
+          file: ./src/image/Dockerfile
           load: true
           tags: dev-workspace:smoke
           build-args: |
@@ -68,7 +68,7 @@ jobs:
       - name: Smoke test
         env:
           SMOKE_SHOTS_DIR: ${{ github.workspace }}/smoke-shots
-        run: tests/smoke/run.sh --image dev-workspace:smoke --services
+        run: src/tests/smoke/run.sh --image dev-workspace:smoke --services
 
       - name: Screenshots of the desktops
         if: always()

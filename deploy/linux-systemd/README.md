@@ -1,11 +1,11 @@
 # Linux host services (systemd)
 
-The macOS host uses LaunchAgents, written by `scripts/setup-cloudflared.sh` and
-`scripts/host-watcher.sh --install`. On Linux the same two services run as systemd
+The macOS host uses LaunchAgents, written by `deploy/scripts/setup-cloudflared.sh` and
+`deploy/scripts/host-watcher.sh --install`. On Linux the same two services run as systemd
 **user** units (no root needed for the units themselves):
 
 ```bash
-bash scripts/setup-cloudflared.sh --hostname workspace.example.com   # tunnel + DNS, once
+bash deploy/scripts/setup-cloudflared.sh --hostname workspace.example.com   # tunnel + DNS, once
 bash deploy/linux-systemd/install.sh --cloudflared                   # keep the tunnel up
 bash deploy/linux-systemd/install.sh --host-watcher                  # clean up after a self-destruct
 bash deploy/linux-systemd/install.sh --uninstall                     # remove both
@@ -28,6 +28,6 @@ reachable by your user (`docker` group) for the host watcher.
 The watcher starts `destroy.sh` in a transient unit (`systemd-run --user`), not as its own
 child: `destroy.sh` removes the watcher's service, and systemd kills everything a stopped
 service started, so the cleanup used to be cut off right there (found by running it).
-The unit text did not change, the fix is in `scripts/host-watcher.sh`: if the watcher is already
+The unit text did not change, the fix is in `deploy/scripts/host-watcher.sh`: if the watcher is already
 running, restart it to pick the script up (`systemctl --user restart dev-workspace-host-watcher.service`).
-On macOS do the same with the LaunchAgent (`bash scripts/host-watcher.sh --uninstall`, then `--install`).
+On macOS do the same with the LaunchAgent (`bash deploy/scripts/host-watcher.sh --uninstall`, then `--install`).

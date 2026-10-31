@@ -11,10 +11,10 @@ PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # `docker compose down -v` below finds the project through the current directory; run from
 # anywhere else it fails (silently, see `|| true`) and the script still deletes the project.
 cd "$PROJECT_DIR"
-# shellcheck source=scripts/lib/env.sh
-source "$PROJECT_DIR/scripts/lib/env.sh"
-# shellcheck source=scripts/lib/scrub.sh
-source "$PROJECT_DIR/scripts/lib/scrub.sh"
+# shellcheck source=deploy/scripts/lib/env.sh
+source "$PROJECT_DIR/deploy/scripts/lib/env.sh"
+# shellcheck source=deploy/scripts/lib/scrub.sh
+source "$PROJECT_DIR/deploy/scripts/lib/scrub.sh"
 TUNNEL_NAME="$(env_value TUNNEL_NAME dev-workspace)"
 
 FORCE=false

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Install the host-side services as systemd USER units (Linux). The macOS equivalents are
-# the LaunchAgents written by scripts/setup-cloudflared.sh and scripts/host-watcher.sh.
+# the LaunchAgents written by deploy/scripts/setup-cloudflared.sh and deploy/scripts/host-watcher.sh.
 #
 #   install.sh --cloudflared     keep the Cloudflare Tunnel running
-#                                (run scripts/setup-cloudflared.sh --hostname ... first)
+#                                (run deploy/scripts/setup-cloudflared.sh --hostname ... first)
 #   install.sh --host-watcher    watch for a self-destruct and clean up this host
 #   install.sh --uninstall       remove both units
 #   --dry-run                    print the units instead of installing them
@@ -14,8 +14,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-# shellcheck source=../../scripts/lib/env.sh
-source "$PROJECT_DIR/scripts/lib/env.sh"
+# shellcheck source=../scripts/lib/env.sh
+source "$PROJECT_DIR/deploy/scripts/lib/env.sh"
 
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 CLOUDFLARED_UNIT="cloudflared-dev-workspace.service"
@@ -65,7 +65,7 @@ After=network-online.target
 
 [Service]
 WorkingDirectory=${PROJECT_DIR}
-ExecStart=/bin/bash ${PROJECT_DIR}/scripts/host-watcher.sh
+ExecStart=/bin/bash ${PROJECT_DIR}/deploy/scripts/host-watcher.sh
 Restart=always
 RestartSec=10
 
