@@ -43,7 +43,6 @@ use sdw_infra::gocryptfs::{cleanup_stale_mount, init_vault, is_initialized, Gocr
 use sdw_infra::replication::{ensure_cipher_repo, EnsureResult};
 use sdw_infra::restic::{init_repository, probe_repository};
 use sdw_infra::supervisor::enable_autostart;
-use sdw_infra::time::now_ms;
 use sdw_infra::unlock_hooks::workspace_unlock_hooks;
 use std::fs;
 use std::io::Read;
@@ -60,15 +59,19 @@ fn announce(message: &str) {
     println!("{message}");
 }
 
-/// 24 hex chars from /dev/urandom (a generated password, for when PASSWORD is unset).
+/// 32 hex chars = 16 bytes from /dev/urandom, used as the master password when PASSWORD is unset.
+/// This string becomes the gocryptfs vault passphrase, so there is NO low-entropy fallback: if
+/// /dev/urandom cannot be read we abort the boot rather than mint a guessable vault key.
 fn generate_password() -> String {
     let mut buf = [0u8; 16];
-    if let Ok(mut f) = fs::File::open("/dev/urandom") {
-        if f.read_exact(&mut buf).is_ok() {
-            return buf.iter().map(|b| format!("{b:02x}")).take(24).collect();
+    match fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut buf)) {
+        Ok(()) => buf.iter().map(|b| format!("{b:02x}")).collect(),
+        Err(e) => {
+            eprintln!("FATAL: cannot read /dev/urandom to generate a password: {e}");
+            eprintln!("Refusing to create a vault with a guessable master key; set PASSWORD in .env.");
+            std::process::exit(1);
         }
     }
-    format!("{:024x}", now_ms())
 }
 
 fn git_config_global(key: &str, value: &str) {

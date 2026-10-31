@@ -165,7 +165,7 @@ launchctl unload ~/Library/LaunchAgents/com.cloudflare.tunnel.plist
 | DESKTOP_STACK | 构建时选择桌面栈：`kasmvnc`（默认）/ `selkies` / `both` |
 | SYNC_ENABLED | 默认关闭。启用浏览器文件同步页 `/sync/`；启用后每次解锁会把 vault 口令写入 `/workspace/.credentials/sync-passphrase`，关闭后下次解锁会删除它 |
 | REMOTE_DESTRUCT_ENABLED | 默认关闭。启用远程自毁端点 `POST /sync/api/destruct`；口令用 `destruct-passphrase` 查看 |
-| RESTIC_REPOSITORY | 设置后启用实时备份（还需 `RESTIC_PASSWORD` 与 S3 凭证）；仓库不存在时启动时自动创建。备份的是**明文**工作区（含 `.credentials/`），仅由 `RESTIC_PASSWORD` 保护，自毁不会删除它，要把它当作 vault 的一部分对待 |
+| RESTIC_REPOSITORY | 设置后启用实时备份（还需 `RESTIC_PASSWORD` 与 S3 凭证）；仓库不存在时启动时自动创建。备份的是**明文**工作区，但**排除** `.credentials/`（SSH 密钥、同步口令）、`node_modules`、各类缓存/构建目录（清单见 `src/rust/core/src/backup/domain.rs` 的 `BACKUP_EXCLUSION_SET`）。**注意**：只配 restic 时 `.credentials/` 不在任何备份里——它只随加密 vault 的 git 复制（`VAULT_GIT_REPO`）走。restic 仓库是**明文**、仅由 `RESTIC_PASSWORD` 保护，自毁不删除它，要当作 vault 的一部分对待 |
 | COMPOSE_FILE | 默认不设。Linux + AppArmor 的宿主机取消注释，见上文 |
 
 ## 验证（smoke test）
