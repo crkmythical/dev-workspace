@@ -16,6 +16,7 @@ on:
     paths:
       - 'image/**'
       - 'scripts/**'
+      - 'rust/**'
       - 'packages/**'
       - 'docker-compose*.yml'
       - 'tests/smoke/**'
