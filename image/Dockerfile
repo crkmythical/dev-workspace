@@ -1,6 +1,9 @@
 # BASE_IMAGE is a global ARG: it must be declared before the first FROM so the final
 # `FROM ${BASE_IMAGE}` (after the rust-builder stage) can still see it.
 ARG BASE_IMAGE=kalilinux/kali-rolling
+# Also global: the selkies-web stage selector below resolves `FROM selkies-web-${DESKTOP_STACK}`.
+# The final stage re-declares it for its RUN blocks.
+ARG DESKTOP_STACK=kasmvnc
 
 # --- Rust build stage: the sync-service daemon --------------------------------------------------
 # Compiled to a static musl binary so it drops into any base (glibc or not) with no runtime deps.
@@ -23,6 +26,20 @@ COPY package.json bunfig.toml bun.lock ./
 COPY packages/ ./packages/
 RUN bun install --frozen-lockfile 2>/dev/null || bun install
 RUN cd packages/spa && bunx vite build
+
+# --- Selkies web client (conditional) -----------------------------------------------------------
+# The static H.264 web client (~6 MB) is only served by the Selkies stack. Select a source stage by
+# DESKTOP_STACK so a KasmVNC-only image does not carry it at all (a copy-then-delete would still
+# bake it into a layer): `present` holds the files, the kasmvnc stage is an empty /web, and the
+# final stage COPYs /web from whichever one DESKTOP_STACK selects.
+FROM ${BASE_IMAGE} AS selkies-web-present
+RUN mkdir -p /web
+COPY image/selkies-web/ /web/
+FROM ${BASE_IMAGE} AS selkies-web-kasmvnc
+RUN mkdir -p /web
+FROM selkies-web-present AS selkies-web-both
+FROM selkies-web-present AS selkies-web-selkies
+FROM selkies-web-${DESKTOP_STACK} AS selkies-web
 
 # Base image toggle.
 #   Default: kalilinux/kali-rolling — the production base, full pentest toolchain
@@ -321,8 +338,9 @@ COPY image/etc/supervisor/backup-watcher.conf /etc/supervisor/conf.d/backup-watc
 # Desktop default configs
 COPY image/etc/desktop/ /opt/workspace/image/etc/desktop/
 
-# Selkies static web client (served by Caddy)
-COPY image/selkies-web/ /usr/share/selkies/web/
+# Selkies static web client (served by Caddy). Empty in a KasmVNC-only image — the selkies-web
+# stage selector above drops it there, and only the Selkies Caddy snippet serves this path.
+COPY --from=selkies-web /web /usr/share/selkies/web
 
 # XFCE launcher (waits for X server before starting the session; both stacks)
 RUN cp /opt/workspace/image/etc/desktop/start-xfce.sh /usr/local/bin/start-xfce.sh && \
