@@ -14,6 +14,7 @@ use sdw_core::egress::layout::{
 };
 use sdw_core::egress::usecases::bring_up_egress;
 use sdw_core::plugins::all_vaults;
+use sdw_core::vault::destruct::DESTRUCT_COMPLETED_PATH;
 use sdw_core::vault::domain::{explain_unlock_failure, VAULT_GITATTRIBUTES, VAULT_GITIGNORE};
 use sdw_core::vault::layout::VAULT_CIPHER_DIR;
 use sdw_core::vault::ports::UnlockHook;
@@ -367,6 +368,14 @@ fn run_supervisord() -> Result<(), String> {
 }
 
 pub fn run(_args: &[String]) -> i32 {
+    // Inert mode: a completed self-destruct leaves this marker. Do not boot — stay alive so the
+    // container does not crash-loop. (Previously the shell entrypoint did this before delegating.)
+    if Path::new(DESTRUCT_COMPLETED_PATH).exists() {
+        println!("Environment destroyed. Container is inert. Clean up: docker compose down -v");
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(3600));
+        }
+    }
     let config = load_config(system_env);
     let mut auth = Auth {
         master_password: String::new(),

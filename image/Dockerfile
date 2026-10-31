@@ -113,7 +113,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Bun is gone from the runtime image: the CLI, entrypoint and daemons are the Rust `sdw` binary
 # (installed below) and the SPA is pre-built in the spa-builder stage. Only the pinned third-party
-# binaries and the two Rust binaries run here.
+# binaries and the single `sdw` binary run here.
 
 # Desktop layer — COMMON deps (both stacks): X server, XFCE, fonts, mesa, dbus.
 # XFCE is the session for BOTH stacks (selkies and kasmvnc). This eliminates the
@@ -358,8 +358,7 @@ RUN f=/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-session.xml && \
     grep -q 'name="ssh-agent"' "$f" && grep -q 'FailsafeSessionName' "$f"
 
 # The Rust command surface + entrypoint + daemons: one multi-call binary. `sdw install` symlinks
-# every command in packages/cli/package.json's `bin` map to it (argv[0] dispatch), replacing the
-# per-command Bun launchers.
+# every bin command (BIN_COMMANDS in rust/cli/src/dispatch.rs) to it (argv[0] dispatch).
 COPY --from=rust-builder /sdw /usr/local/bin/sdw
 RUN /usr/local/bin/sdw install /usr/local/bin
 
@@ -369,9 +368,8 @@ RUN /usr/local/bin/sdw install /usr/local/bin
 # The compiled SPA (built by the Bun spa-builder stage; the browser SPA stays TypeScript).
 COPY --from=spa-builder /opt/workspace/packages/spa/dist /opt/workspace/packages/spa/dist
 
-# Copy entrypoint (minimal shell → exec sdw entrypoint)
-COPY scripts/entrypoint.sh /usr/local/lib/workspace/entrypoint.sh
-RUN chmod +x /usr/local/lib/workspace/entrypoint.sh
+# No shell entrypoint: tini execs `sdw entrypoint` directly (it does the inert-mode check, the
+# required-env check and the whole boot). See ENTRYPOINT below.
 
 # Environment defaults (proxy points to Clash)
 ENV http_proxy=http://127.0.0.1:7890 \
@@ -387,4 +385,4 @@ ENV http_proxy=http://127.0.0.1:7890 \
 HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=3 \
   CMD nc -z 127.0.0.1 8080 && nc -z 127.0.0.1 8082 || exit 1
 
-ENTRYPOINT ["tini", "--", "/usr/local/lib/workspace/entrypoint.sh"]
+ENTRYPOINT ["tini", "--", "/usr/local/bin/sdw", "entrypoint"]
