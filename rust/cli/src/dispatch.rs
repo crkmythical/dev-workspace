@@ -4,6 +4,60 @@
 /// invoked through a command-named symlink, argv[0]'s basename is the command.
 const BIN_NAME: &str = "sdw";
 
+/// The commands that get a PATH symlink (the TS `bin` map). entrypoint / backup-watcher /
+/// vault-sync are invoked as `sdw <name>` by their callers (entrypoint.sh, supervisord, cron), so
+/// they are not symlinked.
+const BIN_COMMANDS: &[&str] = &[
+    "backup-init",
+    "desktop-install",
+    "desktop-start",
+    "desktop-stop",
+    "destruct-passphrase",
+    "doctor",
+    "init-pentest",
+    "init-vault",
+    "lock-pentest",
+    "lock-vault",
+    "pentest",
+    "pentest-bootstrap",
+    "pull",
+    "push",
+    "self-destruct",
+    "setup",
+    "unlock-pentest",
+    "unlock-vault",
+];
+
+/// `sdw install [dir]` — symlink every bin command in `dir` (default /usr/local/bin) to this
+/// binary, so each command name on PATH dispatches via argv[0]. Replaces install-bins.ts.
+fn install_symlinks(dir: &str) -> i32 {
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("install: cannot find own path: {e}");
+            return 1;
+        }
+    };
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        eprintln!("install: cannot create {dir}: {e}");
+        return 1;
+    }
+    for name in BIN_COMMANDS {
+        let link = std::path::Path::new(dir).join(name);
+        let _ = std::fs::remove_file(&link);
+        if let Err(e) = std::os::unix::fs::symlink(&exe, &link) {
+            eprintln!("install: symlink {name} failed: {e}");
+            return 1;
+        }
+    }
+    println!(
+        "Installed {} command symlinks in {dir} -> {}",
+        BIN_COMMANDS.len(),
+        exe.display()
+    );
+    0
+}
+
 /// Commands wired up so far. The rest of packages/cli lands here over the course of stage 3;
 /// until then an unknown command is an error and the image keeps running Bun.
 const COMMANDS: &[&str] = &[
@@ -60,6 +114,7 @@ fn dispatch(command: &str, args: &[String]) -> i32 {
         "destruct-passphrase" => commands::destruct_passphrase::run(args),
         "doctor" => commands::doctor::run(args),
         "entrypoint" => commands::entrypoint::run(args),
+        "install" => install_symlinks(args.first().map(String::as_str).unwrap_or("/usr/local/bin")),
         "init-pentest" => commands::init_pentest::run(args),
         "init-vault" => commands::init_vault::run(args),
         "lock-pentest" => commands::lock_pentest::run(args),
