@@ -85,13 +85,13 @@
 ### 安全与可靠性
 
 - **出口是尽力而为，没有强制**（`docs/threat-model.md`）。要强制需要独立的防火墙层；容器内进程都是 root，按 uid 的规则无效，需要基于 mark 的方案。
-- **主密码会进容器日志**（启动横幅）和 code-server 的 `config.yaml`，且 vault 口令就是它，见 threat-model 的 Non-Guarantees。留空由容器生成的话，重建容器会丢，见上。
+- **主密码**：启动横幅不再打印它（2026-10-31）——只有在 PASSWORD 留空、容器自己生成口令时才打印（否则无从得知）；来自 `.env` 的口令永不进日志。它仍写进 code-server 的 `config.yaml`（code-server 要靠它认证，该文件在容器内、不随 `docker logs` 外泄）。vault 口令就是它，见 threat-model 的 Non-Guarantees。
 - **`docker-compose.apparmor.yml` 去掉容器最后一层 AppArmor 约束**。更好的做法是写一份只放行 FUSE 挂载的自定义 profile，目前没有。
-- **restic 备份仓库不受自毁影响**，里面是明文工作区，只靠 `RESTIC_PASSWORD` 保护。`.credentials/`（ssh 密钥、同步口令）**已加入排除集**（2026-10-30，`BACKUP_EXCLUSION_SET`），不再进 restic 仓库；仍可从加密的 vault git 复制恢复（`VAULT_GITIGNORE` 不排除它）。开放项：自毁时连带删除 restic 仓库（需要仓库凭据），尚未做。
+- **restic 备份仓库不受自毁影响**，里面是明文工作区，只靠 `RESTIC_PASSWORD` 保护。`.credentials/`（ssh 密钥、同步口令）**已加入排除集**（2026-10-30，`BACKUP_EXCLUSION_SET`），不再进 restic 仓库；仍可从加密的 vault git 复制恢复（`VAULT_GITIGNORE` 不排除它）。自毁时连带删除 restic 仓库（需要仓库凭据）：**按决定不做**，把该仓库当作 vault 的一部分对待。
 - **`lock-vault` 在 code-server 等仍占用挂载时需要强制（lazy）卸载**，之后已打开文件的进程仍能访问。空闲的 code-server 不占用（量过，干净卸载成功），打开过东西之后才占用。`lock-vault` 可能就跑在 code-server 的终端里，所以没有去停 code-server；彻底的办法是重启容器。
-- **重放窗口不跨重启**：服务重启后，5 分钟容差内已见过的 nonce 可以被重放。
+- **重放窗口不跨重启**（服务重启后 5 分钟容差内已见过的 nonce 可被重放一次）：**按决定接受**。被截获的请求本就在 Caddy 认证之后、E2E 加密之内，且只在重启那一刻的窗口里，重放一个上传无非重传同一文件。
 - ~~远程自毁路由没有可注入依赖~~ **已解决**（Rust 迁移）：触发器是可注入的 `DestructTrigger`（`AppConfig.destruct`），`sync-service/tests/routes.rs` 用假触发器覆盖了成功路径，不再碰不可逆边界。
-- **监听在 vault 里的 unix 套接字会占住挂载，而 `fuser` 看不到**，所以 `unmountVault` 的升级阶梯（杀占用者再重试）对这类占用者也无能为力，只能落到 lazy 卸载。桌面会话的 `ssh-agent` 是这样的一个占用者，已经关掉（见上）；用户自己在 vault 里建的套接字同理。可以让 `killHolders` 额外读 `/proc/net/unix`，把路径在挂载点下的套接字的主人也算进去。
+- ~~监听在 vault 里的 unix 套接字 `fuser` 看不到~~ **已解决**（2026-10-31）：卸载升级的 filesystem 阶段现在也读 `/proc/net/unix`，把挂载点下绑定套接字的属主（经 `/proc/<pid>/fd` 映射）并入 kill 集（纯解析 `socket_inodes_under_mount`，带单测）；调用者自身的进程谱系仍受保护，lazy 卸载仍是最后兜底。
 - **`pentest-bootstrap` 的 Kali 镜像**：官方重定向会按位置挑镜像，挑到慢的或取不到 Release 的就回退到 Debian bookworm（已验证回退可用，得到的是 bookworm，不是 Kali；工具之后用 `install-kali-tools.sh` 补）。运行时现在可用 `KALI_MIRROR` 覆盖（2026-10-30，与镜像构建同名 build-arg 一致，默认 `http.kali.org`）。
 - **debootstrap 每次启动都打印 `cannot create /pentest/rootfs/test-dev-null: Permission denied`**：vault 挂载是 `nodev`，debootstrap 的设备节点自检失败，但随后照常完成（真实运行验证过，rootfs 能用，`/dev` 由 `pentest` 另行挂载）。无害，吵。
 - **`pentest` 里 `service tor stop` 报 `Is 32 not tor?`**：init 脚本核对 PID 时看到的是另一个命名空间的数字。会话结束时整个 PID 命名空间一起收掉，所以不留进程，但会话中途不能用它停 tor。
@@ -104,10 +104,11 @@
 - `host-watcher.sh` 不再在清理后留孤儿 `docker events`（后台生产者写 FIFO，break 时按 PID kill）。
 - 删除 KasmVNC 帧缓冲调试遗留（`image/Dockerfile.kasmvnc-test`、`docker-compose.kasmvnc-test.yml`、`image/scripts/start-kasmvnc-test.sh`）。
 - `rust/sync-service` 早已不是 PoC：它是生产守护进程，`SYNC_ENABLED` 已实现并冒烟验证；现在只负责 `/sync/api/*`，静态 SPA 由 Caddy `file_server` 提供。
+- `.env.example` 生成器已用 Rust 补回（`sdw env-example` / `make env-example`，带漂移测试）。
+- 删除过时的 Parallels VM 代理变体（`parallels/`，2026-10-31）；维护中的独立代理是 `client/` 容器。
 
 仍待办：
 - Selkies 静态客户端（约 6 MB）仍复制进所有镜像（含只用 KasmVNC 的默认镜像）。真正按需复制要把 Dockerfile 的 COPY 改成按 `DESKTOP_STACK` 选的构建阶段（条件 COPY）；收益约 6 MB、有重构与从零构建验证成本，暂缓。
-- `parallels/` 的 VM 方案仍未随重构更新（保留，未删）。
 
 ## 多平台部署
 

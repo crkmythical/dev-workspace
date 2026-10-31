@@ -218,19 +218,28 @@ With the runtime all-Rust, a round of cleanup landed:
 - **Security.** `.credentials/` is excluded from the restic backup (recoverable from the
   encrypted vault replication); pentest bootstrap honours a runtime `KALI_MIRROR`.
 
-Still open (behaviour-neutral, or a threat-model call — deliberately not done here):
+Follow-up decisions (2026-10-31), after an operator review of the open items:
 
-- `.env.example` lost its generator with `packages/cli`; keep it by hand until an `sdw
-  env-example` subcommand carries the CORE_ENV_GROUPS data.
-- The replay window does not survive a `sync-service` restart (a 5-minute replay reopens);
-  persist a nonce journal or accept it.
-- The master password is printed in the boot banner and the code-server config (a documented
-  Non-Guarantee); suppressing it is a UX/threat-model decision.
-- `killHolders` could also read `/proc/net/unix` to catch unix-socket holders of the mount;
-  today it falls back to a lazy unmount, which is safe.
-- Self-destruct does not delete the restic repository (it would need the repo credentials).
-- The Selkies web client is copied into every image (incl. KasmVNC-only); `parallels/` is not
-  updated for the current architecture.
+- **Master password out of the logs.** The boot banner no longer prints it; it is echoed only
+  when it was generated (PASSWORD unset — the only way to learn it). A `.env` password never
+  reaches the logs. code-server's config.yaml still holds it (code-server needs it to
+  authenticate; that file is inside the container, not in `docker logs`).
+- **Socket holders of the mount.** The unmount escalation now also reads `/proc/net/unix` and
+  kills the owners of bound sockets under the mount (core `socket_inodes_under_mount`), so a
+  clean unmount succeeds where it used to fall back to lazy.
+- **`.env.example` generator ported to Rust** — `sdw env-example` / `make env-example`, pinned
+  by a drift test.
+- **Parallels VM variant removed** (`parallels/`); the maintained standalone proxy is `client/`.
+- **Accepted as-is (by decision):** the replay window does not survive a restart (a captured
+  upload could replay once in the 5-minute window after a restart — low impact, behind Caddy
+  auth and E2E encryption); and self-destruct does not delete the restic repository (it would
+  need the repo credentials — treat that repo as part of the vault; `.credentials/` is already
+  excluded from it).
+
+Still open (behaviour-neutral):
+
+- The Selkies web client is copied into every image (incl. KasmVNC-only); making it conditional
+  needs a `DESKTOP_STACK`-selected build stage for ~6 MB.
 
 ## croc — the CLI file-transfer path
 
