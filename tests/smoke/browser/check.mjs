@@ -211,9 +211,19 @@ if (stack === "kasmvnc" || stack === "both") {
     const sockets = [];
     page.on("websocket", (ws) => sockets.push(ws.url()));
     const response = await page.goto(`${base}/vnc/`);
+    // The KasmVNC client sets document.title after its script runs, not at the load
+    // event — wait for it to settle rather than reading once (a flaky race otherwise).
+    let titled = false;
+    try {
+      await page.waitForFunction(() => document.title === "KasmVNC", null, { timeout: 30000 });
+      titled = true;
+    } catch {
+      /* fell through; the actual title is reported in the failure detail */
+    }
     check(
       "with the master password the client loads",
-      response?.status() === 200 && (await page.title()) === "KasmVNC",
+      response?.status() === 200 && titled,
+      `status ${response?.status()}, title ${JSON.stringify(await page.title())}`,
     );
     try {
       await page.waitForFunction(() => document.body.innerText.includes("Connected"), null, {
