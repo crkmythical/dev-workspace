@@ -12,7 +12,8 @@ rust/                     The runtime — a Cargo workspace, hexagonal
 │                         replication (git), notifications, shred, caddy, destruct-key, time, ...
 ├── cli/    (sdw, bin)    The multi-call binary: every container command + the `entrypoint` and the
 │                         `backup-watcher` / `vault-sync` daemons. `sdw install` symlinks each command.
-└── sync-service          The Axum daemon behind /sync/api/* (upload / list / doctor / destruct).
+└── sync-service (lib)    The Axum sync API (/sync/api/*: upload / list / doctor / destruct); a
+                          library folded into `sdw` and run as `sdw sync-service` (one binary).
 
 packages/                 The only TypeScript — the browser sync page
 ├── core/   (@sdw/core)   The sync CLIENT the browser needs: sync/{aad,client,envelope,protocol}

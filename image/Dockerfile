@@ -5,7 +5,7 @@ ARG BASE_IMAGE=kalilinux/kali-rolling
 # The final stage re-declares it for its RUN blocks.
 ARG DESKTOP_STACK=kasmvnc
 
-# --- Rust build stage: the sync-service daemon --------------------------------------------------
+# --- Rust build stage: the sdw binary (CLI + entrypoint + daemons + sync API) -------------------
 # Compiled to a static musl binary so it drops into any base (glibc or not) with no runtime deps.
 # Pure-Rust crypto (no OpenSSL/ring), so musl-dev is all the toolchain it needs. --locked pins the
 # committed Cargo.lock. rust:1-alpine tracks the latest stable 1.x; CI can pin it tighter.
@@ -14,7 +14,6 @@ RUN apk add --no-cache musl-dev
 WORKDIR /build
 COPY rust/ ./rust/
 RUN cd rust && cargo build --release --locked \
-    && cp target/release/sync-service /sync-service \
     && cp target/release/sdw /sdw
 
 # --- SPA build stage: the browser sync page (stays TypeScript) -----------------------------------
@@ -364,9 +363,8 @@ RUN f=/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-session.xml && \
 COPY --from=rust-builder /sdw /usr/local/bin/sdw
 RUN /usr/local/bin/sdw install /usr/local/bin
 
-# The sync-service daemon (Rust). Serves /sync/* (the SPA built in the spa-builder stage, plus the
-# upload/download/doctor/destruct API) and reads SYNC_ENABLED / REMOTE_DESTRUCT_ENABLED from env.
-COPY --from=rust-builder /sync-service /usr/local/bin/sync-service
+# The sync API daemon is part of the sdw binary now: supervisord runs `sdw sync-service`. It serves
+# /sync/api/* and reads SYNC_ENABLED / REMOTE_DESTRUCT_ENABLED from env.
 
 # The compiled SPA (built by the Bun spa-builder stage; the browser SPA stays TypeScript).
 COPY --from=spa-builder /opt/workspace/packages/spa/dist /opt/workspace/packages/spa/dist

@@ -897,6 +897,7 @@ dependencies = [
  "sdw-infra",
  "serde_json",
  "signal-hook",
+ "sync-service",
 ]
 
 [[package]]

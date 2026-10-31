@@ -8,9 +8,8 @@ description = "Rust/Axum sync-service — wire- and HTTP-compatible with the TS 
 [lib]
 path = "src/lib.rs"
 
-[[bin]]
-name = "sync-service"
-path = "src/main.rs"
+# Lib-only: the daemon runs as `sdw sync-service` (cli calls run_blocking), so there is no separate
+# binary in the image. The integration tests here still exercise the lib directly.
 
 [dependencies]
 sdw-core = { path = "../core" }

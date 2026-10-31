@@ -17,6 +17,7 @@ pub mod pull;
 pub mod push;
 pub mod self_destruct;
 pub mod setup;
+pub mod sync_service;
 pub mod unlock_pentest;
 pub mod unlock_vault;
 pub mod vault_sync;

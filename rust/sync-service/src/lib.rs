@@ -28,3 +28,19 @@ pub fn app(state: AppState) -> Router {
         .route("/sync/api/destruct", post(routes::destruct::destruct))
         .with_state(state)
 }
+
+/// Build a Tokio runtime and serve the API until the process is terminated. This is the body of
+/// the sync daemon; the `sdw sync-service` subcommand calls it, so the image ships one Rust binary
+/// (`sdw`) instead of a separate sync-service executable.
+pub fn run_blocking() {
+    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+    rt.block_on(async {
+        let state = AppState::from_config(AppConfig::from_env());
+        let addr = format!("127.0.0.1:{}", sdw_core::sync::layout::SYNC_SERVICE_PORT);
+        let listener = tokio::net::TcpListener::bind(&addr)
+            .await
+            .expect("bind sync-service port");
+        println!("sync-service (rust) listening on {addr}");
+        axum::serve(listener, app(state)).await.expect("serve");
+    });
+}
