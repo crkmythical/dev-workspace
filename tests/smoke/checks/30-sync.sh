@@ -4,15 +4,15 @@
 . "$(cd "$(dirname "$0")/.." && pwd)/lib.sh"
 
 step "sync protocol, end to end"
-# The fixture imports core by relative path, so it is copied to the same path in the container.
-dx mkdir -p /opt/workspace/tests/smoke/fixtures
-docker cp "$SMOKE_DIR/fixtures/sync_e2e.ts" "$WS:/opt/workspace/tests/smoke/fixtures/sync_e2e.ts" >/dev/null
-# shellcheck disable=SC2016 # $PASSWORD is the container's, not ours
-OUT="$(dx sh -c 'cd /opt/workspace && bun run tests/smoke/fixtures/sync_e2e.ts http://127.0.0.1:8080 "$PASSWORD"' 2>&1)"
+# The browser SPA stays TypeScript, so the sync client used to prove the protocol is run with Bun
+# on the HOST (the runtime image carries no Bun) against the published port, through Caddy into the
+# Rust sync-service. The upload still lands in the container's vault, checked below.
+REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+PW="$(dx printenv PASSWORD 2>/dev/null)"
+OUT="$(cd "$REPO_ROOT" && bun run tests/smoke/fixtures/sync_e2e.ts "http://127.0.0.1:${SMOKE_PORT:-18090}" "$PW" 2>&1)"
 printf '%s\n' "$OUT" | sed 's/^/  | /'
 expect_match "every protocol check passed" '^ALL SYNC CHECKS PASSED' "$OUT"
 expect_no_match "no protocol check failed" '^FAIL ' "$OUT"
-dx rm -rf /opt/workspace/tests
 
 step "what the upload left behind"
 expect_eq "the committed file holds exactly the uploaded bytes" "hello from the smoke run" \

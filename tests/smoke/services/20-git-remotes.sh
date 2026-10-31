@@ -23,7 +23,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-job() { dx env -i HOME=/root PATH=/usr/bin:/bin /root/.bun/bin/bun run /opt/workspace/packages/cli/src/vault-sync.ts; }
+job() { dx env -i HOME=/root PATH=/usr/bin:/bin /usr/local/bin/sdw vault-sync; }
 as_cron() { dx env -i HOME=/root PATH=/usr/bin:/bin "$@"; }
 local_head() { dx git -C "$CIPHER" rev-parse HEAD; }
 # What the start-up's prepare-replication step does with VAULT_GIT_REPO: the same function.

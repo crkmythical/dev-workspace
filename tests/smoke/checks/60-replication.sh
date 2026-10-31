@@ -9,14 +9,14 @@ REMOTE=/srv/smoke-remote.git
 # The real cron job (every 30 minutes) would race the manual runs below: pause it.
 dx supervisorctl stop vault-sync-cron >/dev/null
 trap 'dx supervisorctl start vault-sync-cron >/dev/null 2>&1' EXIT
-job() { dx env -i HOME=/root PATH=/usr/bin:/bin /root/.bun/bin/bun run /opt/workspace/packages/cli/src/vault-sync.ts; }
+job() { dx env -i HOME=/root PATH=/usr/bin:/bin /usr/local/bin/sdw vault-sync; }
 remote_commits() { dx git -C "$REMOTE" rev-list --count main 2>/dev/null || echo 0; }
 remote_head() { dx git -C "$REMOTE" rev-parse main 2>/dev/null; }
 local_head() { dx git -C /vault/cipher rev-parse HEAD 2>/dev/null; }
 sync_failures() { dx cat /var/run/vault-sync/consecutive-failures 2>/dev/null || echo 0; }
 
 step "set-up by the start-up"
-expect_match "the cron job is installed" 'vault-sync\.ts' "$(dx cat /etc/cron.d/vault-sync)"
+expect_match "the cron job is installed" 'sdw vault-sync' "$(dx cat /etc/cron.d/vault-sync)"
 expect_eq "the cipher directory has the configured origin" "$REMOTE" "$(dx git -C /vault/cipher remote get-url origin 2>&1)"
 expect_true "it is ignoring what must never be committed" dx test -s /vault/cipher/.gitignore
 dx git init -q --bare -b main "$REMOTE"
