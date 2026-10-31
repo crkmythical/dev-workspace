@@ -27,6 +27,10 @@ pub const BACKUP_PRUNE_CADENCE_MS: i64 = 6 * 60 * 60 * 1000;
 /// Exclusion set — one source of truth for the watcher ignore and restic --exclude. Checked
 /// against ALL path segments, so nested occurrences (project/node_modules) are excluded too.
 pub const BACKUP_EXCLUSION_SET: &[&str] = &[
+    // Secrets (ssh keys, the sync passphrase). Kept out of the restic repo, which is plaintext on
+    // S3 under only RESTIC_PASSWORD; still recoverable from the encrypted vault git replication,
+    // whose .gitignore (VAULT_GITIGNORE) does not drop them.
+    ".credentials",
     "node_modules",
     ".git",
     ".cache",
