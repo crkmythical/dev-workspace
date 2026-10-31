@@ -8,7 +8,7 @@
 use std::sync::{Arc, Mutex};
 
 use sdw_core::sync::crypto::derive_key;
-use sdw_core::sync::layout::{SHARED_DIR, SPA_DIST_DIR, SYNC_PASSPHRASE_PATH, UPLOAD_TRACKING_DIR};
+use sdw_core::sync::layout::{SHARED_DIR, SYNC_PASSPHRASE_PATH, UPLOAD_TRACKING_DIR};
 use sdw_core::sync::rate_limit::{RateLimitConfig, RateLimiter};
 use sdw_core::sync::replay::ReplayWindow;
 use sdw_core::vault::destruct::{
@@ -28,7 +28,6 @@ pub struct AppState {
     pub dirs: Dirs,
     pub passphrase_path: Arc<str>,
     pub key_hash_path: Arc<str>,
-    pub spa_dir: Arc<str>,
     pub destruct: Arc<dyn DestructTrigger>,
     key: Arc<Mutex<Option<[u8; 32]>>>,
 }
@@ -39,7 +38,6 @@ pub struct AppConfig {
     pub dirs: Dirs,
     pub passphrase_path: String,
     pub key_hash_path: String,
-    pub spa_dir: String,
     pub destruct: Arc<dyn DestructTrigger>,
 }
 
@@ -55,7 +53,6 @@ impl AppConfig {
             },
             passphrase_path: SYNC_PASSPHRASE_PATH.into(),
             key_hash_path: DESTRUCT_KEY_HASH_PATH.into(),
-            spa_dir: SPA_DIST_DIR.into(),
             destruct: Arc::new(SpawnSelfDestruct),
         }
     }
@@ -74,7 +71,6 @@ impl AppState {
             dirs: cfg.dirs,
             passphrase_path: cfg.passphrase_path.into(),
             key_hash_path: cfg.key_hash_path.into(),
-            spa_dir: cfg.spa_dir.into(),
             destruct: cfg.destruct,
             key: Arc::new(Mutex::new(None)),
         }

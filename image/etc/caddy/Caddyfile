@@ -8,9 +8,16 @@
 	# All bind 127.0.0.1 and sit behind the shared $DESKTOP_BCRYPT_HASH auth.
 	import /etc/caddy/desktop.d/*.caddy
 
-	# --- Sync service ---
-	handle /sync/* {
+	# --- Sync: static SPA served by Caddy, API proxied to the daemon ---
+	# sync-service is API-only (/sync/api/*). The compiled SPA is static files the image
+	# build placed in /opt/workspace/packages/spa/dist (vite base=/sync/), so Caddy serves
+	# them directly; handle_path strips the /sync prefix to map onto the dist root.
+	handle /sync/api/* {
 		reverse_proxy 127.0.0.1:8081
+	}
+	handle_path /sync/* {
+		root * /opt/workspace/packages/spa/dist
+		file_server
 	}
 
 	# --- code-server (default) ---

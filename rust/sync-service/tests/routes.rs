@@ -49,7 +49,6 @@ fn harness(features: Features) -> Harness {
         },
         passphrase_path: p.join("sync-passphrase").to_string_lossy().into_owned(),
         key_hash_path: p.join("key-hash").to_string_lossy().into_owned(),
-        spa_dir: p.join("spa").to_string_lossy().into_owned(),
         destruct: Arc::new(Flag(fired.clone())),
     };
     Harness {

@@ -18,12 +18,10 @@ use axum::{
     Router,
 };
 
-/// Build the application router. The full /sync/* surface Caddy proxies here: the
-/// static sync page plus the upload / download / doctor / destruct API.
+/// Build the application router: the /sync/api/* surface (upload / download / doctor /
+/// destruct). The static SPA under /sync/ is served by Caddy's file_server, not here.
 pub fn app(state: AppState) -> Router {
     Router::new()
-        .route("/sync/", get(routes::spa::spa_index))
-        .route("/sync/assets/*path", get(routes::spa::spa_asset))
         .route("/sync/api/upload", post(routes::upload::upload))
         .route("/sync/api/download", get(routes::download::download))
         .route("/sync/api/doctor", get(routes::doctor::doctor))

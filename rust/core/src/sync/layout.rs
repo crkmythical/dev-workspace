@@ -4,9 +4,6 @@
 
 pub const SYNC_SERVICE_PORT: u16 = 8081;
 
-/// Where the image build puts the compiled SPA (served by the sync service under /sync/).
-pub const SPA_DIST_DIR: &str = "/opt/workspace/packages/spa/dist";
-
 /// Files received from the browser end up here. `{WORKSPACE_MOUNT}/shared`.
 pub const SHARED_DIR: &str = "/workspace/shared";
 
