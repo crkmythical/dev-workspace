@@ -1,59 +1,64 @@
 # Architecture
 
-## Monorepo Structure
+## Structure
 
-Hexagonal: `core` holds the rules and use cases, `infra` implements core's ports, and
-`cli` / `server` / `spa` are driving adapters that wire them together.
+The runtime is Rust; the only TypeScript left is the browser sync page.
 
 ```
-packages/
-├── core/    Pure rules + use cases, one folder per bounded context. No node:/bun imports.
-│            shared/ vault/ sync/ backup/ desktop/ egress/ workspace/ plugins/
-├── infra/   Adapters for core's ports: gocryptfs, supervisorctl, Clash, restic helpers,
-│            sync crypto/store, notifications, shred, ...
-├── cli/     Container commands (init-vault, unlock-vault, doctor, ...), entrypoint-main,
-│            and plugins/<id>/commands for each plugin's own commands
-├── server/  Hono sync service: thin routes over core's sync use cases
-└── spa/     Browser sync page (File System Access API + WebCrypto), shares core's client
+rust/                     The runtime — a Cargo workspace, hexagonal
+├── core/   (sdw-core)    Pure rules + use cases, one folder per bounded context, no I/O:
+│                         shared/ vault/ sync/ backup/ desktop/ egress/ workspace/ plugins/ transfer/
+├── infra/  (sdw-infra)   Adapters for core's ports: gocryptfs, supervisorctl, Clash, restic,
+│                         replication (git), notifications, shred, caddy, destruct-key, time, ...
+├── cli/    (sdw, bin)    The multi-call binary: every container command + the `entrypoint` and the
+│                         `backup-watcher` / `vault-sync` daemons. `sdw install` symlinks each command.
+└── sync-service          The Axum daemon behind /sync/api/* (upload / list / doctor / destruct).
+
+packages/                 The only TypeScript — the browser sync page
+├── core/   (@sdw/core)   The sync CLIENT the browser needs: sync/{aad,client,envelope,protocol}
+│                         (WebCrypto; also run by the host smoke fixture).
+└── spa/    (@sdw/spa)    The sync page (File System Access API + WebCrypto); Vite-built, served as
+                          static files by Caddy under /sync/.
 ```
 
-The dependency rules are executable, not aspirational: `tests/architecture.test.ts`
-(ratchet, R1-R10) fails the build on a new violation. In short: core imports no other
-package and no runtime; infra depends only on core; server and cli never import each
-other; `process.env` is read only in entry points (`loadConfig`); absolute paths live
-only in each context's `layout.ts`.
+Hexagonal, unchanged by the Rust port: `core` holds the rules and use cases and depends on no
+other crate; `infra` implements core's ports; `cli` and `sync-service` are the driving adapters.
+Inside core the dependency points inward: `domain` <- `ports` <- `usecases`. Every core module
+has mirrored tests, and `rust/sync-service/tests/parity.rs` pins the wire protocol to golden
+vectors. The retired TS runtime (`packages/{server,cli,infra}` + the reimplemented core domain)
+was replaced binary-for-binary; see docs/rust-migration.md.
 
-Inside core the dependency points inward: `domain` <- `ports` <- `usecases`.
+`tests/architecture.test.ts` still guards the surviving TypeScript: core is a leaf, the SPA
+depends only on core, and neither imports a node:/bun runtime (the browser invariants).
 
 ## Plugins
 
 Optional features sit behind a deliberately tiny contract (`core/src/plugins`): a plugin
 owns encrypted volumes. Everything that treats "all the volumes" alike (destroy, stale
-mount cleanup at boot, `doctor`) iterates the registry (`PLUGINS`, `ALL_VAULTS`) and
-never names a plugin. Rule R12 in `tests/architecture.test.ts` enforces that: nothing
-outside a plugin's own folders (and the registry line) may mention its name.
+mount cleanup at boot, `doctor`) iterates the registry (`plugins()`, `all_vaults()`) and
+never names a plugin. The Rust code keeps this discipline; the automated R12 check that once
+policed it retired with the TS `cli`/`infra` it scanned.
 
 `pentest` is the only plugin. It is not built-in: sync and remote self-destruct are
 built-in features, off unless `SYNC_ENABLED` / `REMOTE_DESTRUCT_ENABLED` is set.
 
-To drop pentest: delete `core/src/plugins/pentest/`, `cli/src/plugins/pentest/` and
-`core/tests/plugins/pentest.test.ts`, remove its line from `core/src/plugins/index.ts`,
-and its five entries from the `bin` map in `cli/package.json`. Leftovers that do not
+To drop pentest: delete `rust/core/src/plugins/pentest/` and `rust/cli/src/commands/pentest_*`,
+remove its entry from `plugins()` in `rust/core/src/plugins/mod.rs` and its commands from
+`rust/cli/src/dispatch.rs`. Leftovers that do not
 affect the build: `PENTEST_VAULT_PASSWORD` in `.env.example`, the `cache-data` volume in
 `docker-compose.yml`, and `debootstrap` plus the `/pentest` directories in the
-Dockerfile. A drill in a throwaway copy (two files edited, two directories deleted)
-passed biome, the type check, the full test suite and bundling of every entry point,
-with no mention of pentest left under `packages/`.
+Dockerfile. The plugin is otherwise self-contained — nothing outside its own folders and the
+registry names it — so removing it leaves no dangling reference elsewhere.
 
-Commands are declared once, in `cli/package.json`'s `bin` map; the image build installs
-a launcher for each (`cli/scripts/install-bins.ts`), and a test fails when an entry file
-is neither declared there nor a known service.
+Commands are declared once, in `BIN_COMMANDS` in `rust/cli/src/dispatch.rs`; `sdw install`
+symlinks each name to the multi-call binary (argv[0] dispatch, busybox style), replacing the
+per-command launchers.
 
 ## Start-up
 
-`cli/src/entrypoint-main.ts` is a composition root. The order of the steps, what a
-failure of each one means, and which steps need the vault are data in
-`core/workspace/boot.ts` (`BOOT_PLAN`), tested without a container.
+`sdw entrypoint` (`rust/cli/src/commands/entrypoint.rs`) is the composition root. The order of
+the steps, what a failure of each one means, and which steps need the vault are data in
+`rust/core/src/workspace/boot.rs` (`BOOT_PLAN`), tested without a container.
 
 | Step | If it fails | Needs vault |
 |------|-------------|-------------|
@@ -74,24 +79,25 @@ without that piece. Only a missing password or a missing supervisord stops the b
 
 ### Shutdown
 
-`docker stop` sends SIGTERM to tini (PID 1), which passes it to `entrypoint-main.ts`; that
-hands it to supervisord, which stops every program in reverse start order and exits. The
-container stops in about 4 seconds with exit code 0 (measured). Both self-destruct paths end
-in the same SIGTERM to PID 1. Before this was wired up, Bun died on the signal and the kernel
-SIGKILLed whatever was still running.
+`docker stop` sends SIGTERM to tini (PID 1), which passes it to `sdw entrypoint`; that hands it
+to supervisord (via signal-hook), which stops every program in reverse start order and exits. The
+container stops in about 4 seconds with exit code 0 (measured). Both self-destruct paths end in
+the same SIGTERM to PID 1. (The old TS entrypoint died on the signal and let the kernel SIGKILL
+whatever was still running; forwarding it was a fix carried into the Rust port.)
 
 ## Egress
 
 Routing through Clash is **best effort, not enforced** (see `docs/threat-model.md`).
-`core/egress` models what was observed: `confirmed`, `degraded` (proxy up, probe through
+`rust/core/src/egress` models what was observed: `confirmed`, `degraded` (proxy up, probe through
 it failed) or `down` (proxy not listening). It is reported in the start-up banner,
 `/var/run/egress-status`, `doctor` (live) and `.notifications/egress-degraded.md`.
 
 ## Runtime Stack
 
-- **Bun** — TypeScript runtime (replaces Node.js)
-- **Hono** — HTTP framework (12,640 req/s)
-- **Caddy** — Reverse proxy (code-server + sync-service + dual desktops on single port)
+- **Rust** — the CLI, entrypoint, daemons (`sdw` multi-call binary) and the sync service, all
+  static musl binaries; no language runtime ships in the image.
+- **Axum / Tokio** — the sync service's HTTP server (`/sync/api/*`)
+- **Caddy** — Reverse proxy (code-server + the sync-service API + the static SPA + dual desktops on single port)
 - **KasmVNC (default) / Selkies (optional)** — Browser-accessible remote desktop; the image holds one or both, chosen at build time. See "Remote Desktop: Selkies vs KasmVNC" below.
 - **Clash/mihomo** — Encrypted egress proxy (proxy-providers + url-test auto-selection, 1h subscription refresh, 3min health-check)
 - **gocryptfs** — Disk encryption (AES-256, 4KB blocks)
@@ -143,19 +149,20 @@ The backup-watcher holds inotify watches on `/workspace` and must be stopped bef
 
 ## Releasing the vault
 
-`lock-vault`, `lock-pentest` and self-destruct all go through `unmountVault`
-(`infra/gocryptfs.ts`): stop the holders we know about (desktops, the backup watcher), then
-`fusermount -u`. The escalating mode (`lock-pentest`, self-destruct) then kills whatever
-still uses the mount and retries, and finally detaches it lazily. `fuser` comes from `psmisc`
-in the image. Two rules, both found by running self-destruct from a terminal inside the
-container:
+`lock-vault`, `lock-pentest` and self-destruct all go through `unmount_vault`
+(`rust/infra/src/gocryptfs.rs`): stop the holders we know about (desktops, the backup watcher),
+then `fusermount -u`. The escalating mode (`lock-pentest`, self-destruct) then kills whatever
+still uses the mount and retries, and finally detaches it lazily. `fuser` (from `psmisc`) finds
+fd holders; a second pass reads `/proc/net/unix` to catch a process that only holds a bound
+socket under the mount, which `fuser` cannot see. Two rules, both found by running self-destruct
+from a terminal inside the container:
 
 - the calling process steps out of the mount first. A process standing in it blocks the
   unmount, and after a lazy detach `getcwd` fails, so every later subprocess dies with ENOENT
   (the keys were never erased);
 - the kill step never touches the caller or any of its ancestors (`lineage` / `killable` in
-  `core/vault/domain.ts`). Killing its shell hangs up the terminal and takes the caller down
-  with it.
+  `rust/core/src/vault/domain.rs`). Killing its shell hangs up the terminal and takes the caller
+  down with it.
 
 ## Host services
 

@@ -75,7 +75,7 @@ What this system does NOT promise, so nobody relies on it:
 | 宿主机残留 | host-watcher 检测 marker → `destroy.sh --paranoid` (清理 Docker 缓存、shell 历史、DNS) |
 | 密钥派生弱点 | HKDF-SHA256 with domain-separated salt ("destruct-key-v1") |
 | 容器重启后恢复 | `completed` marker 持久化在 named volume → entrypoint 检测 → inert mode |
-| 挂载被占用 (EBUSY) | 逐级升级：`fusermount -u` → 杀掉占用挂载点的进程 → 杀掉占用整个文件系统的进程 → lazy 卸载。**绝不杀调用者自己及其祖先进程**（终端里运行 `self-destruct` 时，杀掉 shell 会挂断终端并带走调用者，密钥来不及销毁）；调用者先离开挂载点（否则 lazy 卸载后 `getcwd` 失败，后续每一步都报 ENOENT）。两种情形都在容器里复现并修复，见 `packages/infra/src/gocryptfs.ts` |
+| 挂载被占用 (EBUSY) | 逐级升级：`fusermount -u` → 杀掉占用挂载点的进程 → 杀掉占用整个文件系统的进程 → lazy 卸载。**绝不杀调用者自己及其祖先进程**（终端里运行 `self-destruct` 时，杀掉 shell 会挂断终端并带走调用者，密钥来不及销毁）；调用者先离开挂载点（否则 lazy 卸载后 `getcwd` 失败，后续每一步都报 ENOENT）。两种情形都在容器里复现并修复，见 `rust/infra/src/gocryptfs.rs` |
 
 ### 不可防御场景
 
