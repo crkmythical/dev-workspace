@@ -3,20 +3,13 @@
 //! golden vectors from the authoritative TS side, and by the shared HTTP contract
 //! in tests/smoke. See README.md.
 
-pub mod aad;
-pub mod constants;
-pub mod crypto;
 pub mod destruct;
 pub mod features;
 pub mod list_auth;
-pub mod path_safety;
-pub mod rate_limit;
-pub mod replay;
 pub mod routes;
 pub mod state;
 pub mod store;
 pub mod util;
-pub mod wire;
 
 pub use state::{AppConfig, AppState};
 

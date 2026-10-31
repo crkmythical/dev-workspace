@@ -1,7 +1,6 @@
 //! Where the sync service lives and keeps its files — a port of packages/core/src/sync/layout.ts.
-//! The sync-service crate carries its own copy of the subset it needs; folding that in is part of
-//! the remaining dedup. Paths deriving from WORKSPACE_MOUNT/CREDENTIALS_DIR are literals (see
-//! crate::shared::layout).
+//! The sync-service crate consumes these directly (see its state.rs/main.rs). Paths deriving from
+//! WORKSPACE_MOUNT/CREDENTIALS_DIR are literals (see crate::shared::layout).
 
 pub const SYNC_SERVICE_PORT: u16 = 8081;
 

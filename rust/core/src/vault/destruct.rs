@@ -1,9 +1,9 @@
 //! Self-destruct: state paths, key-derivation parameters and the remote trigger's rate limit —
 //! a port of packages/core/src/vault/destruct.ts.
 //!
-//! The sync-service crate still carries its own copy of the subset it needs (crypto/constants);
-//! pointing it at this module is the remaining dedup step of the migration. The paths derive from
-//! RUN_DIR; see crate::shared::layout for why they are spelled as literals.
+//! The sync-service crate consumes the rate-limit tuning and key-hash path here directly (see its
+//! state.rs/routes/destruct.rs). The paths derive from RUN_DIR; see crate::shared::layout for why
+//! they are spelled as literals.
 
 /// Persisted on a named volume so it survives container recreation. `{RUN_DIR}/self-destruct`.
 pub const DESTRUCT_STATE_DIR: &str = "/var/run/self-destruct";

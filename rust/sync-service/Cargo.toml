@@ -13,10 +13,9 @@ name = "sync-service"
 path = "src/main.rs"
 
 [dependencies]
+sdw-core = { path = "../core" }
 axum = "0.7"
 tokio = { version = "1", features = ["full"] }
-aes-gcm = "0.10"
-hkdf = "0.12"
 sha2 = "0.10"
 hex = "0.4"
 serde = { version = "1", features = ["derive"] }

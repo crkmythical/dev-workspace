@@ -950,9 +950,13 @@ dependencies = [
 name = "sdw-core"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
+ "hex",
+ "hkdf",
  "proptest",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -1107,12 +1111,11 @@ dependencies = [
 name = "sync-service"
 version = "0.1.0"
 dependencies = [
- "aes-gcm",
  "axum",
  "base64",
  "bcrypt",
  "hex",
- "hkdf",
+ "sdw-core",
  "serde",
  "serde_json",
  "sha2",

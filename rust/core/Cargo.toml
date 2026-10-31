@@ -3,7 +3,7 @@ name = "sdw-core"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "Pure domain logic and use cases (a Rust port of packages/core); no I/O, no runtime deps"
+description = "Pure domain logic and use cases (a Rust port of packages/core); no I/O"
 
 [lib]
 path = "src/lib.rs"
@@ -11,6 +11,12 @@ path = "src/lib.rs"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Sync AEAD primitives (core::sync::crypto). Pure computation, no I/O — the TS
+# core held the same crypto. Pinned by sync-service/tests/parity.rs wire vectors.
+aes-gcm = "0.10"
+hkdf = "0.12"
+sha2 = "0.10"
+hex = "0.4"
 
 [dev-dependencies]
 proptest = "1"

@@ -1,4 +1,5 @@
-use sync_service::{app, constants::SYNC_SERVICE_PORT, AppConfig, AppState};
+use sdw_core::sync::layout::SYNC_SERVICE_PORT;
+use sync_service::{app, AppConfig, AppState};
 
 #[tokio::main]
 async fn main() {

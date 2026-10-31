@@ -7,16 +7,17 @@
 
 use std::sync::{Arc, Mutex};
 
-use crate::constants::{
+use sdw_core::sync::crypto::derive_key;
+use sdw_core::sync::layout::{SHARED_DIR, SPA_DIST_DIR, SYNC_PASSPHRASE_PATH, UPLOAD_TRACKING_DIR};
+use sdw_core::sync::rate_limit::{RateLimitConfig, RateLimiter};
+use sdw_core::sync::replay::ReplayWindow;
+use sdw_core::vault::destruct::{
     DESTRUCT_KEY_HASH_PATH, DESTRUCT_RATE_LIMIT_GLOBAL_MAX, DESTRUCT_RATE_LIMIT_MAX_ATTEMPTS,
-    DESTRUCT_RATE_LIMIT_WINDOW_MS, SHARED_DIR, SPA_DIST_DIR, SYNC_PASSPHRASE_PATH,
-    UPLOAD_TRACKING_DIR,
+    DESTRUCT_RATE_LIMIT_WINDOW_MS,
 };
-use crate::crypto::derive_key;
+
 use crate::destruct::{DestructTrigger, SpawnSelfDestruct};
 use crate::features::Features;
-use crate::rate_limit::{RateLimitConfig, RateLimiter};
-use crate::replay::ReplayWindow;
 use crate::store::Dirs;
 
 #[derive(Clone)]

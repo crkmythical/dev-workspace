@@ -13,10 +13,10 @@ use std::sync::Mutex;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 
-use crate::aad::build_aad;
-use crate::constants::{NONCE_LENGTH, TAG_LENGTH};
-use crate::crypto::decrypt;
-use crate::replay::ReplayWindow;
+use sdw_core::sync::aad::build_aad;
+use sdw_core::sync::crypto::decrypt;
+use sdw_core::sync::protocol::{NONCE_LENGTH, TAG_LENGTH};
+use sdw_core::sync::replay::ReplayWindow;
 
 /// Why a list request was refused. The HTTP layer answers every variant with the
 /// same 401, so a caller learns nothing about which check failed.

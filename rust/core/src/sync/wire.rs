@@ -1,7 +1,7 @@
 //! Upload body framing: PNG_HEADER(33) || nonce(12) || ciphertext||tag.
 //! Mirrors the parsing in packages/server/src/routes/upload.ts.
 
-use crate::constants::{NONCE_LENGTH, PNG_HEADER_SIZE, TAG_LENGTH};
+use super::protocol::{NONCE_LENGTH, PNG_HEADER_SIZE, TAG_LENGTH};
 
 pub struct UploadFrame<'a> {
     pub nonce: &'a [u8],

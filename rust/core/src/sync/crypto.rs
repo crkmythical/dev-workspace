@@ -8,7 +8,7 @@ use aes_gcm::{Aes256Gcm, Key, Nonce};
 use hkdf::Hkdf;
 use sha2::{Digest, Sha256};
 
-use crate::constants::{AES_KEY_LENGTH, HKDF_INFO, HKDF_SALT};
+use super::protocol::{AES_KEY_LENGTH, HKDF_INFO, HKDF_SALT};
 
 /// Derive the 32-byte AEAD key from a passphrase (HKDF-SHA256).
 pub fn derive_key(passphrase: &str) -> [u8; AES_KEY_LENGTH] {

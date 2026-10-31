@@ -3,7 +3,7 @@
 
 use std::collections::HashSet;
 
-use crate::constants::{REPLAY_TOLERANCE_MS, REPLAY_WINDOW_SIZE};
+use super::protocol::{REPLAY_TOLERANCE_MS, REPLAY_WINDOW_SIZE};
 
 pub struct ReplayWindow {
     buffer: Vec<Option<(String, i64)>>,

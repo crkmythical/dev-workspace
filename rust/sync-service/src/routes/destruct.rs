@@ -16,7 +16,8 @@ use axum::{
 };
 use serde_json::{json, Value};
 
-use crate::constants::DESTRUCT_RESPONSE_DELAY_MS;
+use sdw_core::vault::destruct::DESTRUCT_RESPONSE_DELAY_MS;
+
 use crate::util::now_ms;
 use crate::AppState;
 
