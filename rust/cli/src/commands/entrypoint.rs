@@ -314,6 +314,7 @@ fn run_step(
         "banner" => {
             for line in render_banner(&BannerInput {
                 password: auth.master_password.clone(),
+                password_generated: auth.password_source == Some(PasswordSource::Generated),
                 host_port: config.host_port.clone(),
                 stacks: installed_stacks(),
                 vault_mounted: st.vault_mounted,

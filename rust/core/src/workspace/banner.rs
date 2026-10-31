@@ -7,6 +7,10 @@ use crate::egress::domain::{describe_egress, EgressReport, EgressStatus};
 
 pub struct BannerInput {
     pub password: String,
+    /// Whether the password was generated (PASSWORD unset). Only then is it echoed in the banner —
+    /// a generated password is otherwise unknowable. A password from PASSWORD in .env (or carried
+    /// over in an existing config) is never written to the logs.
+    pub password_generated: bool,
     /// Host port the web UI is published on.
     pub host_port: String,
     /// Which desktop stacks the image contains.
@@ -49,9 +53,16 @@ fn egress_word(egress: Option<&EgressReport>) -> &'static str {
 pub fn render_banner(input: &BannerInput) -> Vec<String> {
     let origin = format!("http://localhost:{}", input.host_port);
 
+    // Echo the secret only when it was generated (the banner is then the only way to learn it);
+    // a password supplied via PASSWORD in .env is the operator's already, so keep it out of logs.
+    let shown = if input.password_generated {
+        input.password.clone()
+    } else {
+        "<set via PASSWORD in .env>".to_string()
+    };
     let mut rows = vec![
         format!("{}Secure Dev Workspace Ready", " ".repeat(10)),
-        format!("  Password:  {}", input.password),
+        format!("  Password:  {shown}"),
         format!("  Code:      {origin}"),
     ];
     if input.stacks.contains(&DesktopTarget::Selkies) {
@@ -60,7 +71,7 @@ pub fn render_banner(input: &BannerInput) -> Vec<String> {
     if input.stacks.contains(&DesktopTarget::Vnc) {
         rows.push(format!("  VNC:       {origin}/vnc/"));
     }
-    rows.push(format!("  Auth:      user / {}", input.password));
+    rows.push(format!("  Auth:      user / {shown}"));
     rows.push(format!(
         "  Vault:     {}",
         if input.vault_mounted {
@@ -119,6 +130,7 @@ mod tests {
     fn base() -> BannerInput {
         BannerInput {
             password: "s3cret".to_string(),
+            password_generated: false,
             host_port: "18080".to_string(),
             stacks: vec![DesktopTarget::Selkies, DesktopTarget::Vnc],
             vault_mounted: true,
@@ -143,12 +155,28 @@ mod tests {
     }
 
     #[test]
-    fn shows_login_and_where() {
+    fn shows_where_but_not_an_env_password() {
+        // Default base() is an .env/existing password: the secret must not reach the banner.
         let out = text(&base());
-        assert!(out.contains("Password:  s3cret"));
-        assert!(out.contains("user / s3cret"));
+        assert!(
+            !out.contains("s3cret"),
+            "a non-generated password is never logged"
+        );
+        assert!(out.contains("Password:  <set via PASSWORD in .env>"));
+        assert!(out.contains("user / <set via PASSWORD in .env>"));
         assert!(out.contains("http://localhost:18080/desktop/"));
         assert!(out.contains("http://localhost:18080/vnc/"));
+    }
+
+    #[test]
+    fn shows_a_generated_password_because_nothing_else_can() {
+        let out = text(&BannerInput {
+            password: "gen3rated".to_string(),
+            password_generated: true,
+            ..base()
+        });
+        assert!(out.contains("Password:  gen3rated"));
+        assert!(out.contains("user / gen3rated"));
     }
 
     #[test]
