@@ -183,9 +183,21 @@ on the cached base, croc added): boot via the Rust entrypoint, auth, the sync pr
 to restic, ciphertext replication, egress variants, remote + CLI self-destruct, shadowsocks and
 croc. A full from-scratch production build is left to CI (mise's downloads crawl on this network).
 
-Remaining internal cleanup (behaviour-neutral, not part of the smoke gate): fold the
-sync-service's own copies of the sync primitives (aad, crypto, wire, path-safety, replay,
-rate-limit) and the destruct/sync constants into `core` so there is a single copy; and move
+The sync-primitive dedup is **done** (2026-10-31): the sync primitives (aad, crypto, wire,
+path-safety, replay, rate-limit) now live once in `core::sync`, with the wire-protocol constants
+in `core::sync::protocol`; the layout and self-destruct constants already lived in
+`core::sync::layout` / `core::vault::destruct`, which the sync-service now consumes directly. The
+sync-service keeps only its I/O (store/routes/state/list_auth/destruct/features/util) and gains an
+`sdw-core` dependency (its direct `aes-gcm`/`hkdf` deps are gone — `core` now carries them). The 4
+rate-limit unit tests moved with the module (core 161 → 165); `cargo fmt`/`clippy -D warnings`/
+`cargo test --workspace` are green, and a full smoke re-run on the rebuilt cutover image passes
+every functional check (301), including the whole SPA-client → Rust-service sync protocol. The one
+non-pass, `55-browser`'s "the client loads", is a pre-existing timing race in the browser harness,
+not this change: it reads `document.title === "KasmVNC"` once at the `/vnc/` load event with no
+retry, while the very next checks confirm the client connects, paints the desktop and takes input.
+`/vnc/` is served by Caddy + KasmVNC, not by the Rust binaries this change rebuilt.
+
+Remaining internal cleanup (behaviour-neutral, not part of the smoke gate): move
 `workspace/env-schema`'s CORE_ENV_GROUPS data table into Rust when the `.env.example` generator
 becomes an `sdw` subcommand.
 
