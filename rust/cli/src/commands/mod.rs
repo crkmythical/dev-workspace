@@ -1,5 +1,6 @@
 pub mod backup_init;
 pub mod backup_watcher;
+pub mod desktop_install;
 pub mod desktop_start;
 pub mod desktop_stop;
 pub mod destruct_passphrase;
@@ -8,6 +9,7 @@ pub mod init_pentest;
 pub mod init_vault;
 pub mod lock_pentest;
 pub mod lock_vault;
+pub mod pentest_enter;
 pub mod pull;
 pub mod push;
 pub mod self_destruct;

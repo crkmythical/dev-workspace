@@ -18,3 +18,4 @@ sdw-core = { path = "../core" }
 sdw-infra = { path = "../infra" }
 notify = "6"
 signal-hook = "0.3"
+serde_json = "1"

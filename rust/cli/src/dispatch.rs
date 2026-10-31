@@ -9,6 +9,7 @@ const BIN_NAME: &str = "sdw";
 const COMMANDS: &[&str] = &[
     "backup-init",
     "backup-watcher",
+    "desktop-install",
     "desktop-start",
     "desktop-stop",
     "destruct-passphrase",
@@ -17,6 +18,7 @@ const COMMANDS: &[&str] = &[
     "init-vault",
     "lock-pentest",
     "lock-vault",
+    "pentest",
     "pull",
     "push",
     "self-destruct",
@@ -50,6 +52,7 @@ fn dispatch(command: &str, args: &[String]) -> i32 {
     match command {
         "backup-init" => commands::backup_init::run(args),
         "backup-watcher" => commands::backup_watcher::run(args),
+        "desktop-install" => commands::desktop_install::run(args),
         "desktop-start" => commands::desktop_start::run(args),
         "desktop-stop" => commands::desktop_stop::run(args),
         "destruct-passphrase" => commands::destruct_passphrase::run(args),
@@ -58,6 +61,7 @@ fn dispatch(command: &str, args: &[String]) -> i32 {
         "init-vault" => commands::init_vault::run(args),
         "lock-pentest" => commands::lock_pentest::run(args),
         "lock-vault" => commands::lock_vault::run(args),
+        "pentest" => commands::pentest_enter::run(args),
         "push" => commands::push::run(args),
         "pull" => commands::pull::run(args),
         "self-destruct" => commands::self_destruct::run(args),
