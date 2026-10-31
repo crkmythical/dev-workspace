@@ -63,4 +63,4 @@ static binary to `/usr/local/bin/sync-service`; `image/supervisord.conf` runs it
 place of `bun run .../server`. Validated by the smoke suite (checks 10/20/30/55/80
 pass 93/0, including a real-browser upload into the vault and remote destruct). The
 TS `packages/server` stays only as the parity source for `gen-wire-vectors.ts`. See
-`docs/rust-migration.md`.
+`deploy/docs/rust-migration.md`.

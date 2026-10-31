@@ -30,7 +30,7 @@ other crate; `infra` implements core's ports; `cli` and `sync-service` are the d
 Inside core the dependency points inward: `domain` <- `ports` <- `usecases`. Every core module
 has mirrored tests, and `src/rust/sync-service/tests/parity.rs` pins the wire protocol to golden
 vectors. The retired TS runtime (`src/packages/{server,cli,infra}` + the reimplemented core domain)
-was replaced binary-for-binary; see docs/rust-migration.md.
+was replaced binary-for-binary; see deploy/docs/rust-migration.md.
 
 `src/tests/architecture.test.ts` still guards the surviving TypeScript: core is a leaf, the SPA
 depends only on core, and neither imports a node:/bun runtime (the browser invariants).
@@ -91,7 +91,7 @@ whatever was still running; forwarding it was a fix carried into the Rust port.)
 
 ## Egress
 
-Routing through Clash is **best effort, not enforced** (see `docs/threat-model.md`).
+Routing through Clash is **best effort, not enforced** (see `deploy/docs/threat-model.md`).
 `src/rust/core/src/egress` models what was observed: `confirmed`, `degraded` (proxy up, probe through
 it failed) or `down` (proxy not listening). It is reported in the start-up banner,
 `/var/run/egress-status`, `doctor` (live) and `.notifications/egress-degraded.md`.

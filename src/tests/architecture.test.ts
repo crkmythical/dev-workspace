@@ -1,7 +1,7 @@
 /**
  * Architecture ratchet for the TypeScript that still ships: the browser SPA and the
  * sync client it shares with it. The Rust migration retired packages/{server,cli,infra}
- * and the Rust-reimplemented domain logic in core (see docs/rust-migration.md), so only
+ * and the Rust-reimplemented domain logic in core (see deploy/docs/rust-migration.md), so only
  * two packages remain and the invariants that still matter are the browser ones:
  *
  *   R2  core depends on no other workspace package (it is a leaf)

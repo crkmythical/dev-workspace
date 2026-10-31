@@ -2,7 +2,7 @@
 
 > **2026-10-30 更新**：运行时现在是全 Rust（`sdw` 多合一二进制 + `sync-service` 守护进程），镜像里不再有
 > Bun。TS 的 `src/packages/{server,cli,infra}` 和 core 里被 Rust 重写的域逻辑已退役，只留浏览器 SPA
-> （`src/packages/spa`）和它用的同步客户端（`src/packages/core/src/sync`）。详见 docs/rust-migration.md。
+> （`src/packages/spa`）和它用的同步客户端（`src/packages/core/src/sync`）。详见 deploy/docs/rust-migration.md。
 > 下面的「验证状态」是 cutover 之前的记录，smoke 数字（298）是当时的；Rust 迁移后的全量是 302/0。
 
 ## 验证状态
@@ -84,7 +84,7 @@
 
 ### 安全与可靠性
 
-- **出口是尽力而为，没有强制**（`docs/threat-model.md`）。要强制需要独立的防火墙层；容器内进程都是 root，按 uid 的规则无效，需要基于 mark 的方案。
+- **出口是尽力而为，没有强制**（`deploy/docs/threat-model.md`）。要强制需要独立的防火墙层；容器内进程都是 root，按 uid 的规则无效，需要基于 mark 的方案。
 - **主密码**：启动横幅不再打印它（2026-10-31）——只有在 PASSWORD 留空、容器自己生成口令时才打印（否则无从得知）；来自 `.env` 的口令永不进日志。它仍写进 code-server 的 `config.yaml`（code-server 要靠它认证，该文件在容器内、不随 `docker logs` 外泄）。vault 口令就是它，见 threat-model 的 Non-Guarantees。
 - **`docker-compose.apparmor.yml` 去掉容器最后一层 AppArmor 约束**。更好的做法是写一份只放行 FUSE 挂载的自定义 profile，目前没有。
 - **restic 备份仓库不受自毁影响**，里面是明文工作区，只靠 `RESTIC_PASSWORD` 保护。`.credentials/`（ssh 密钥、同步口令）**已加入排除集**（2026-10-30，`BACKUP_EXCLUSION_SET`），不再进 restic 仓库；仍可从加密的 vault git 复制恢复（`VAULT_GITIGNORE` 不排除它）。自毁时连带删除 restic 仓库（需要仓库凭据）：**按决定不做**，把该仓库当作 vault 的一部分对待。
@@ -98,7 +98,7 @@
 
 ### 清理
 
-已完成（2026-10-30，见 docs/rust-migration.md 与对应提交）：
+已完成（2026-10-30，见 deploy/docs/rust-migration.md 与对应提交）：
 - `desktop-audio` 在 `DESKTOP_AUDIO=0` 时不再被 supervisord 记成 FATAL（`autorestart=unexpected`、`exitcodes=0`、`startsecs=0`）。
 - `destroy.sh` 改用带项目前缀的卷名清理（原来的不带前缀，什么也删不到）。
 - `host-watcher.sh` 不再在清理后留孤儿 `docker events`（后台生产者写 FIFO，break 时按 PID kill）。

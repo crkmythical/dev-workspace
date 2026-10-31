@@ -8,7 +8,7 @@
 #
 # It removes the last confinement layer the container still has (it already runs with
 # SYS_ADMIN and an unconfined seccomp profile), so treat the container as a weak boundary.
-# See docs/threat-model.md.
+# See deploy/docs/threat-model.md.
 services:
   workspace:
     security_opt:

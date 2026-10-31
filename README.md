@@ -2,6 +2,8 @@
 
 加密、云端就绪的开发环境，集成远程桌面、Code Server 和代理。
 
+> 详细中文上手指南见 [`deploy/docs/QUICKSTART.md`](deploy/docs/QUICKSTART.md)；架构与运维见 [`deploy/docs/`](deploy/docs/)。
+
 ## 快速开始
 
 ```bash
@@ -27,7 +29,7 @@ docker compose up -d
 
 端口 18080 是 `TUNNEL_HOST_PORT` 的默认值；改了它，启动横幅会打印实际端口。
 
-**Linux 宿主机（Ubuntu、Debian 等带 AppArmor 的发行版）**：Docker 默认的 AppArmor 配置禁止 `mount(2)`，gocryptfs 挂载 vault 会失败（启动后 vault 保持锁定，报 `fusermount3: mount failed: Permission denied`；Docker Desktop 没有 AppArmor，不受影响）。在 `.env` 里取消注释 `COMPOSE_FILE=docker-compose.yml:docker-compose.apparmor.yml`，或每次用 `docker compose -f docker-compose.yml -f docker-compose.apparmor.yml up -d`。这个覆盖文件会去掉容器最后一层 AppArmor 约束，是安全上的取舍，所以不是默认；见 `docs/threat-model.md`。
+**Linux 宿主机（Ubuntu、Debian 等带 AppArmor 的发行版）**：Docker 默认的 AppArmor 配置禁止 `mount(2)`，gocryptfs 挂载 vault 会失败（启动后 vault 保持锁定，报 `fusermount3: mount failed: Permission denied`；Docker Desktop 没有 AppArmor，不受影响）。在 `.env` 里取消注释 `COMPOSE_FILE=docker-compose.yml:docker-compose.apparmor.yml`，或每次用 `docker compose -f docker-compose.yml -f docker-compose.apparmor.yml up -d`。这个覆盖文件会去掉容器最后一层 AppArmor 约束，是安全上的取舍，所以不是默认；见 `deploy/docs/threat-model.md`。
 
 ## 重建 / 重置
 
@@ -98,10 +100,10 @@ docker compose up -d
 也可以不改 `.env`，直接命令行覆盖构建另一个 tag：
 
 ```bash
-docker build -t dev-workspace:trixie -f image/Dockerfile --build-arg BASE_IMAGE=debian:trixie-slim .
+docker build -t dev-workspace:trixie -f src/image/Dockerfile --build-arg BASE_IMAGE=debian:trixie-slim ./src
 ```
 
-两个镜像除 OS 标识外工具链完全一致（Bun、Node、Java、Selkies、KasmVNC 等）。
+两个镜像除 OS 标识外工具链完全一致（Node、Python、Java、Selkies、KasmVNC 等；Bun 仅在构建时用于编译同步页，运行镜像里没有）。
 
 ## 容器内命令
 
@@ -134,7 +136,7 @@ destruct-passphrase # 显示远程自毁口令（由 vault 口令派生，随时
 
 ```bash
 # 一次性配置（在宿主机执行，非容器内）
-./scripts/setup-cloudflared.sh --hostname <hostname>   # 或在 .env 设置 TUNNEL_HOSTNAME
+./deploy/scripts/setup-cloudflared.sh --hostname <hostname>   # 或在 .env 设置 TUNNEL_HOSTNAME
 
 # 启动 tunnel（LaunchAgent，开机自启 + 崩溃自动重启）
 launchctl load ~/Library/LaunchAgents/com.cloudflare.tunnel.plist
@@ -152,7 +154,7 @@ launchctl unload ~/Library/LaunchAgents/com.cloudflare.tunnel.plist
 
 ## 环境变量 (.env)
 
-完整的变量列表、默认值和说明在 [`.env.example`](.env.example)。它由代码里的 schema（`packages/core/src/workspace/env-schema.ts`，插件的变量由插件自己声明）生成，改了 schema 后运行 `make env-example`；测试会在示例文件、代码读取的变量和 docker-compose.yml 不一致时失败。
+完整的变量列表、默认值和说明在 [`.env.example`](.env.example)。它由代码里的 schema（`src/rust/core/src/workspace/env_schema.rs`，插件的变量由插件自己声明）生成，改了 schema 后运行 `make env-example`；测试会在示例文件、代码读取的变量和 docker-compose.yml 不一致时失败。
 
 最常用的几个：
 
@@ -168,14 +170,14 @@ launchctl unload ~/Library/LaunchAgents/com.cloudflare.tunnel.plist
 
 ## 验证（smoke test）
 
-单元测试（`bun test`）不启动镜像。`tests/smoke/` 把真镜像和一个假上游一起起来，从外面检查启动、认证、vault、备份与复制、出口降级、自毁，加上 `--services` 时对真实的 S3 端点、sshd、git HTTP、Shadowsocks 节点，以及用真实 Chrome 看同步页和桌面画面。它有自己的 compose 项目、端口和网络，不读 `.env`，可以放心在已有真实工作区的机器上跑：
+单元测试（`bun test`）不启动镜像。`src/tests/smoke/` 把真镜像和一个假上游一起起来，从外面检查启动、认证、vault、备份与复制、出口降级、自毁，加上 `--services` 时对真实的 S3 端点、sshd、git HTTP、Shadowsocks 节点，以及用真实 Chrome 看同步页和桌面画面。它有自己的 compose 项目、端口和网络，不读 `.env`，可以放心在已有真实工作区的机器上跑：
 
 ```bash
 make smoke IMAGE=dev-workspace:latest     # 测一个已有的镜像
 make smoke-build                          # 先按生产基础（Kali）构建再测
 ```
 
-用法、检查清单和它证明 / 不证明什么见 [`tests/smoke/README.md`](tests/smoke/README.md)；CI 里对应 `.github/workflows/smoke.yml`（手动触发，或改动了镜像 / compose / 测试本身的 PR）。
+用法、检查清单和它证明 / 不证明什么见 [`src/tests/smoke/README.md`](src/tests/smoke/README.md)；CI 里对应 `.github/workflows/smoke.yml`（手动触发，或改动了镜像 / compose / 测试本身的 PR）。
 
 ## CI/CD（GitHub Actions）
 
@@ -212,3 +214,15 @@ docker pull <username>/dev-workspace:latest
 ```
 
 也可通过 Actions → "Run workflow" 手动触发（同样构建两种变体）。
+
+
+
+当前没验证的：
+```yml
+真实 Docker Desktop。在 Mac Mini 上跑 make smoke-build 即可。
+Cloudflare Access 和命名隧道。
+真实 R2 和 GitHub，用的是本地替身。
+机场节点的其他协议。
+Tor 引导到 30% 以上，没等到 100%。
+没完整建成过 Kali rootfs。
+```
