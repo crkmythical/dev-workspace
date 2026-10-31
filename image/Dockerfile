@@ -10,7 +10,19 @@ FROM rust:1-alpine AS rust-builder
 RUN apk add --no-cache musl-dev
 WORKDIR /build
 COPY rust/ ./rust/
-RUN cd rust && cargo build --release --locked && cp target/release/sync-service /sync-service
+RUN cd rust && cargo build --release --locked \
+    && cp target/release/sync-service /sync-service \
+    && cp target/release/sdw /sdw
+
+# --- SPA build stage: the browser sync page (stays TypeScript) -----------------------------------
+# Built with Bun here, at BUILD TIME ONLY, so the runtime image carries no Bun. The compiled dist
+# is copied into the final image and served by the Rust sync-service.
+FROM oven/bun:1.4.3 AS spa-builder
+WORKDIR /opt/workspace
+COPY package.json bunfig.toml bun.lock ./
+COPY packages/ ./packages/
+RUN bun install --frozen-lockfile 2>/dev/null || bun install
+RUN cd packages/spa && bunx vite build
 
 # Base image toggle.
 #   Default: kalilinux/kali-rolling — the production base, full pentest toolchain
@@ -83,30 +95,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && locale-gen \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Bun — pinned version + sha256 verification against the published
-# SHASUMS256.txt (the GitHub release zip is the same artifact bun.sh/install
-# fetches). Reproducible + tamper-evident; bump BUN_VERSION and both hashes
-# together (from .../releases/download/bun-v<ver>/SHASUMS256.txt). The zip holds only
-# `bun`; `bunx` is the symlink bun.sh/install would have made (the SPA build uses it).
-ARG BUN_VERSION=1.4.3
-ARG BUN_SHA256_AMD64=3e730528d89775f03f87f05c06787c4df4099d0a37f3f252e7b829cb23816e18
-ARG BUN_SHA256_ARM64=efa9813da5ed72423bf847f916e8d2c47c0d776add972354026a75e10da9aa21
-RUN set -eux; \
-    arch="$(dpkg --print-architecture)"; \
-    case "$arch" in \
-      amd64) bun_arch=x64;     bun_sha="$BUN_SHA256_AMD64" ;; \
-      arm64) bun_arch=aarch64; bun_sha="$BUN_SHA256_ARM64" ;; \
-      *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
-    esac; \
-    curl -fsSL "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-${bun_arch}.zip" -o /tmp/bun.zip; \
-    echo "${bun_sha}  /tmp/bun.zip" | sha256sum -c -; \
-    unzip -q /tmp/bun.zip -d /tmp/bun; \
-    mkdir -p /root/.bun/bin; \
-    install -m 0755 "/tmp/bun/bun-linux-${bun_arch}/bun" /root/.bun/bin/bun; \
-    ln -sf bun /root/.bun/bin/bunx; \
-    rm -rf /tmp/bun /tmp/bun.zip
-ENV PATH="/root/.bun/bin:${PATH}"
-RUN bun --version
+# Bun is gone from the runtime image: the CLI, entrypoint and daemons are the Rust `sdw` binary
+# (installed below) and the SPA is pre-built in the spa-builder stage. Only the pinned third-party
+# binaries and the two Rust binaries run here.
 
 # Desktop layer — COMMON deps (both stacks): X server, XFCE, fonts, mesa, dbus.
 # XFCE is the session for BOTH stacks (selkies and kasmvnc). This eliminates the
@@ -284,7 +275,7 @@ RUN echo 'export http_proxy=http://127.0.0.1:7890' >> /etc/profile.d/proxy.sh &&
     echo 'export HTTPS_PROXY=$https_proxy' >> /etc/profile.d/proxy.sh && \
     echo 'export ALL_PROXY=$all_proxy' >> /etc/profile.d/proxy.sh && \
     echo 'export NO_PROXY=$no_proxy' >> /etc/profile.d/proxy.sh && \
-    echo 'export PATH="/root/.local/bin:/root/.local/share/mise/shims:/root/.bun/bin:$PATH"' >> /etc/profile.d/proxy.sh && \
+    echo 'export PATH="/root/.local/bin:/root/.local/share/mise/shims:$PATH"' >> /etc/profile.d/proxy.sh && \
     echo 'eval "$(mise activate bash)"' >> /etc/profile.d/proxy.sh && \
     echo '# noproxy: run a command bypassing Clash proxy (direct network)' >> /etc/profile.d/proxy.sh && \
     echo 'noproxy() { env -u http_proxy -u https_proxy -u all_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY "$@"; }' >> /etc/profile.d/proxy.sh && \
@@ -349,25 +340,20 @@ RUN f=/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-session.xml && \
     sed -i 's#</channel>#  <property name="startup" type="empty">\n    <property name="ssh-agent" type="empty">\n      <property name="enabled" type="bool" value="false"/>\n    </property>\n    <property name="gpg-agent" type="empty">\n      <property name="enabled" type="bool" value="false"/>\n    </property>\n  </property>\n</channel>#' "$f" && \
     grep -q 'name="ssh-agent"' "$f" && grep -q 'FailsafeSessionName' "$f"
 
-# Copy monorepo packages (workspace code)
-COPY packages/ /opt/workspace/packages/
-COPY package.json bunfig.toml bun.lock /opt/workspace/
-WORKDIR /opt/workspace
-RUN bun install --frozen-lockfile 2>/dev/null || bun install
+# The Rust command surface + entrypoint + daemons: one multi-call binary. `sdw install` symlinks
+# every command in packages/cli/package.json's `bin` map to it (argv[0] dispatch), replacing the
+# per-command Bun launchers.
+COPY --from=rust-builder /sdw /usr/local/bin/sdw
+RUN /usr/local/bin/sdw install /usr/local/bin
 
-# Build SPA
-RUN cd packages/spa && bunx vite build
-
-# Put a launcher for every command in packages/cli/package.json's `bin` map on PATH.
-# That map is the only list of commands (add one there, never here).
-RUN bun run /opt/workspace/packages/cli/scripts/install-bins.ts /usr/local/bin
-
-# The sync-service daemon (Rust). Replaces `bun run packages/server` — see supervisord.conf and
-# docs/rust-migration.md. It serves /sync/* (the SPA from packages/spa/dist, built above, plus the
+# The sync-service daemon (Rust). Serves /sync/* (the SPA built in the spa-builder stage, plus the
 # upload/download/doctor/destruct API) and reads SYNC_ENABLED / REMOTE_DESTRUCT_ENABLED from env.
 COPY --from=rust-builder /sync-service /usr/local/bin/sync-service
 
-# Copy entrypoint (minimal shell → exec bun)
+# The compiled SPA (built by the Bun spa-builder stage; the browser SPA stays TypeScript).
+COPY --from=spa-builder /opt/workspace/packages/spa/dist /opt/workspace/packages/spa/dist
+
+# Copy entrypoint (minimal shell → exec sdw entrypoint)
 COPY scripts/entrypoint.sh /usr/local/lib/workspace/entrypoint.sh
 RUN chmod +x /usr/local/lib/workspace/entrypoint.sh
 

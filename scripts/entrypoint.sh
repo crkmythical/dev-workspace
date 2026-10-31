@@ -1,5 +1,5 @@
 #!/bin/bash
-# Minimal entrypoint — validates env then delegates to Bun TS
+# Minimal entrypoint — validates env then delegates to the Rust sdw binary
 set -euo pipefail
 
 # Inert mode: container was self-destructed
@@ -17,4 +17,4 @@ for v in CLASH_SUBSCRIPTION_URL; do
   fi
 done
 
-exec bun run /opt/workspace/packages/cli/src/entrypoint-main.ts
+exec sdw entrypoint
