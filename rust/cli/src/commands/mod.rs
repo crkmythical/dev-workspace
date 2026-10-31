@@ -3,6 +3,7 @@ pub mod backup_watcher;
 pub mod desktop_start;
 pub mod desktop_stop;
 pub mod destruct_passphrase;
+pub mod doctor;
 pub mod init_pentest;
 pub mod init_vault;
 pub mod lock_pentest;

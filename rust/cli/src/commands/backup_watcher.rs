@@ -26,19 +26,13 @@ use sdw_core::shared::layout::WORKSPACE_MOUNT;
 use sdw_core::workspace::config::load_config;
 use sdw_infra::cmd;
 use sdw_infra::failure_tracker::FileFailureTracker;
+use sdw_infra::time::now_ms;
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
-}
+use std::time::Duration;
 
 /// restic goes through the same proxy as everything else; stderr is captured. The child's pid is
 /// published so the shutdown path can kill it. Returns (succeeded, stderr).
