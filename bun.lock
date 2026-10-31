@@ -10,65 +10,11 @@
         "typescript": "5.9.3",
       },
     },
-    "packages/cli": {
-      "name": "@sdw/cli",
-      "version": "0.1.0",
-      "bin": {
-        "init-vault": "./src/init-vault.ts",
-        "unlock-vault": "./src/unlock-vault.ts",
-        "lock-vault": "./src/lock-vault.ts",
-        "vault-sync": "./src/vault-sync.ts",
-        "doctor": "./src/doctor.ts",
-        "setup": "./src/setup.ts",
-        "init-pentest": "./src/init-pentest.ts",
-        "unlock-pentest": "./src/unlock-pentest.ts",
-        "lock-pentest": "./src/lock-pentest.ts",
-        "pentest-bootstrap": "./src/pentest-bootstrap.ts",
-        "pentest": "./src/pentest-enter.ts",
-        "self-destruct": "./src/self-destruct.ts",
-        "destruct-passphrase": "./src/destruct-passphrase.ts",
-        "desktop-start": "./src/desktop-start.ts",
-        "desktop-stop": "./src/desktop-stop.ts",
-        "desktop-install": "./src/desktop-install.ts",
-      },
-      "dependencies": {
-        "@sdw/core": "workspace:*",
-        "@sdw/infra": "workspace:*",
-      },
-      "devDependencies": {
-        "bun-types": "^1.2.0",
-        "fast-check": "^4.1.0",
-      },
-    },
     "packages/core": {
       "name": "@sdw/core",
       "version": "0.1.0",
       "devDependencies": {
         "bun-types": "^1.2.0",
-        "fast-check": "^4.1.0",
-      },
-    },
-    "packages/infra": {
-      "name": "@sdw/infra",
-      "version": "0.1.0",
-      "dependencies": {
-        "@sdw/core": "workspace:*",
-      },
-      "devDependencies": {
-        "bun-types": "^1.2.0",
-      },
-    },
-    "packages/server": {
-      "name": "@sdw/server",
-      "version": "0.1.0",
-      "dependencies": {
-        "@sdw/core": "workspace:*",
-        "@sdw/infra": "workspace:*",
-        "hono": "^4.7.0",
-      },
-      "devDependencies": {
-        "bun-types": "^1.2.0",
-        "fast-check": "^4.1.0",
       },
     },
     "packages/spa": {
@@ -205,13 +151,7 @@
 
     "@rollup/rollup-win32-x64-msvc": ["@rollup/rollup-win32-x64-msvc@4.60.4", "", { "os": "win32", "cpu": "x64" }, "sha512-QVTUovf40zgTqlFVrKA1uXMVvU2QWEFWfAH8Wdc48IxLvrJMQVMBRjuQyUpzZCDkakImib9eVazbWlC6ksWtJw=="],
 
-    "@sdw/cli": ["@sdw/cli@workspace:packages/cli"],
-
     "@sdw/core": ["@sdw/core@workspace:packages/core"],
-
-    "@sdw/infra": ["@sdw/infra@workspace:packages/infra"],
-
-    "@sdw/server": ["@sdw/server@workspace:packages/server"],
 
     "@sdw/spa": ["@sdw/spa@workspace:packages/spa"],
 
@@ -228,8 +168,6 @@
     "fdir": ["fdir@6.5.0", "", { "peerDependencies": { "picomatch": "^3 || ^4" }, "optionalPeers": ["picomatch"] }, "sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg=="],
 
     "fsevents": ["fsevents@2.3.3", "", { "os": "darwin" }, "sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw=="],
-
-    "hono": ["hono@4.12.23", "", {}, "sha512-eIaZ9qDgu7XV0pxOCrg7/WhnQ6Ivm22UcxhXx/A3dcbqbbYgBEkc6e/J/s7j2tS96zoB0S9VBdLwQNCWwUo4LA=="],
 
     "nanoid": ["nanoid@3.3.12", "", { "bin": { "nanoid": "bin/nanoid.cjs" } }, "sha512-ZB9RH/39qpq5Vu6Y+NmUaFhQR6pp+M2Xt76XBnEwDaGcVAqhlvxrl3B2bKS5D3NH3QR76v3aSrKaF/Kiy7lEtQ=="],
 

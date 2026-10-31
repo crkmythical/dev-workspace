@@ -3,7 +3,7 @@
   "private": true,
   "workspaces": ["packages/*"],
   "scripts": {
-    "dev": "bun run --watch packages/server/src/index.ts",
+    "dev": "cd packages/spa && bun run dev",
     "test": "bun test",
     "test:watch": "bun test --watch",
     "lint": "bunx biome check .",

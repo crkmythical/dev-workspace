@@ -26,13 +26,14 @@ trap cleanup EXIT
 job() { dx env -i HOME=/root PATH=/usr/bin:/bin /usr/local/bin/sdw vault-sync; }
 as_cron() { dx env -i HOME=/root PATH=/usr/bin:/bin "$@"; }
 local_head() { dx git -C "$CIPHER" rev-parse HEAD; }
-# What the start-up's prepare-replication step does with VAULT_GIT_REPO: the same function.
+# Re-point the cipher repo's origin at the test server. Boot's prepare-replication (run by the
+# Rust `sdw entrypoint`, covered by 60-replication) already turned the cipher dir into a repo and
+# wrote its .gitignore/.gitattributes; the per-remote part is just the origin URL. No in-container
+# Bun/TS: the production image ships neither.
 prepare() {
-  dx env REMOTE="$1" sh -c 'cd /opt/workspace/packages/cli && bun -e "
-    import { ensureCipherRepo } from \"@sdw/infra\";
-    import { VAULT_CIPHER_DIR, VAULT_GITATTRIBUTES, VAULT_GITIGNORE } from \"@sdw/core/vault\";
-    console.log(await ensureCipherRepo({ dir: VAULT_CIPHER_DIR, remote: process.env.REMOTE,
-      gitignore: VAULT_GITIGNORE, gitattributes: VAULT_GITATTRIBUTES }));"'
+  dx git -C "$CIPHER" remote set-url origin "$1" 2>/dev/null \
+    || dx git -C "$CIPHER" remote add origin "$1"
+  echo remote-updated
 }
 
 # ------------------------------------------------------------------------------------------------

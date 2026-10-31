@@ -11,12 +11,6 @@
     "skipLibCheck": true,
     "isolatedModules": true
   },
-  "include": [
-    "packages/core/**/*.ts",
-    "packages/infra/**/*.ts",
-    "packages/cli/**/*.ts",
-    "packages/server/**/*.ts",
-    "tests/**/*.ts"
-  ],
+  "include": ["packages/core/**/*.ts", "tests/**/*.ts"],
   "exclude": ["**/node_modules", "**/dist", "rust"]
 }

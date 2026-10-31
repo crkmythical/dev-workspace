@@ -1,14 +1,10 @@
 /**
- * Sync context (browser-safe: no node:/bun imports). The wire constants stay in
- * `@sdw/core/sync/protocol` and the server-side paths in `@sdw/core/sync/layout`.
+ * Sync context (browser-safe: no node:/bun imports) — the client half the SPA and
+ * the smoke fixture share. The wire constants stay in `@sdw/core/sync/protocol`.
+ * The server receive path and the reconciler were ported to Rust (rust/core,
+ * rust/sync-service) and removed here; see docs/rust-migration.md.
  */
 export * from "./aad.ts";
 export * from "./client.ts";
 export * from "./envelope.ts";
-export * from "./path-safety.ts";
 export * from "./protocol.ts";
-export * from "./ports.ts";
-export * from "./reconcile.ts";
-export * from "./replay-window.ts";
-export * from "./types.ts";
-export * from "./usecases.ts";
