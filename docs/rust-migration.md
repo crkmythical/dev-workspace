@@ -190,12 +190,13 @@ in `core::sync::protocol`; the layout and self-destruct constants already lived 
 sync-service keeps only its I/O (store/routes/state/list_auth/destruct/features/util) and gains an
 `sdw-core` dependency (its direct `aes-gcm`/`hkdf` deps are gone — `core` now carries them). The 4
 rate-limit unit tests moved with the module (core 161 → 165); `cargo fmt`/`clippy -D warnings`/
-`cargo test --workspace` are green, and a full smoke re-run on the rebuilt cutover image passes
-every functional check (301), including the whole SPA-client → Rust-service sync protocol. The one
-non-pass, `55-browser`'s "the client loads", is a pre-existing timing race in the browser harness,
-not this change: it reads `document.title === "KasmVNC"` once at the `/vnc/` load event with no
-retry, while the very next checks confirm the client connects, paints the desktop and takes input.
-`/vnc/` is served by Caddy + KasmVNC, not by the Rust binaries this change rebuilt.
+`cargo test --workspace` are green, and a full smoke re-run on the rebuilt cutover image is
+**302 / 0**, including the whole SPA-client → Rust-service sync protocol. (The re-run first tripped
+on `55-browser`'s "the client loads" — a timing race in the browser harness, unrelated to this
+change: it read `document.title === "KasmVNC"` once at the `/vnc/` load event with no retry, while
+the next checks confirmed the client connects, paints the desktop and takes input. That assertion
+now waits for the title to settle; `/vnc/` is served by Caddy + KasmVNC, not by the Rust binaries
+this change rebuilt.)
 
 Remaining internal cleanup (behaviour-neutral, not part of the smoke gate): move
 `workspace/env-schema`'s CORE_ENV_GROUPS data table into Rust when the `.env.example` generator
