@@ -236,10 +236,9 @@ Follow-up decisions (2026-10-31), after an operator review of the open items:
   need the repo credentials — treat that repo as part of the vault; `.credentials/` is already
   excluded from it).
 
-Still open (behaviour-neutral):
-
-- The Selkies web client is copied into every image (incl. KasmVNC-only); making it conditional
-  needs a `DESKTOP_STACK`-selected build stage for ~6 MB.
+Still open (behaviour-neutral): none — the cleanup backlog is clear. The Selkies web client is
+now copied only when DESKTOP_STACK includes it (a selector stage; a KasmVNC-only image carries an
+empty /usr/share/selkies/web), closing the last item.
 
 ## croc — the CLI file-transfer path
 

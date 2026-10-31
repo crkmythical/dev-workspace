@@ -106,9 +106,9 @@
 - `rust/sync-service` 早已不是 PoC：它是生产守护进程，`SYNC_ENABLED` 已实现并冒烟验证；现在只负责 `/sync/api/*`，静态 SPA 由 Caddy `file_server` 提供。
 - `.env.example` 生成器已用 Rust 补回（`sdw env-example` / `make env-example`，带漂移测试）。
 - 删除过时的 Parallels VM 代理变体（`parallels/`，2026-10-31）；维护中的独立代理是 `client/` 容器。
+- Selkies web 客户端（约 6 MB）改为按 `DESKTOP_STACK` 条件复制（2026-10-31）：默认（KasmVNC）镜像不再携带它，`/usr/share/selkies/web` 为空。
 
-仍待办：
-- Selkies 静态客户端（约 6 MB）仍复制进所有镜像（含只用 KasmVNC 的默认镜像）。真正按需复制要把 Dockerfile 的 COPY 改成按 `DESKTOP_STACK` 选的构建阶段（条件 COPY）；收益约 6 MB、有重构与从零构建验证成本，暂缓。
+仍待办：（暂无——此前的清理积压已清空。）
 
 ## 多平台部署
 
