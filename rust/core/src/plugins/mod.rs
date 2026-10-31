@@ -2,9 +2,8 @@
 //! into this build. To drop a plugin, delete its line from `plugins()` and its folder; nothing
 //! else in the source names it.
 //!
-//! The combined `ENV_GROUPS` (the core's groups then each plugin's) is deferred to stage 3: the
-//! core's own `CORE_ENV_GROUPS` data table is still in TypeScript (see crate::workspace::env_schema),
-//! so only `plugins()` and `all_vaults()` are ported here.
+//! `env_groups()` is the combined set rendered into `.env.example`: the core's groups
+//! (crate::workspace::env_schema) first, then each plugin's.
 
 pub mod pentest;
 pub mod plugin;
@@ -13,6 +12,7 @@ pub use plugin::Plugin;
 
 use crate::vault::domain::VaultSpec;
 use crate::vault::specs::workspace_vault;
+use crate::workspace::env_schema::{core_env_groups, EnvGroup};
 use pentest::pentest_plugin;
 
 /// The optional features compiled into this build.
@@ -27,6 +27,16 @@ pub fn all_vaults() -> Vec<VaultSpec> {
         vaults.extend(plugin.vaults);
     }
     vaults
+}
+
+/// Every variable the user can set — the core's groups, then each plugin's — the input to
+/// `.env.example`. Mirrors ENV_GROUPS in the TS plugins index.
+pub fn env_groups() -> Vec<EnvGroup> {
+    let mut groups = core_env_groups();
+    for plugin in plugins() {
+        groups.extend(plugin.env);
+    }
+    groups
 }
 
 #[cfg(test)]
@@ -111,5 +121,18 @@ mod tests {
     fn pentest_lets_other_users_use_its_volume() {
         // tor runs as debian-tor, apt downloads as _apt; FUSE turns every other uid away unless asked.
         assert!(pentest_vault().allow_other);
+    }
+
+    /// The committed `.env.example` is exactly what the generator produces — the drift guard (a
+    /// port of the TS env-example --check). Regenerate with `make env-example` after a schema edit.
+    #[test]
+    fn env_example_is_up_to_date() {
+        use crate::workspace::env_schema::render_env_example;
+        let committed = include_str!("../../../../.env.example");
+        assert_eq!(
+            render_env_example(&env_groups()),
+            committed,
+            "`.env.example` is out of date — run `make env-example`"
+        );
     }
 }

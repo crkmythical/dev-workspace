@@ -6,6 +6,7 @@ pub mod desktop_stop;
 pub mod destruct_passphrase;
 pub mod doctor;
 pub mod entrypoint;
+pub mod env_example;
 pub mod init_pentest;
 pub mod init_vault;
 pub mod lock_pentest;

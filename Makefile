@@ -1,5 +1,5 @@
 # Secure Dev Workspace — Build & Test
-.PHONY: build image-export image-import dev test lint format smoke smoke-build clean
+.PHONY: build image-export image-import dev test lint format env-example smoke smoke-build clean
 
 build:
 	docker compose build
@@ -24,6 +24,8 @@ format:
 
 build-spa:
 	cd packages/spa && bun run build
+env-example:
+	cargo run -q --manifest-path rust/Cargo.toml -p sdw-cli -- env-example
 
 # Boots an image next to a fake upstream and checks it (tests/smoke/README.md). Needs Docker.
 #   make smoke IMAGE=dev-workspace:trixie    test an image you already have
