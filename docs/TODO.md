@@ -1,5 +1,10 @@
 # TODO
 
+> **2026-10-30 更新**：运行时现在是全 Rust（`sdw` 多合一二进制 + `sync-service` 守护进程），镜像里不再有
+> Bun。TS 的 `packages/{server,cli,infra}` 和 core 里被 Rust 重写的域逻辑已退役，只留浏览器 SPA
+> （`packages/spa`）和它用的同步客户端（`packages/core/src/sync`）。详见 docs/rust-migration.md。
+> 下面的「验证状态」是 cutover 之前的记录，smoke 数字（298）是当时的；Rust 迁移后的全量是 302/0。
+
 ## 验证状态
 
 两轮验证，都在真实容器里。第一轮在重构（阶段 0–6）之后，用 Debian 基础镜像；第二轮把验证做成了仓库里的 smoke test（`tests/smoke/`，`make smoke`），在生产基础（Kali）镜像上跑，并补上了原来没法测的外部服务替身、真实浏览器、Cloudflare 隧道和几条真实的联网路径。跑起来才暴露的问题已修掉，见下面「验证中发现并修复的问题」。
@@ -82,24 +87,27 @@
 - **出口是尽力而为，没有强制**（`docs/threat-model.md`）。要强制需要独立的防火墙层；容器内进程都是 root，按 uid 的规则无效，需要基于 mark 的方案。
 - **主密码会进容器日志**（启动横幅）和 code-server 的 `config.yaml`，且 vault 口令就是它，见 threat-model 的 Non-Guarantees。留空由容器生成的话，重建容器会丢，见上。
 - **`docker-compose.apparmor.yml` 去掉容器最后一层 AppArmor 约束**。更好的做法是写一份只放行 FUSE 挂载的自定义 profile，目前没有。
-- **restic 备份仓库不受自毁影响，而且里面是明文工作区（含 `.credentials/`）**，只靠 `RESTIC_PASSWORD` 保护。要么在自毁里加删除（需要仓库凭据），要么把 `.credentials/` 加进排除集。
+- **restic 备份仓库不受自毁影响**，里面是明文工作区，只靠 `RESTIC_PASSWORD` 保护。`.credentials/`（ssh 密钥、同步口令）**已加入排除集**（2026-10-30，`BACKUP_EXCLUSION_SET`），不再进 restic 仓库；仍可从加密的 vault git 复制恢复（`VAULT_GITIGNORE` 不排除它）。开放项：自毁时连带删除 restic 仓库（需要仓库凭据），尚未做。
 - **`lock-vault` 在 code-server 等仍占用挂载时需要强制（lazy）卸载**，之后已打开文件的进程仍能访问。空闲的 code-server 不占用（量过，干净卸载成功），打开过东西之后才占用。`lock-vault` 可能就跑在 code-server 的终端里，所以没有去停 code-server；彻底的办法是重启容器。
 - **重放窗口不跨重启**：服务重启后，5 分钟容差内已见过的 nonce 可以被重放。
-- **远程自毁路由没有可注入依赖**，单元测试覆盖不到成功路径（会杀 PID 1）。现在它在真实容器里端到端验证过，但把 `createDestroyDeps` 通过 `createApp` 注入仍然更好。
+- ~~远程自毁路由没有可注入依赖~~ **已解决**（Rust 迁移）：触发器是可注入的 `DestructTrigger`（`AppConfig.destruct`），`sync-service/tests/routes.rs` 用假触发器覆盖了成功路径，不再碰不可逆边界。
 - **监听在 vault 里的 unix 套接字会占住挂载，而 `fuser` 看不到**，所以 `unmountVault` 的升级阶梯（杀占用者再重试）对这类占用者也无能为力，只能落到 lazy 卸载。桌面会话的 `ssh-agent` 是这样的一个占用者，已经关掉（见上）；用户自己在 vault 里建的套接字同理。可以让 `killHolders` 额外读 `/proc/net/unix`，把路径在挂载点下的套接字的主人也算进去。
-- **`pentest-bootstrap` 写死 `http://http.kali.org/kali`**：官方重定向会按位置挑镜像，挑到慢的或取不到 Release 的就回退到 Debian bookworm（已验证回退可用，但得到的是 bookworm，不是 Kali；工具要之后用 `install-kali-tools.sh` 补）。镜像构建有 `KALI_MIRROR`，这里没有对应的运行时设置。
+- **`pentest-bootstrap` 的 Kali 镜像**：官方重定向会按位置挑镜像，挑到慢的或取不到 Release 的就回退到 Debian bookworm（已验证回退可用，得到的是 bookworm，不是 Kali；工具之后用 `install-kali-tools.sh` 补）。运行时现在可用 `KALI_MIRROR` 覆盖（2026-10-30，与镜像构建同名 build-arg 一致，默认 `http.kali.org`）。
 - **debootstrap 每次启动都打印 `cannot create /pentest/rootfs/test-dev-null: Permission denied`**：vault 挂载是 `nodev`，debootstrap 的设备节点自检失败，但随后照常完成（真实运行验证过，rootfs 能用，`/dev` 由 `pentest` 另行挂载）。无害，吵。
 - **`pentest` 里 `service tor stop` 报 `Is 32 not tor?`**：init 脚本核对 PID 时看到的是另一个命名空间的数字。会话结束时整个 PID 命名空间一起收掉，所以不留进程，但会话中途不能用它停 tor。
 
 ### 清理
 
-- Selkies 静态客户端（约 6 MB）被复制进所有镜像，包括只含 KasmVNC 的默认镜像；可移到构建阶段按需复制。
-- `-full` 镜像里 `desktop-audio` 在 `DESKTOP_AUDIO=0`（默认）时立刻退出 0，supervisord 把它记成 FATAL，启动日志里有几行 `exited ... not expected`，无害但吵。把它改成 `startsecs=0`、`autorestart=unexpected`、`exitcodes=0` 即可。
-- `destroy.sh` 里 `docker volume rm vault-data cache-data clash-config destruct-state` 用的是不带项目前缀的名字，实际什么也删不到；真正删卷的是前面的 `docker compose down -v`。
-- `host-watcher.sh` 的 `docker events | while read` 在清理触发后会留下一个孤儿 `docker events` 进程，直到下一个事件时因 SIGPIPE 退出。
-- `image/Dockerfile.kasmvnc-test`、`docker-compose.kasmvnc-test.yml`、`image/scripts/start-kasmvnc-test.sh` 是 KasmVNC 帧缓冲问题的调试遗留。
-- `parallels/` 的 VM 方案没有随重构更新。
-- `rust/sync-service` 只是 PoC：要么毕业成为真正的守护进程，要么移除。它没有实现 `SYNC_ENABLED` 开关。
+已完成（2026-10-30，见 docs/rust-migration.md 与对应提交）：
+- `desktop-audio` 在 `DESKTOP_AUDIO=0` 时不再被 supervisord 记成 FATAL（`autorestart=unexpected`、`exitcodes=0`、`startsecs=0`）。
+- `destroy.sh` 改用带项目前缀的卷名清理（原来的不带前缀，什么也删不到）。
+- `host-watcher.sh` 不再在清理后留孤儿 `docker events`（后台生产者写 FIFO，break 时按 PID kill）。
+- 删除 KasmVNC 帧缓冲调试遗留（`image/Dockerfile.kasmvnc-test`、`docker-compose.kasmvnc-test.yml`、`image/scripts/start-kasmvnc-test.sh`）。
+- `rust/sync-service` 早已不是 PoC：它是生产守护进程，`SYNC_ENABLED` 已实现并冒烟验证；现在只负责 `/sync/api/*`，静态 SPA 由 Caddy `file_server` 提供。
+
+仍待办：
+- Selkies 静态客户端（约 6 MB）仍复制进所有镜像（含只用 KasmVNC 的默认镜像）。真正按需复制要把 Dockerfile 的 COPY 改成按 `DESKTOP_STACK` 选的构建阶段（条件 COPY）；收益约 6 MB、有重构与从零构建验证成本，暂缓。
+- `parallels/` 的 VM 方案仍未随重构更新（保留，未删）。
 
 ## 多平台部署
 

@@ -78,8 +78,9 @@ HTTP routes incl. a real encrypted chunk+finalize and the destruct decision path
 
 **Shipped:** `image/Dockerfile` builds the binary in a musl `rust-builder` stage and
 copies it to `/usr/local/bin/sync-service`; `image/supervisord.conf` runs that
-instead of `bun run .../server`. The TS `packages/server` stays in the tree (its
-`gen-wire-vectors.ts` is the parity source) but no longer runs.
+instead of `bun run .../server`. The TS `packages/server` has since been retired
+(2026-10-30); the golden wire vectors it generated are committed at
+`rust/sync-service/testdata/wire-vectors.json` and still pin parity.
 
 Validated 2026-10-30 on Colima/qemu (arm64): smoke checks 10/20/30/55/80 pass **93/0**
 against an image carrying this binary — boot, Caddy-proxied SPA+API, the full
@@ -198,9 +199,38 @@ the next checks confirmed the client connects, paints the desktop and takes inpu
 now waits for the title to settle; `/vnc/` is served by Caddy + KasmVNC, not by the Rust binaries
 this change rebuilt.)
 
-Remaining internal cleanup (behaviour-neutral, not part of the smoke gate): move
-`workspace/env-schema`'s CORE_ENV_GROUPS data table into Rust when the `.env.example` generator
-becomes an `sdw` subcommand.
+## Post-migration cleanup (2026-10-30)
+
+With the runtime all-Rust, a round of cleanup landed:
+
+- **TS retired.** `packages/{server,cli,infra}` and the Rust-reimplemented domain logic in
+  `packages/core` are deleted; only the browser SPA (`packages/spa`) and the sync client it
+  shares (`packages/core/src/sync/{aad,client,envelope,protocol}`) remain. CI's Bun job now
+  covers just those, and the architecture ratchet (`tests/architecture.test.ts`) is slimmed to
+  the surviving core+spa invariants.
+- **SPA served by Caddy.** `sync-service` is API-only (`/sync/api/*`); Caddy's `file_server`
+  serves the static SPA from the dist the image build places. tokio trimmed off `full`.
+- **CI.** `cargo test --workspace --locked`; `smoke.yml` now also triggers on `rust/**` (the
+  runtime is Rust, so a Rust change must re-run the image smoke).
+- **Noise/debris.** desktop-audio no longer logs FATAL when audio is off; `destroy.sh` removes
+  volumes by their real prefixed names; `host-watcher.sh` leaves no orphan `docker events`; the
+  KasmVNC framebuffer debug harness is gone.
+- **Security.** `.credentials/` is excluded from the restic backup (recoverable from the
+  encrypted vault replication); pentest bootstrap honours a runtime `KALI_MIRROR`.
+
+Still open (behaviour-neutral, or a threat-model call — deliberately not done here):
+
+- `.env.example` lost its generator with `packages/cli`; keep it by hand until an `sdw
+  env-example` subcommand carries the CORE_ENV_GROUPS data.
+- The replay window does not survive a `sync-service` restart (a 5-minute replay reopens);
+  persist a nonce journal or accept it.
+- The master password is printed in the boot banner and the code-server config (a documented
+  Non-Guarantee); suppressing it is a UX/threat-model decision.
+- `killHolders` could also read `/proc/net/unix` to catch unix-socket holders of the mount;
+  today it falls back to a lazy unmount, which is safe.
+- Self-destruct does not delete the restic repository (it would need the repo credentials).
+- The Selkies web client is copied into every image (incl. KasmVNC-only); `parallels/` is not
+  updated for the current architecture.
 
 ## croc — the CLI file-transfer path
 
@@ -215,8 +245,8 @@ Shipped:
 - `CROC_RELAY` (host:port of a self-hosted `croc relay`) and `CROC_PASS` (its
   password) are documented in the env schema (`.env.example`). Empty = off. The
   public default relay is never used.
-- Two commands, `push` / `pull` (`packages/cli/src/{push,pull}.ts`), over a pure
-  arg-builder in `packages/core/src/transfer/croc.ts`. They route through Clash by
+- Two commands, `push` / `pull` (`sdw` subcommands), over a pure arg-builder in
+  `rust/core/src/transfer/croc.rs`. They route through Clash by
   default (`--socks5 127.0.0.1:7890`, Clash's mixed port); `push --direct` is for a
   LAN relay. `pull` lands files in `/workspace` (the vault) by default.
 - Neither secret is ever on the command line: the relay password is `CROC_PASS`
@@ -243,7 +273,9 @@ Self-host DERP for independence.
 ## Keeping the two honest
 
 While the SPA stays TypeScript, `rust/sync-service/tests/parity.rs` replays golden
-vectors generated from the TS implementation
-(`packages/server/scripts/gen-wire-vectors.ts`), and `tests/bcrypt_parity.rs` pins
-Bun's bcrypt output against the `bcrypt` crate. Regenerate the vectors whenever the
-protocol changes; a drift fails the Rust build.
+vectors committed at `rust/sync-service/testdata/wire-vectors.json`, and
+`tests/bcrypt_parity.rs` pins Bun's bcrypt output against the `bcrypt` crate. The vectors
+are frozen: their generator (`packages/server/scripts/gen-wire-vectors.ts`) was retired
+with `packages/server` on 2026-10-30, so a protocol change now means rebuilding a generator
+on `packages/core/src/sync` (the browser client that still defines the wire format) before
+regenerating. A drift fails the Rust build.
