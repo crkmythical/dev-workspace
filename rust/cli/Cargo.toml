@@ -16,3 +16,5 @@ path = "src/main.rs"
 [dependencies]
 sdw-core = { path = "../core" }
 sdw-infra = { path = "../infra" }
+notify = "6"
+signal-hook = "0.3"

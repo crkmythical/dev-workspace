@@ -1,4 +1,5 @@
 pub mod backup_init;
+pub mod backup_watcher;
 pub mod desktop_start;
 pub mod desktop_stop;
 pub mod destruct_passphrase;

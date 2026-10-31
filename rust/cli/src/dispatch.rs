@@ -8,6 +8,7 @@ const BIN_NAME: &str = "sdw";
 /// until then an unknown command is an error and the image keeps running Bun.
 const COMMANDS: &[&str] = &[
     "backup-init",
+    "backup-watcher",
     "desktop-start",
     "desktop-stop",
     "destruct-passphrase",
@@ -46,6 +47,7 @@ fn basename(path: &str) -> &str {
 fn dispatch(command: &str, args: &[String]) -> i32 {
     match command {
         "backup-init" => commands::backup_init::run(args),
+        "backup-watcher" => commands::backup_watcher::run(args),
         "desktop-start" => commands::desktop_start::run(args),
         "desktop-stop" => commands::desktop_stop::run(args),
         "destruct-passphrase" => commands::destruct_passphrase::run(args),
