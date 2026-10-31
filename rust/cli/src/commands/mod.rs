@@ -11,6 +11,7 @@ pub mod push;
 pub mod self_destruct;
 pub mod unlock_pentest;
 pub mod unlock_vault;
+pub mod vault_sync;
 
 /// The real system environment getter the commands pass to core's `load_config`.
 pub(crate) fn system_env(key: &str) -> Option<String> {

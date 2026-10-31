@@ -11,6 +11,7 @@ pub mod desktop;
 pub mod destroy;
 pub mod destruct_key;
 pub mod egress;
+pub mod failure_tracker;
 pub mod gocryptfs;
 pub mod holders;
 pub mod notifications;
