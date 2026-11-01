@@ -85,7 +85,7 @@
 ### 安全与可靠性
 
 - **出口是尽力而为，没有强制**（`deploy/docs/threat-model.md`）。要强制需要独立的防火墙层；容器内进程都是 root，按 uid 的规则无效，需要基于 mark 的方案。
-- **主密码**：启动横幅不再打印它（2026-10-31）——只有在 PASSWORD 留空、容器自己生成口令时才打印（否则无从得知）；来自 `.env` 的口令永不进日志。它仍写进 code-server 的 `config.yaml`（code-server 要靠它认证，该文件在容器内、不随 `docker logs` 外泄）。vault 口令就是它，见 threat-model 的 Non-Guarantees。
+- **主密码**：启动横幅不再打印它（2026-10-31）——只有在 PASSWORD 留空、容器自己生成口令时才打印（否则无从得知）；来自 `.env` 的口令永不进日志。它仍写进 code-server 的 `config.yaml`（code-server 要靠它认证，该文件在容器内、不随 `docker logs` 外泄）。vault 口令就是它，见 threat-model 的 Non-Guarantees。把它变成内存驻留 + 硬件信任根的方案见 `deploy/docs/design-memory-only-secrets.md`（设计，未本地 PoC——这台机器没有容器可见的 TPM2；验证脚本 `src/tests/smoke/manual/tpm-seal-verify.sh` 在真实 TPM / CI 上才跑）。
 - **`docker-compose.apparmor.yml` 去掉容器最后一层 AppArmor 约束**。更好的做法是写一份只放行 FUSE 挂载的自定义 profile，目前没有。
 - **restic 备份仓库不受自毁影响**，里面是明文工作区，只靠 `RESTIC_PASSWORD` 保护。`.credentials/`（ssh 密钥、同步口令）**已加入排除集**（2026-10-30，`BACKUP_EXCLUSION_SET`），不再进 restic 仓库；仍可从加密的 vault git 复制恢复（`VAULT_GITIGNORE` 不排除它）。自毁时连带删除 restic 仓库（需要仓库凭据）：**按决定不做**，把该仓库当作 vault 的一部分对待。
 - **`lock-vault` 在 code-server 等仍占用挂载时需要强制（lazy）卸载**，之后已打开文件的进程仍能访问。空闲的 code-server 不占用（量过，干净卸载成功），打开过东西之后才占用。`lock-vault` 可能就跑在 code-server 的终端里，所以没有去停 code-server；彻底的办法是重启容器。
