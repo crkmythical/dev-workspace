@@ -35,7 +35,10 @@ const json = async (r: Response): Promise<Reply> => ({
   body: (await r.json().catch(() => ({}))) as Record<string, unknown>,
 });
 
-const doctor = await json(await fetch(base + SYNC_API.doctor));
+// /sync/api/doctor is gated behind Caddy basic-auth (it reveals sync/vault state to the network).
+// The Caddy password is the master password, which in this workspace equals the vault passphrase.
+const authHeader = { Authorization: `Basic ${btoa(`user:${passphrase}`)}` };
+const doctor = await json(await fetch(base + SYNC_API.doctor, { headers: authHeader }));
 check(
   "doctor reports ready, with an available sync key",
   doctor.body.state === "ready" && doctor.body.sync_key_available === true,
