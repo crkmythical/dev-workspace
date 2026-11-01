@@ -25,7 +25,7 @@
 | Risk | Likelihood | Impact | Acceptance |
 |------|-----------|--------|------------|
 | Memory dump while unlocked | Low | High | Mitigated: core dumps disabled, key zeroed on lock |
-| gocryptfs vulnerability | Very Low | Critical | Monitor CVEs; passphrase rotation available |
+| gocryptfs vulnerability | Very Low | Critical | Monitor CVEs; key rotation is manual (`gocryptfs -passwd` on the cipher dir — there is no built-in command, and it desyncs the passphrase copies listed under Non-Guarantees) |
 | Clash subscription compromise | Medium | Medium | Traffic visible to proxy provider; use trusted provider |
 | Docker Desktop vulnerability | Low | High | Keep updated; consider VM alternative |
 | Browser IndexedDB key extraction | Low | Medium | Key marked non-extractable; cleared on rotation |
@@ -84,3 +84,4 @@ What this system does NOT promise, so nobody relies on it:
 - 攻击者已知 vault passphrase → 可推导 destruct passphrase (设计如此: 同一信任根)
 - 物理访问 + 已开机 + vault 已解锁 → 可直接读取明文 (与无 self-destruct 时相同)
 - Docker socket 暴露 → 可 exec 任意命令 (与无 self-destruct 时相同)
+- **host-watcher 的容器→宿主升级**：可选安装的 host-watcher 仅凭 destruct-state 卷里出现 `completed` 标记，就在宿主上运行 `destroy.sh --force --paranoid`（删项目目录、`~/.cloudflared` 凭据、刷 DNS、洗 shell history）。能在容器内写 `/var/run/self-destruct/completed` 的攻击者（例如 code-server RCE）因此可诱发宿主侧的破坏性清理——破坏而非窃取或执行。缓解：watcher 默认不安装（bootstrap 询问，默认否），其用途本就是自毁后清理宿主；`destroy.sh` 的 `rm -rf` 现已加目标校验（拒绝空/`/`/`$HOME`/非项目目录）。不信任容器不被攻陷时，不要安装它
