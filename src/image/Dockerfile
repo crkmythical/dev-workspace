@@ -343,6 +343,7 @@ RUN echo 'export http_proxy=http://127.0.0.1:7890' >> /etc/profile.d/proxy.sh &&
 
 # Copy baked configs
 COPY image/supervisord.conf /etc/supervisor/supervisord.conf
+COPY --chmod=0755 image/clash-watcher.sh /usr/local/bin/clash-watcher
 COPY image/etc/clash/config.yaml /etc/clash/config.yaml
 COPY image/etc/clash/config.yaml.template /etc/clash/config.yaml.template
 COPY image/etc/clash/rules.yaml /etc/clash/rules.yaml
