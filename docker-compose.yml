@@ -2,11 +2,27 @@ x-workspace: &workspace-base
   dns:
     - 1.1.1.1
     - 8.8.8.8
+  # Least privilege: drop Docker's full default capability set and add back only what the workspace
+  # uses, verified against the smoke suite. The dropped ones (SETFCAP, SETPCAP, AUDIT_WRITE) are
+  # privesc-relevant and unused at runtime — the only `setcap` is at image-build time, and nothing
+  # manipulates capabilities while running. SYS_ADMIN (FUSE) remains the dominant risk; a non-root
+  # user plus a microVM (Firecracker/Kata) is the real isolation fix (see deploy/docs/threat-model.md).
+  cap_drop:
+    - ALL
   cap_add:
-    - SYS_ADMIN
-    # For the opt-in fail-closed egress firewall (EGRESS_ENFORCE): nftables needs NET_ADMIN.
-    # Harmless when the feature is off (the capability is simply available, unused).
-    - NET_ADMIN
+    - SYS_ADMIN        # gocryptfs / FUSE mount
+    - NET_ADMIN        # nftables egress firewall (EGRESS_ENFORCE) + Clash
+    - CHOWN            # entrypoint chowns /etc/clash to the clash uid; apt/dpkg; desktop-install
+    - DAC_OVERRIDE     # root reads/writes across file modes (apt, tooling)
+    - FOWNER           # dpkg/apt operate on files they do not own
+    - FSETID           # dpkg preserves setuid/setgid bits on install
+    - SETUID           # run Clash as the clash uid (setpriv); debootstrap/apt drop to _apt
+    - SETGID           # same
+    - KILL             # lock-vault / unmount kill mount holders (incl. the non-root clash uid)
+    - NET_BIND_SERVICE # Clash's DNS listener on :53
+    - SYS_CHROOT       # pentest enters its rootfs (chroot)
+    - MKNOD            # debootstrap / pentest rootfs device nodes
+    - NET_RAW          # pentest tools (nmap, ping)
   security_opt:
     # Required for XFCE desktop (glycin/bwrap sandbox needs pivot_root)
     - seccomp:unconfined
