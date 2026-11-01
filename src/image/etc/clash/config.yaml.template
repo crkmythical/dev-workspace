@@ -20,8 +20,7 @@ dns:
   enhanced-mode: fake-ip
   fake-ip-range: 198.18.0.1/16
   nameserver:
-    - https://1.1.1.1/dns-query
-    - https://8.8.8.8/dns-query
+{{CLASH_DNS_NAMESERVER}}
 
 proxy-providers:
   subscription:

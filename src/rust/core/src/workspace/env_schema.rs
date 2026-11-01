@@ -59,6 +59,25 @@ pub fn core_env_groups() -> Vec<EnvGroup> {
             }],
         },
         EnvGroup {
+            title: "EGRESS — Clash proxy (optional)".to_string(),
+            vars: vec![EnvVarSpec {
+                opt_in: true,
+                ..var(
+                    "CLASH_DNS",
+                    &[
+                        "DNS resolvers Clash itself uses to resolve proxy-node and subscription",
+                        "hostnames, comma-separated. The default is global anycast DoH and is correct",
+                        "on most networks — leave it unless proxy nodes fail to load. Inside mainland",
+                        "China 1.1.1.1 / 8.8.8.8 are blocked or poisoned and Clash then loads ZERO",
+                        "usable nodes; override with domestic resolvers there, e.g.",
+                        "  CLASH_DNS=223.5.5.5,119.29.29.29",
+                        "Plain IPs (UDP), tls:// (DoT) and https:// (DoH) entries are all accepted.",
+                    ],
+                    "https://1.1.1.1/dns-query,https://8.8.8.8/dns-query",
+                )
+            }],
+        },
+        EnvGroup {
             title: "IMAGE BUILD — used by `docker compose build`".to_string(),
             vars: vec![
                 var(

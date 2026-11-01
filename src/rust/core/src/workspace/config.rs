@@ -5,6 +5,7 @@
 
 use crate::backup::domain::BackupGateEnv;
 use crate::desktop::domain::DESKTOP_DEFAULT_RESOLUTION;
+use crate::egress::domain::DEFAULT_CLASH_DNS;
 use crate::workspace::features::{parse_feature_flags, FeatureFlags};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,6 +20,9 @@ pub struct GitConfig {
 pub struct WorkspaceConfig {
     /// Clash subscription URL. Empty when unset.
     pub clash_subscription_url: String,
+    /// DNS resolvers Clash uses to resolve node/subscription hostnames (comma-separated).
+    /// Defaults to DEFAULT_CLASH_DNS; override inside mainland China (see env_schema.rs).
+    pub clash_dns: String,
     /// Master password shared by code-server, the desktops and the vault. None when unset.
     pub password: Option<String>,
     pub desktop_resolution: String,
@@ -53,6 +57,7 @@ pub fn load_config(get: impl Fn(&str) -> Option<String>) -> WorkspaceConfig {
     let v = |name: &str| get(name).filter(|s| !s.is_empty());
     WorkspaceConfig {
         clash_subscription_url: v("CLASH_SUBSCRIPTION_URL").unwrap_or_default(),
+        clash_dns: v("CLASH_DNS").unwrap_or_else(|| DEFAULT_CLASH_DNS.to_string()),
         password: v("PASSWORD"),
         desktop_resolution: v("DESKTOP_RESOLUTION")
             .unwrap_or_else(|| DESKTOP_DEFAULT_RESOLUTION.to_string()),
@@ -117,6 +122,7 @@ mod tests {
             load_config(|_| None),
             WorkspaceConfig {
                 clash_subscription_url: String::new(),
+                clash_dns: "https://1.1.1.1/dns-query,https://8.8.8.8/dns-query".to_string(),
                 password: None,
                 desktop_resolution: "1920x1080".to_string(),
                 host_port: "18080".to_string(),
@@ -141,16 +147,23 @@ mod tests {
             ("PASSWORD", ""),
             ("DESKTOP_RESOLUTION", ""),
             ("VAULT_GIT_REPO", ""),
+            ("CLASH_DNS", ""),
         ]));
         assert_eq!(cfg.password, None);
         assert_eq!(cfg.desktop_resolution, "1920x1080");
         assert_eq!(cfg.git.vault_repo, None);
+        // An empty override falls back to the global default, never an empty resolver list.
+        assert_eq!(
+            cfg.clash_dns,
+            "https://1.1.1.1/dns-query,https://8.8.8.8/dns-query"
+        );
     }
 
     #[test]
     fn reads_every_documented_variable() {
         let cfg = load_config(env(&[
             ("CLASH_SUBSCRIPTION_URL", "https://example.test/sub"),
+            ("CLASH_DNS", "223.5.5.5,119.29.29.29"),
             ("PASSWORD", "s3cret"),
             ("DESKTOP_RESOLUTION", "1280x720"),
             ("GIT_USER_NAME", "Ada"),
@@ -165,6 +178,7 @@ mod tests {
             ("EGRESS_ENFORCE", "1"),
         ]));
         assert_eq!(cfg.clash_subscription_url, "https://example.test/sub");
+        assert_eq!(cfg.clash_dns, "223.5.5.5,119.29.29.29");
         assert_eq!(cfg.password.as_deref(), Some("s3cret"));
         assert_eq!(cfg.desktop_resolution, "1280x720");
         assert_eq!(

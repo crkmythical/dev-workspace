@@ -75,7 +75,7 @@ pub fn run(args: &[String]) -> i32 {
         let template = fs::read_to_string(CLASH_TEMPLATE_PATH).unwrap_or_default();
         let _ = fs::write(
             CLASH_CONFIG_PATH,
-            render_clash_config(&template, &clash_url),
+            render_clash_config(&template, &clash_url, &config.clash_dns),
         );
         println!("  ✓ 订阅配置已更新");
         cmd::ok("pkill", &["-x", "clash"]);

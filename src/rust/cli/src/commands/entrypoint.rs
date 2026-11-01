@@ -121,7 +121,7 @@ fn run_step(
             let _ = fs::create_dir_all(CLASH_PROVIDERS_DIR);
             fs::write(
                 CLASH_CONFIG_PATH,
-                render_clash_config(&template, &config.clash_subscription_url),
+                render_clash_config(&template, &config.clash_subscription_url, &config.clash_dns),
             )
             .map_err(|e| e.to_string())?;
             println!("Clash config generated from template.");

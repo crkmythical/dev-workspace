@@ -183,14 +183,54 @@ pub fn egress_health(
 // --- Clash config ---
 
 pub const CLASH_URL_PLACEHOLDER: &str = "{{CLASH_SUBSCRIPTION_URL}}";
+pub const CLASH_DNS_PLACEHOLDER: &str = "{{CLASH_DNS_NAMESERVER}}";
 
-/// Fill the subscription URL into the config template. The template holds it inside a
-/// double-quoted YAML scalar, so the URL is JSON-string-escaped first (serde_json gives exactly
-/// what JSON.stringify does); the replace is literal, so `$&`/`$1` in the URL are not special.
-pub fn render_clash_config(template: &str, subscription_url: &str) -> String {
+/// DNS resolvers Clash uses to resolve proxy-node and subscription hostnames (comma-separated).
+/// Global anycast DoH: correct and fast on most networks. Inside mainland China these are blocked
+/// or poisoned, which leaves Clash with zero usable nodes; override with CLASH_DNS there (for
+/// example 223.5.5.5,119.29.29.29).
+pub const DEFAULT_CLASH_DNS: &str = "https://1.1.1.1/dns-query,https://8.8.8.8/dns-query";
+
+/// Fill the template's placeholders: the subscription URL and the DNS nameserver list. Both come
+/// from user config, so each value is JSON-string-escaped (serde_json gives exactly what
+/// JSON.stringify does) and the replace is literal — `$&`/`$1` in a value are not special and a
+/// value cannot break out of its YAML context (a newline, quote or `#` is escaped, not honoured).
+pub fn render_clash_config(
+    template: &str,
+    subscription_url: &str,
+    dns_nameservers: &str,
+) -> String {
     let quoted = serde_json::to_string(subscription_url).expect("a string serializes");
     let escaped = &quoted[1..quoted.len() - 1];
-    template.replace(CLASH_URL_PLACEHOLDER, escaped)
+    template
+        .replace(CLASH_URL_PLACEHOLDER, escaped)
+        .replace(CLASH_DNS_PLACEHOLDER, &clash_dns_block(dns_nameservers))
+}
+
+/// The comma-separated nameservers as an indented YAML list to drop under `nameserver:`. Each is a
+/// double-quoted, JSON-escaped scalar, so a space, `#` or newline inside one cannot break out of
+/// the list. Blank entries are dropped; an empty list falls back to DEFAULT_CLASH_DNS so Clash is
+/// never left without a resolver.
+fn clash_dns_block(dns_nameservers: &str) -> String {
+    fn yaml_items(list: &str) -> Vec<String> {
+        list.split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|ns| {
+                format!(
+                    "    - {}",
+                    serde_json::to_string(ns).expect("a string serializes")
+                )
+            })
+            .collect()
+    }
+    let items = yaml_items(dns_nameservers);
+    let items = if items.is_empty() {
+        yaml_items(DEFAULT_CLASH_DNS)
+    } else {
+        items
+    };
+    items.join("\n")
 }
 
 // --- timing policy of the start-up bring-up ---
@@ -375,15 +415,16 @@ mod tests {
 
     #[test]
     fn render_clash_config_cases() {
+        let dns = "223.5.5.5";
         let template =
             format!("proxy-providers:\n  subscription:\n    url: \"{CLASH_URL_PLACEHOLDER}\"\n");
         assert_eq!(
-            render_clash_config(&template, "https://sub.example/api?token=abc"),
+            render_clash_config(&template, "https://sub.example/api?token=abc", dns),
             "proxy-providers:\n  subscription:\n    url: \"https://sub.example/api?token=abc\"\n"
         );
 
         let twice = format!("{CLASH_URL_PLACEHOLDER} {CLASH_URL_PLACEHOLDER}");
-        assert_eq!(render_clash_config(&twice, "u"), "u u");
+        assert_eq!(render_clash_config(&twice, "u", dns), "u u");
 
         // A string replacement would paste the placeholder back for `$&`; ours does not.
         for url in [
@@ -393,7 +434,7 @@ mod tests {
             "https://x/$`z",
         ] {
             assert_eq!(
-                render_clash_config(&format!("url: \"{CLASH_URL_PLACEHOLDER}\""), url),
+                render_clash_config(&format!("url: \"{CLASH_URL_PLACEHOLDER}\""), url, dns),
                 format!("url: \"{url}\"")
             );
         }
@@ -402,7 +443,8 @@ mod tests {
         assert_eq!(
             render_clash_config(
                 &format!("url: \"{CLASH_URL_PLACEHOLDER}\""),
-                "https://x/\"q\"\\n"
+                "https://x/\"q\"\\n",
+                dns
             ),
             "url: \"https://x/\\\"q\\\"\\\\n\""
         );
@@ -411,7 +453,48 @@ mod tests {
         let out = render_clash_config(
             &format!("url: \"{CLASH_URL_PLACEHOLDER}\""),
             "https://x\nevil: 1",
+            dns,
         );
         assert_eq!(out.lines().count(), 1);
+    }
+
+    #[test]
+    fn render_clash_dns_cases() {
+        let template = format!("dns:\n  nameserver:\n{CLASH_DNS_PLACEHOLDER}\n");
+
+        // Comma-separated nameservers become an indented, quoted YAML list; surrounding
+        // whitespace is trimmed and blank entries dropped.
+        assert_eq!(
+            render_clash_config(&template, "u", "223.5.5.5, 119.29.29.29"),
+            "dns:\n  nameserver:\n    - \"223.5.5.5\"\n    - \"119.29.29.29\"\n"
+        );
+        assert_eq!(
+            render_clash_config(&template, "u", "  ,, 1.1.1.1 ,"),
+            "dns:\n  nameserver:\n    - \"1.1.1.1\"\n"
+        );
+
+        // DoH/DoT forms (with `#` params) survive intact inside the quoted scalar.
+        assert_eq!(
+            render_clash_config(&template, "u", "https://doh.pub/dns-query#h3=true"),
+            "dns:\n  nameserver:\n    - \"https://doh.pub/dns-query#h3=true\"\n"
+        );
+
+        // An empty (or all-blank) list falls back to the global default, never an empty list.
+        for empty in ["", "   ", " , , "] {
+            let out = render_clash_config(&template, "u", empty);
+            assert!(
+                out.contains("    - \"https://1.1.1.1/dns-query\""),
+                "{empty:?}"
+            );
+            assert!(
+                out.contains("    - \"https://8.8.8.8/dns-query\""),
+                "{empty:?}"
+            );
+        }
+
+        // A nameserver cannot break out of the list: a newline/quote is escaped, not honoured.
+        let evil = render_clash_config(&template, "u", "1.1.1.1\nrules: []");
+        assert!(evil.contains(r#"    - "1.1.1.1\nrules: []""#));
+        assert!(!evil.contains("\nrules: []"));
     }
 }
