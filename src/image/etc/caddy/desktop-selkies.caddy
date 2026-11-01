@@ -6,11 +6,15 @@
 # static client from /usr/share/selkies/web and reverse-proxies only the WebSocket.
 # The client opens <path>/websockets (plural).
 #
-# AUTH MODEL: Basic Auth gates the static client (the page load). The WebSocket
-# upgrade is NOT re-authed because browsers do NOT attach basic-auth credentials
-# to JS-initiated WebSocket handshakes (a 401 there → blank "Waiting for stream...").
-# Safe: the WS only carries an already-authenticated same-origin session, the
-# upstream binds 127.0.0.1 only, and there are zero inbound ports (tunnel-only).
+# AUTH MODEL — HONEST CAVEAT: Basic Auth gates the static client (the page load), but the
+# WebSocket upgrade is NOT authenticated. Browsers do not attach basic-auth credentials to
+# JS-initiated WebSocket handshakes (a 401 there → blank "Waiting for stream..."), and Selkies on
+# :6080 has no auth of its own, so anyone who reaches :8080 can open /desktop/websockets and get
+# the live desktop stream + input WITHOUT the password. Nothing here enforces same-origin (Caddy
+# does not check Origin). This is tolerated ONLY because ingress is tunnel-only (no inbound ports,
+# upstream bound to 127.0.0.1) and the DEFAULT stack is kasmvnc, which authenticates its WS
+# natively end-to-end (see desktop-vnc.caddy). Running the selkies or "both" stack means treating
+# the desktop as reachable by anyone who reaches the tunnel until Selkies-level auth is added.
 
 # (1) WebSocket — must come BEFORE the static handler (longer path = higher priority).
 @desktop_ws path /desktop/websockets

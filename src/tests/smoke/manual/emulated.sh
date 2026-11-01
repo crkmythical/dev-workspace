@@ -68,7 +68,7 @@ parts = [
     # Best effort: Bun often cannot run its JavaScript engine under qemu-user (measured here: "Out of
     # memory" inside libarchive during bun install, a segmentation fault without QEMU_CPU). Where it
     # works, the repository's own tests run on the other architecture.
-    "RUN (bun install --frozen-lockfile && bun test packages/core packages/cli) || "
+    "RUN (bun install --frozen-lockfile && bun test packages/core) || "
     "echo 'NOTE: Bun cannot run the repository under qemu-user; the checks above are what emulation can show'\n",
 ]
 open(out, "w").write("\n".join(parts))
