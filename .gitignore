@@ -30,3 +30,7 @@ iE
 
 # Docker build cache
 .docker/
+
+# Cloudflare orchestration (PoC) — API token secrets and per-instance state, never commit
+deploy/orchestration/secrets.env
+deploy/orchestration/instances/
