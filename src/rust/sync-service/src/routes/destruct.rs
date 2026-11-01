@@ -1,9 +1,13 @@
 //! POST /sync/api/destruct — port of packages/server/src/routes/destruct.ts.
 //!
-//! Off unless REMOTE_DESTRUCT_ENABLED, and then every refusal is a 404, so a
-//! disabled or wrongly-answered endpoint is indistinguishable from one that does
-//! not exist. A per-IP budget with a global backstop bounds a brute force. On the
-//! right passphrase it answers 200 and, after a short delay, fires the trigger.
+//! Off unless REMOTE_DESTRUCT_ENABLED. When off, every call is a fast 404, indistinguishable from
+//! an endpoint that does not exist. When on, refusals are 404 too (wrong or empty passphrase, no
+//! key hash) — with two caveats stated honestly rather than claimed away: a sustained flood trips
+//! the per-IP budget / global backstop and gets a 429 (not a 404), and only a well-formed wrong
+//! passphrase reaches the deliberately slow bcrypt verify. So response timing and the 429 can
+//! reveal that the feature is enabled, though neither leaks the passphrase. On the right passphrase
+//! it launches the destroyer synchronously and answers 200 — or 500 if it could not even start, so
+//! a launch failure is never hidden behind an optimistic 200.
 
 use axum::{
     body::Bytes,
