@@ -77,7 +77,9 @@ pub fn bring_up_egress<P: EgressPorts>(ports: &P, timing: EgressTiming) -> Egres
                 "Provider has no nodes after {}s; asking Clash to fetch the subscription again.",
                 seconds(timing.provider_wait)
             ));
-            let _ = ports.refresh_provider();
+            if let Err(e) = ports.refresh_provider() {
+                ports.log(&format!("WARNING: subscription refresh failed: {e}"));
+            }
             provider_nodes = wait_for_nodes(ports, timing.refresh_wait);
         }
         let loaded_msg = match provider_nodes {
@@ -89,7 +91,14 @@ pub fn bring_up_egress<P: EgressPorts>(ports: &P, timing: EgressTiming) -> Egres
         };
         ports.log(&loaded_msg);
 
-        let _ = ports.select_auto_node();
+        if let Err(e) = ports.select_auto_node() {
+            // Do not silently leave GLOBAL on its DIRECT default: a probe would still pass while
+            // traffic bypasses every node, which would read as a false "confirmed".
+            ports.log(&format!(
+                "WARNING: {e}. A 'confirmed' egress proves only that the proxy PORT reached the \
+                 target, not that traffic went through a subscription node."
+            ));
+        }
 
         // Give Clash a moment to establish its first connection before probing.
         ports.sleep(timing.settle_ms);

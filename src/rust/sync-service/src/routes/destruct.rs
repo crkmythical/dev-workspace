@@ -5,8 +5,6 @@
 //! not exist. A per-IP budget with a global backstop bounds a brute force. On the
 //! right passphrase it answers 200 and, after a short delay, fires the trigger.
 
-use std::time::Duration;
-
 use axum::{
     body::Bytes,
     extract::State,
@@ -15,8 +13,6 @@ use axum::{
     Json,
 };
 use serde_json::{json, Value};
-
-use sdw_core::vault::destruct::DESTRUCT_RESPONSE_DELAY_MS;
 
 use crate::util::now_ms;
 use crate::AppState;
@@ -83,13 +79,20 @@ pub async fn destruct(State(state): State<AppState>, headers: HeaderMap, body: B
         return StatusCode::NOT_FOUND.into_response();
     }
 
-    // Answer first, destroy after a short delay (the TS route's setTimeout). The
-    // trigger owns the irreversible path and terminates PID 1.
-    let trigger = state.destruct.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(DESTRUCT_RESPONSE_DELAY_MS)).await;
-        trigger.trigger();
-    });
-
-    (StatusCode::OK, Json(json!({ "status": "destroyed" }))).into_response()
+    // Launch the destroyer and only answer success if it actually started. A failure to even
+    // spawn it must not be hidden behind a 200. The child does the slow, irreversible work
+    // (quiesce, unmount, shred, then SIGTERM pid 1) — far longer than this tiny JSON needs to
+    // flush back through Caddy, so there is no race that "answer first" was protecting against
+    // (quiesce stops only the vault-sync cron, not Caddy or this daemon).
+    match state.destruct.trigger() {
+        Ok(()) => (StatusCode::OK, Json(json!({ "status": "destroyed" }))).into_response(),
+        Err(e) => {
+            eprintln!("remote destruct: {e}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "status": "error" })),
+            )
+                .into_response()
+        }
+    }
 }

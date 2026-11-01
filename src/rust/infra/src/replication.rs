@@ -3,8 +3,9 @@
 //!
 //! The repository lives in the cipher directory, outside the mount, and holds only ciphertext and
 //! gocryptfs.conf. The start-up makes sure it exists and points at VAULT_GIT_REPO
-//! (ensure_cipher_repo); the cron job only commits and pushes (cron carries no env). Nothing here
-//! prints: the remote URL may carry an access token.
+//! (ensure_cipher_repo); the cron job only commits and pushes (cron carries no env). This module
+//! never prints a git command's stderr: the remote URL may carry an access token. Generic,
+//! URL-free diagnostics are fine.
 
 use crate::cmd;
 use std::fs;
@@ -103,7 +104,11 @@ pub fn ensure_cipher_repo(
 
 /// Stage everything. True when there is something to commit.
 pub fn stage_changes(dir: &str) -> bool {
-    git(dir, &["add", "-A"]);
+    if !git(dir, &["add", "-A"]).0 {
+        // Don't go silent: a failed stage (e.g. a stuck index.lock) would otherwise be
+        // indistinguishable from "nothing changed". Generic message — no remote URL involved.
+        eprintln!("vault-sync: 'git add -A' failed in the cipher directory");
+    }
     // `diff --cached --quiet` exits 1 (not success) when something is staged.
     !git(dir, &["diff", "--cached", "--quiet"]).0
 }

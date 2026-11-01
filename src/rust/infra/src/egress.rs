@@ -84,14 +84,17 @@ impl<L: Fn(&str)> EgressPorts for ClashEgressPorts<L> {
             "{}/providers/proxies/{CLASH_PROVIDER_NAME}",
             controller_url()
         );
-        cmd::ok("curl", &["-fsS", "-X", "PUT", &url]);
-        Ok(())
+        if cmd::ok("curl", &["-fsS", "-X", "PUT", &url]) {
+            Ok(())
+        } else {
+            Err(format!("refresh request to {url} failed"))
+        }
     }
 
     fn select_auto_node(&self) -> Result<(), String> {
         let url = format!("{}/proxies/GLOBAL", controller_url());
         let body = format!("{{\"name\":\"{CLASH_AUTO_GROUP}\"}}");
-        cmd::ok(
+        if cmd::ok(
             "curl",
             &[
                 "-fsS",
@@ -103,8 +106,13 @@ impl<L: Fn(&str)> EgressPorts for ClashEgressPorts<L> {
                 "-d",
                 &body,
             ],
-        );
-        Ok(())
+        ) {
+            Ok(())
+        } else {
+            Err(format!(
+                "pointing GLOBAL at {CLASH_AUTO_GROUP} failed; traffic may stay DIRECT"
+            ))
+        }
     }
 
     fn probe(&self) -> Result<bool, String> {

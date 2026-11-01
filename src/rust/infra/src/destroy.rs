@@ -57,19 +57,28 @@ impl DestroyEffects for ShellDestroyEffects {
         if !Path::new(dir).exists() {
             return Ok(());
         }
-        cmd::ok(
+        let shredded = cmd::ok(
             "find",
             &[dir, "-type", "f", "-exec", "shred", "-n1", "-z", "{}", "+"],
         );
         // Everything inside, hidden entries too (a glob would skip the .git replication repo); the
         // directory itself is a volume root and stays.
-        cmd::ok("find", &[dir, "-mindepth", "1", "-delete"]);
-        Ok(())
+        let deleted = cmd::ok("find", &[dir, "-mindepth", "1", "-delete"]);
+        if shredded && deleted {
+            Ok(())
+        } else {
+            // Be honest: the keys are already shredded (that phase verifies itself), but the
+            // ciphertext was not provably overwritten/removed, so this phase is NOT a success and
+            // the report's `complete` must reflect it.
+            Err(format!(
+                "shred_tree({dir}): shred ok={shredded}, delete ok={deleted}"
+            ))
+        }
     }
 
     fn scrub_credentials(&self) -> Result<(), String> {
-        FileShredder.shred(CLASH_CONFIG_PATH, 3);
-        cmd::ok(
+        let clash = FileShredder.shred(CLASH_CONFIG_PATH, 3);
+        let creds = cmd::ok(
             "rm",
             &[
                 "-rf",
@@ -78,8 +87,14 @@ impl DestroyEffects for ShellDestroyEffects {
                 "/root/.git-credentials",
             ],
         );
-        cmd::ok("rm", &["-f", DESTRUCT_KEY_HASH_PATH]);
-        Ok(())
+        let hash = cmd::ok("rm", &["-f", DESTRUCT_KEY_HASH_PATH]);
+        if clash && creds && hash {
+            Ok(())
+        } else {
+            Err(format!(
+                "scrub_credentials: clash={clash}, creds={creds}, hash={hash}"
+            ))
+        }
     }
 
     fn clear_shell_history(&self) -> Result<(), String> {

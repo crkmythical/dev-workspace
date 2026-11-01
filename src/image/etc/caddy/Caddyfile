@@ -12,6 +12,18 @@
 	# sync-service is API-only (/sync/api/*). The compiled SPA is static files the image
 	# build placed in /opt/workspace/packages/spa/dist (vite base=/sync/), so Caddy serves
 	# them directly; handle_path strips the /sync prefix to map onto the dist root.
+	# doctor reports whether sync is enabled and whether the vault is currently unlocked. That is
+	# recon an unauthenticated caller over the tunnel should not get, so gate it behind the shared
+	# password. The sync page and the emergency remote-destruct endpoint stay open on purpose (you
+	# may need to destruct precisely when you have lost normal access); each protects itself with
+	# its own auth (the derived sync key / the destruct passphrase). The SPA only opens doctor via
+	# a manual "open in new tab" button, so a browser prompt there is acceptable.
+	handle /sync/api/doctor {
+		basic_auth {
+			user {$DESKTOP_BCRYPT_HASH}
+		}
+		reverse_proxy 127.0.0.1:8081
+	}
 	handle /sync/api/* {
 		reverse_proxy 127.0.0.1:8081
 	}

@@ -38,7 +38,8 @@ esac
 
 step "sync service and remote self-destruct"
 expect_code "the sync page is served" 200 "$BASE/sync/"
-expect_match "the sync service reports ready with a key" '"state":"ready".*"sync_key_available":true' "$(curl -s --noproxy '*' --max-time 30 "$BASE/sync/api/doctor")"
+expect_code "doctor without credentials is refused" 401 "$BASE/sync/api/doctor"
+expect_match "the sync service reports ready with a key" '"state":"ready".*"sync_key_available":true' "$(curl -s --noproxy '*' --max-time 30 -u "$AUTH" "$BASE/sync/api/doctor")"
 expect_code "listing without proof of the key is refused" 401 "$BASE/sync/api/download"
 expect_code "a wrong destruct passphrase is indistinguishable from no endpoint (404)" 404 \
   -X POST -H 'content-type: application/json' -d '{"passphrase":"nope"}' "$BASE/sync/api/destruct"

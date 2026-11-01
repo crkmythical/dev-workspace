@@ -11,17 +11,24 @@
 use std::process::Command;
 
 pub trait DestructTrigger: Send + Sync {
-    fn trigger(&self);
+    /// Launch destruction. `Ok` means the (detached) destroyer is now running; `Err` means it
+    /// could not even be started, so the caller must NOT report success.
+    fn trigger(&self) -> Result<(), String>;
 }
 
-/// Production trigger: launch `self-destruct --force`, detached. Not awaited —
-/// the CLI terminates PID 1, which takes this process down with it.
+/// Production trigger: launch `self-destruct --force --remote`, detached. Not awaited — the CLI
+/// terminates PID 1, which takes this process down with it. `--remote` so a remote destruct also
+/// deletes the off-box ciphertext mirror (skipped cleanly when no VAULT_GIT_REPO / github-token
+/// is configured); without it, the encrypted vault survived on the git remote.
 pub struct SpawnSelfDestruct;
 
 impl DestructTrigger for SpawnSelfDestruct {
-    fn trigger(&self) {
-        if let Err(e) = Command::new("self-destruct").arg("--force").spawn() {
-            eprintln!("remote destruct: could not launch self-destruct: {e}");
-        }
+    fn trigger(&self) -> Result<(), String> {
+        Command::new("self-destruct")
+            .arg("--force")
+            .arg("--remote")
+            .spawn()
+            .map(|_child| ())
+            .map_err(|e| format!("could not launch self-destruct: {e}"))
     }
 }

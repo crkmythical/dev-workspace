@@ -26,8 +26,9 @@ const PASSPHRASE_HASH: &str = "$2b$08$efMja3NPRA/pb4MDgnmf.eCXOE56IzoWLpNS7VUjMC
 
 struct Flag(Arc<AtomicBool>);
 impl DestructTrigger for Flag {
-    fn trigger(&self) {
+    fn trigger(&self) -> Result<(), String> {
         self.0.store(true, Ordering::SeqCst);
+        Ok(())
     }
 }
 
@@ -203,9 +204,39 @@ async fn destruct_fires_on_the_right_passphrase() {
     let (status, body) = send(&h.state, post_json("/sync/api/destruct", &body)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "destroyed");
-    // The trigger fires after DESTRUCT_RESPONSE_DELAY_MS (200ms); wait past it.
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    // The trigger is launched synchronously before the response, so a failure to start it would
+    // have been a 500 (see destruct_reports_an_error_when_the_trigger_cannot_launch).
     assert!(h.fired.load(Ordering::SeqCst), "the destruct trigger ran");
+}
+
+#[tokio::test]
+async fn destruct_reports_an_error_when_the_trigger_cannot_launch() {
+    // A right passphrase but the destroyer cannot be started: the route must NOT answer
+    // "destroyed". It reports 500 instead of hiding the failure behind an optimistic 200.
+    struct Failing;
+    impl DestructTrigger for Failing {
+        fn trigger(&self) -> Result<(), String> {
+            Err("could not launch self-destruct".to_string())
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path();
+    let cfg = AppConfig {
+        features: both_on(),
+        dirs: Dirs {
+            shared: p.join("shared").to_string_lossy().into_owned(),
+            upload: p.join("uploads").to_string_lossy().into_owned(),
+        },
+        passphrase_path: p.join("sync-passphrase").to_string_lossy().into_owned(),
+        key_hash_path: p.join("key-hash").to_string_lossy().into_owned(),
+        destruct: Arc::new(Failing),
+    };
+    let state = AppState::from_config(cfg);
+    write(&state.key_hash_path, PASSPHRASE_HASH);
+    let body = format!(r#"{{"passphrase":"{PASSPHRASE}"}}"#);
+    let (status, out) = send(&state, post_json("/sync/api/destruct", &body)).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(out["status"], "error");
 }
 
 #[tokio::test]

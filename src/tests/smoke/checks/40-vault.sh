@@ -11,7 +11,7 @@ desktop_running() { dx supervisorctl status vnc:desktop-xfce-vnc 2>/dev/null | g
 code_server_up() { [ "$(http_code "$BASE/")" = 302 ]; }
 # The bracket keeps pgrep from matching the command line of the shell that runs it.
 code_server_gone() { ! dx pgrep -f '/usr/lib/code-serve[r]' >/dev/null; }
-sync_state() { curl -s --noproxy '*' --max-time 30 "$BASE/sync/api/doctor" | sed -E 's/.*"state":"([a-z-]+)".*/\1/'; }
+sync_state() { curl -s --noproxy '*' --max-time 30 -u "user:$SMOKE_PASSWORD" "$BASE/sync/api/doctor" | sed -E 's/.*"state":"([a-z-]+)".*/\1/'; }
 
 step "what is on disk"
 dx sh -c 'echo "persisted-by-the-smoke-test" > /workspace/smoke-marker.txt && sync'

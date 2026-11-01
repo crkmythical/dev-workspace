@@ -68,7 +68,9 @@ fn generate_password() -> String {
         Ok(()) => buf.iter().map(|b| format!("{b:02x}")).collect(),
         Err(e) => {
             eprintln!("FATAL: cannot read /dev/urandom to generate a password: {e}");
-            eprintln!("Refusing to create a vault with a guessable master key; set PASSWORD in .env.");
+            eprintln!(
+                "Refusing to create a vault with a guessable master key; set PASSWORD in .env."
+            );
             std::process::exit(1);
         }
     }
