@@ -120,5 +120,15 @@ echo "  ✗ Project directory will be removed"
 echo ""
 
 cd /
+# Guard the self-delete: $SCRIPT_DIR is derived from $0, and a mis-resolved path must never turn
+# this into `rm -rf /` or `rm -rf $HOME`. Refuse empty/root/home, and require the directory to
+# still look like the project (its docker-compose.yml survives the volume/image cleanup above).
+case "$SCRIPT_DIR" in
+  "" | "/" | "$HOME" | "$HOME/")
+    echo "Refusing to remove '$SCRIPT_DIR' (not a safe target)."; exit 1 ;;
+esac
+if [[ ! -f "$SCRIPT_DIR/docker-compose.yml" ]]; then
+  echo "Refusing to remove '$SCRIPT_DIR': does not look like the project directory."; exit 1
+fi
 rm -rf "$SCRIPT_DIR"
 echo "Done. No workspace traces remain."
