@@ -23,7 +23,10 @@ FROM oven/bun:1.4.3 AS spa-builder
 WORKDIR /opt/workspace
 COPY package.json bunfig.toml bun.lock ./
 COPY packages/ ./packages/
-RUN bun install --frozen-lockfile 2>/dev/null || bun install
+# Strict: the committed bun.lock governs what lands in the SPA bundle. The old
+# `|| bun install` fallback (with 2>/dev/null) silently re-resolved dependencies fresh on any
+# lockfile drift — defeating the lockfile. Fail loudly instead; CI pins the lockfile too.
+RUN bun install --frozen-lockfile
 RUN cd packages/spa && bunx vite build
 
 # --- Selkies web client (conditional) -----------------------------------------------------------
@@ -220,9 +223,22 @@ RUN set -eux; \
 
 # Install restic (realtime backup to S3) — single static binary, no runtime deps.
 ARG RESTIC_VERSION=0.17.3
-RUN curl -fsSL "https://github.com/restic/restic/releases/download/v${RESTIC_VERSION}/restic_${RESTIC_VERSION}_linux_$(dpkg --print-architecture).bz2" \
-    | bunzip2 > /usr/local/bin/restic \
-    && chmod +x /usr/local/bin/restic
+# sha256 cross-checked against restic's official SHA256SUMS for v0.17.3 (per-arch). Download to a
+# temp file, verify, THEN decompress — a pipe straight to an executable cannot be checked.
+ARG RESTIC_SHA256_AMD64=5097faeda6aa13167aae6e36efdba636637f8741fed89bbf015678334632d4d3
+ARG RESTIC_SHA256_ARM64=db27b803534d301cef30577468cf61cb2e242165b8cd6d8cd6efd7001be2e557
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) restic_sha="$RESTIC_SHA256_AMD64" ;; \
+      arm64) restic_sha="$RESTIC_SHA256_ARM64" ;; \
+      *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://github.com/restic/restic/releases/download/v${RESTIC_VERSION}/restic_${RESTIC_VERSION}_linux_${arch}.bz2" -o /tmp/restic.bz2; \
+    echo "${restic_sha}  /tmp/restic.bz2" | sha256sum -c -; \
+    bunzip2 < /tmp/restic.bz2 > /usr/local/bin/restic; \
+    rm -f /tmp/restic.bz2; \
+    chmod +x /usr/local/bin/restic
 
 # Install croc (peer-to-peer, end-to-end encrypted file transfer for `push`/`pull`) — pinned +
 # sha256 against the release checksums.txt. Single static Go binary, like restic.
@@ -264,9 +280,23 @@ ENV JAVA_HOME="/root/.local/share/mise/installs/java/zulu-17"
 
 # Install Clash (mihomo) — pinned version
 ARG CLASH_VERSION=1.18.0
-RUN ARCH=$(dpkg --print-architecture) && \
-    curl -fsSL "https://github.com/MetaCubeX/mihomo/releases/download/v${CLASH_VERSION}/mihomo-linux-${ARCH}-v${CLASH_VERSION}.gz" \
-    | gunzip > /usr/bin/clash && chmod +x /usr/bin/clash
+# mihomo ships no separate checksum file, so these pin the exact published asset bytes (sha256 of
+# the release .gz, recorded here): a later asset swap or a corrupted download no longer silently
+# becomes /usr/bin/clash. Download, verify, THEN decompress.
+ARG CLASH_SHA256_AMD64=f1c8638d57e0a80705854286ec9d0a26681fc18441d7d708be6b9349029554ac
+ARG CLASH_SHA256_ARM64=980e2d74ae3724e6ce88f38ca3885bb756aee41359ee38f89799fa6fe6962e5e
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) clash_sha="$CLASH_SHA256_AMD64" ;; \
+      arm64) clash_sha="$CLASH_SHA256_ARM64" ;; \
+      *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://github.com/MetaCubeX/mihomo/releases/download/v${CLASH_VERSION}/mihomo-linux-${arch}-v${CLASH_VERSION}.gz" -o /tmp/clash.gz; \
+    echo "${clash_sha}  /tmp/clash.gz" | sha256sum -c -; \
+    gunzip < /tmp/clash.gz > /usr/bin/clash; \
+    rm -f /tmp/clash.gz; \
+    chmod +x /usr/bin/clash
 
 # Install code-server — pinned. The official installer fetches the matching
 # GitHub release; --version makes rebuilds deterministic.
