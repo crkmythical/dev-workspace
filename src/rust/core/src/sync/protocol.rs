@@ -28,6 +28,13 @@ pub const SYNC_KDF_ITERATIONS: u32 = 600_000;
 pub const REPLAY_WINDOW_SIZE: usize = 10_000;
 pub const REPLAY_TOLERANCE_MS: i64 = 300_000;
 
+// Max request body the API accepts. The browser sends one AEAD chunk per request, up to
+// CHUNK_SIZE = 4 MiB (packages/core/src/sync/protocol.ts) plus the 33-byte PNG header, 12-byte
+// nonce and 16-byte tag. axum's default `Bytes` limit is only 2 MiB, which would 413 a real chunk
+// before the handler (so files over ~2 MB could never upload); app() raises the limit to this. It
+// also bounds how much a single request can buffer in memory.
+pub const MAX_REQUEST_BODY_BYTES: usize = 5 * 1024 * 1024;
+
 // HTTP wire contract: header names + API paths, the single Rust source the routes use. Mirrors
 // SYNC_HEADERS / SYNC_API in packages/core/src/sync/protocol.ts — the frozen values the browser
 // SPA speaks. The test below pins them so a Rust-side typo is caught; tests/smoke checks the two

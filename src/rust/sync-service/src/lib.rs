@@ -14,6 +14,7 @@ pub mod util;
 pub use state::{AppConfig, AppState};
 
 use axum::{
+    extract::DefaultBodyLimit,
     routing::{get, post},
     Router,
 };
@@ -21,12 +22,18 @@ use axum::{
 /// Build the application router: the /sync/api/* surface (upload / download / doctor /
 /// destruct). The static SPA under /sync/ is served by Caddy's file_server, not here.
 pub fn app(state: AppState) -> Router {
-    use sdw_core::sync::protocol::{API_DESTRUCT, API_DOCTOR, API_DOWNLOAD, API_UPLOAD};
+    use sdw_core::sync::protocol::{
+        API_DESTRUCT, API_DOCTOR, API_DOWNLOAD, API_UPLOAD, MAX_REQUEST_BODY_BYTES,
+    };
     Router::new()
         .route(API_UPLOAD, post(routes::upload::upload))
         .route(API_DOWNLOAD, get(routes::download::download))
         .route(API_DOCTOR, get(routes::doctor::doctor))
         .route(API_DESTRUCT, post(routes::destruct::destruct))
+        // axum's default `Bytes` limit is 2 MiB, but the browser uploads up to 4 MiB chunks;
+        // without this a real chunk is rejected 413 before the handler and files over ~2 MB
+        // cannot be uploaded at all.
+        .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
         .with_state(state)
 }
 

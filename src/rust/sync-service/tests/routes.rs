@@ -285,6 +285,34 @@ fn upload_req(op: &str, ts: i64, file_id: &str, chunk_idx: &str, body: Vec<u8>) 
 }
 
 #[tokio::test]
+async fn upload_accepts_a_chunk_larger_than_axums_2mib_default() {
+    // Regression: the browser uploads up to CHUNK_SIZE = 4 MiB per request, but axum's default
+    // `Bytes` limit is 2 MiB. Without app() raising DefaultBodyLimit, a real chunk is rejected
+    // 413 before the handler and files over ~2 MB silently fail to upload. Prove a 3 MiB chunk
+    // (over the 2 MiB default, under the 5 MiB cap) is accepted end to end.
+    let h = harness(both_on());
+    write(&h.state.passphrase_path, "the vault passphrase");
+    let key = derive_key("the vault passphrase");
+    let ts = now_ms();
+    let plaintext = vec![0u8; 3 * 1024 * 1024];
+    let aad = build_aad("put-chunk", ts, &["bigfile", "0"]);
+    let req = upload_req(
+        "put-chunk",
+        ts,
+        "bigfile",
+        "0",
+        body(&key, &[9u8; 12], &plaintext, &aad),
+    );
+    let (status, out) = send(&h.state, req).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a 3 MiB chunk must not be 413'd: {out:?}"
+    );
+    assert_eq!(out["status"], "chunk-received");
+}
+
+#[tokio::test]
 async fn upload_chunk_then_finalize_lands_the_file() {
     let h = harness(both_on());
     write(&h.state.passphrase_path, "the vault passphrase");
