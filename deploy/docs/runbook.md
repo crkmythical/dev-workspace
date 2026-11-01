@@ -49,6 +49,34 @@ Checked in a container: after these steps the vault opens with the new password 
 data, `/vnc/` accepts the new password and rejects the old one, code-server's config and the sync
 key file carry the new one. The Sync Page step (browser side) was not exercised.
 
+## Disaster Recovery (restore from the off-host backup)
+
+If the host or the vault volumes are lost, the workspace is recoverable from the restic backup
+(`RESTIC_REPOSITORY`) — provided `PASSWORD` was set (a generated one dies with its container). The
+git ciphertext remote (`VAULT_GIT_REPO`) is a second, independent copy.
+
+```bash
+# 1. Recreate the stack on a fresh host, same .env (PASSWORD, RESTIC_*, ...).
+docker compose up -d                              # a FRESH, empty vault is created and unlocked
+
+# 2. Pick the snapshot to restore. Do NOT use `latest`: the fresh container's own backup watcher
+#    has already written a new EMPTY snapshot to the same repo, so `latest` is that empty one.
+docker exec -it dev-workspace restic snapshots            # choose the id from BEFORE the loss
+docker exec -it dev-workspace restic ls <id> | grep <a-file-you-remember>   # confirm it
+
+# (recommended) stop the watcher so it cannot add snapshots mid-restore:
+docker exec -it dev-workspace supervisorctl stop backup-watcher
+
+# 3. Restore that snapshot over /workspace (the unlocked vault), BY ID:
+docker exec -it dev-workspace restic restore <id> --target /
+docker exec -it dev-workspace supervisorctl start backup-watcher
+```
+
+Verified by `src/tests/smoke/dr-drill.sh`: it writes a canary, backs it up off-host, destroys the
+container AND every volume, recreates a fresh stack, restores the pre-loss snapshot by id, and
+checks the canary returns byte-for-byte. Run it against any image:
+`SMOKE_IMAGE=dev-workspace:<img> SMOKE_PASSWORD=<pw> bash src/tests/smoke/dr-drill.sh`.
+
 ## Troubleshooting
 
 | Issue | Fix |
