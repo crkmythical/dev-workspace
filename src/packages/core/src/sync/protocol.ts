@@ -1,14 +1,14 @@
 /**
  * Wire-protocol constants of the browser <-> server file sync.
  *
- * Pure data with no runtime imports, so the browser SPA, the server and the Rust
- * PoC all derive from one definition (rust/sync-service pins it through the
- * golden wire vectors, see packages/server/scripts/gen-wire-vectors.ts).
+ * Pure data with no runtime imports: the browser SPA and the Rust service derive from one
+ * definition. sync-service/tests/parity.rs pins the Rust side against frozen golden vectors.
  */
 
-// Crypto
-export const HKDF_SALT = "sync-key-v1";
-export const HKDF_INFO = "aead-key";
+// Crypto — sync key derivation (PBKDF2-HMAC-SHA256; see client.ts). The passphrase is the vault
+// master password, so it is password-stretched, not merely HKDF-expanded.
+export const SYNC_KDF_SALT = "sync-key-v2";
+export const SYNC_KDF_ITERATIONS = 600_000;
 export const NONCE_LENGTH = 12;
 export const TAG_LENGTH = 16;
 export const AES_KEY_LENGTH = 32;

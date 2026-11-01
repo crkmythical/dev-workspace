@@ -14,3 +14,13 @@ lto = true
 codegen-units = 1
 strip = true
 panic = "abort"
+
+# The sync key derivation does 600k PBKDF2-HMAC-SHA256 rounds. Unoptimised that is seconds per
+# derive and would make `cargo test` crawl, so optimise just the crypto crates in the dev/test
+# profile (everything else stays fast to compile).
+[profile.dev.package.sha2]
+opt-level = 3
+[profile.dev.package.pbkdf2]
+opt-level = 3
+[profile.dev.package.hmac]
+opt-level = 3

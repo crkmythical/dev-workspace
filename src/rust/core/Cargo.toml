@@ -11,10 +11,11 @@ path = "src/lib.rs"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# Sync AEAD primitives (core::sync::crypto). Pure computation, no I/O — the TS
-# core held the same crypto. Pinned by sync-service/tests/parity.rs wire vectors.
+# Sync key derivation + AEAD (core::sync::crypto). Pure computation, no I/O. The passphrase is
+# password-stretched with PBKDF2-HMAC-SHA256 (it is the vault master password and the envelopes
+# cross Cloudflare), then AES-256-GCM seals each one. Pinned by sync-service/tests/parity.rs.
 aes-gcm = "0.10"
-hkdf = "0.12"
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 sha2 = "0.10"
 hex = "0.4"
 

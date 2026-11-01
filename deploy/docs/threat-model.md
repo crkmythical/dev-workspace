@@ -8,13 +8,13 @@
 | **Host compromise** | Read host filesystem, Docker volumes | Vault content is encrypted at rest (gocryptfs). The passphrase is NOT memory-only (see Non-Guarantees): whoever can read the container's filesystem, environment or logs can unlock it |
 | **Container escape** | Break out of Docker isolation | Not privileged, but `CAP_SYS_ADMIN` (FUSE) and `seccomp:unconfined` (the desktop's bwrap sandbox) weaken isolation; on Linux hosts with AppArmor the opt-in `docker-compose.apparmor.yml` also drops the AppArmor profile (see Non-Guarantees). Treat the container as a moderate boundary; use a dedicated VM for stronger separation |
 | **GitHub breach** | Access vault repository contents | Repository contains only gocryptfs ciphertext; AES-256 |
-| **Sync wire observer** | Intercept sync traffic | AEAD encryption + PNG camouflage; no plaintext metadata |
+| **Sync wire observer** | Intercept sync traffic | AES-256-GCM AEAD + PNG camouflage; no plaintext metadata. The key is PBKDF2-HMAC-SHA256-stretched from the passphrase, so a captured envelope cannot be brute-forced at raw-hash speed |
 | **Physical access** | Access to powered-off machine | Vault locked on container stop; workspace content is not on disk in the clear. The credentials listed under Non-Guarantees are |
 | **Cloudflare compromise** | Access tunnel traffic | End-to-end encryption between browser and container; CF sees TLS only |
 
 ## Trust Boundaries
 
-1. **Passphrase → vault**: the passphrase (typed, or `PASSWORD`) is handed to gocryptfs; in the browser the sync key derived from it (HKDF) is a non-extractable CryptoKey. See Non-Guarantees for where the passphrase also lives
+1. **Passphrase → vault**: the passphrase (typed, or `PASSWORD`) is handed to gocryptfs; in the browser the sync key derived from it (PBKDF2-HMAC-SHA256, password-stretched) is a non-extractable CryptoKey. See Non-Guarantees for where the passphrase also lives
 2. **Container → Host**: Docker isolation; single mapped port (localhost only)
 3. **Container → Internet**: Proxy-aware traffic goes through Clash (`http_proxy` and friends point at it). This is best effort and is **not enforced** (see Egress)
 4. **Sync SPA → Server**: AEAD-encrypted envelopes; server cannot read plaintext

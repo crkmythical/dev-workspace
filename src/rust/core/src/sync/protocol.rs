@@ -20,8 +20,9 @@ pub const NONCE_LENGTH: usize = 12;
 pub const TAG_LENGTH: usize = 16;
 pub const AES_KEY_LENGTH: usize = 32;
 
-pub const HKDF_SALT: &str = "sync-key-v1";
-pub const HKDF_INFO: &str = "aead-key";
+// Sync key derivation: PBKDF2-HMAC-SHA256 over the vault passphrase (see crypto.rs + client.ts).
+pub const SYNC_KDF_SALT: &str = "sync-key-v2";
+pub const SYNC_KDF_ITERATIONS: u32 = 600_000;
 
 // Replay-window policy (super::replay).
 pub const REPLAY_WINDOW_SIZE: usize = 10_000;
@@ -59,8 +60,8 @@ mod tests {
         assert_eq!(API_DOWNLOAD, "/sync/api/download");
         assert_eq!(API_DOCTOR, "/sync/api/doctor");
         assert_eq!(API_DESTRUCT, "/sync/api/destruct");
-        assert_eq!(HKDF_SALT, "sync-key-v1");
-        assert_eq!(HKDF_INFO, "aead-key");
+        assert_eq!(SYNC_KDF_SALT, "sync-key-v2");
+        assert_eq!(SYNC_KDF_ITERATIONS, 600_000);
         assert_eq!((NONCE_LENGTH, TAG_LENGTH, AES_KEY_LENGTH), (12, 16, 32));
         assert_eq!((REPLAY_WINDOW_SIZE, REPLAY_TOLERANCE_MS), (10_000, 300_000));
     }

@@ -10,10 +10,10 @@ import { buildAad, buildChunkAad, buildFinalizeAad } from "./aad.ts";
 import { encodeEnvelope, toBase64, wrapPng } from "./envelope.ts";
 import {
   AES_KEY_LENGTH,
-  HKDF_INFO,
-  HKDF_SALT,
   NONCE_LENGTH,
   SYNC_HEADERS,
+  SYNC_KDF_ITERATIONS,
+  SYNC_KDF_SALT,
   TAG_LENGTH,
 } from "./protocol.ts";
 
@@ -27,38 +27,43 @@ const bytesOf = (b: Uint8Array): Bytes => b as Bytes;
 
 const text = new TextEncoder();
 
-function hkdfParams() {
+function kdfParams() {
   return {
-    name: "HKDF" as const,
+    name: "PBKDF2" as const,
     hash: "SHA-256" as const,
-    salt: bytesOf(text.encode(HKDF_SALT)),
-    info: bytesOf(text.encode(HKDF_INFO)),
+    salt: bytesOf(text.encode(SYNC_KDF_SALT)),
+    iterations: SYNC_KDF_ITERATIONS,
   };
 }
 
-async function hkdfMaterial(passphrase: string): Promise<CryptoKey> {
-  return crypto.subtle.importKey("raw", bytesOf(text.encode(passphrase)), "HKDF", false, [
+async function kdfMaterial(passphrase: string): Promise<CryptoKey> {
+  return crypto.subtle.importKey("raw", bytesOf(text.encode(passphrase)), "PBKDF2", false, [
     "deriveKey",
     "deriveBits",
   ]);
 }
 
-/** Derive the AES-GCM sync key from the vault passphrase (non-extractable). */
+/**
+ * Derive the AES-GCM sync key from the vault passphrase (non-extractable). PBKDF2-HMAC-SHA256
+ * password stretching: the passphrase is the vault master password and these envelopes cross
+ * Cloudflare, so a captured one must not be brute-forceable at raw-hash speed. Matches
+ * core::sync::crypto::derive_key in Rust (pinned by sync-service/tests/parity.rs).
+ */
 export async function deriveSyncKey(passphrase: string): Promise<CryptoKey> {
   return crypto.subtle.deriveKey(
-    hkdfParams(),
-    await hkdfMaterial(passphrase),
+    kdfParams(),
+    await kdfMaterial(passphrase),
     { name: "AES-GCM", length: AES_KEY_LENGTH * 8 },
     false,
     ["encrypt", "decrypt"],
   );
 }
 
-/** The same key as raw bytes. For tests and the golden-vector generator only. */
+/** The same key as raw bytes. For tests and parity-vector checks only. */
 export async function deriveSyncKeyBytes(passphrase: string): Promise<Uint8Array<ArrayBuffer>> {
   const bits = await crypto.subtle.deriveBits(
-    hkdfParams(),
-    await hkdfMaterial(passphrase),
+    kdfParams(),
+    await kdfMaterial(passphrase),
     AES_KEY_LENGTH * 8,
   );
   return new Uint8Array(bits);

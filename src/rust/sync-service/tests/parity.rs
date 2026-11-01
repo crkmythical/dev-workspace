@@ -37,15 +37,17 @@ fn png_header_matches_ts() {
 }
 
 #[test]
-fn hkdf_matches_ts() {
+fn pbkdf2_sync_key_matches_ts() {
+    // The key_hex values were produced by the real TS client (deriveSyncKeyBytes, PBKDF2-HMAC-
+    // SHA256); Rust's derive_key must reproduce them byte-for-byte.
     let v = vectors();
-    for item in v["hkdf"].as_array().unwrap() {
+    for item in v["sync_kdf"].as_array().unwrap() {
         let passphrase = item["passphrase"].as_str().unwrap();
         let want = item["key_hex"].as_str().unwrap();
         assert_eq!(
             hex::encode(derive_key(passphrase)),
             want,
-            "hkdf: {passphrase:?}"
+            "sync-kdf: {passphrase:?}"
         );
     }
 }

@@ -2,7 +2,7 @@
 //!
 //! No I/O. Most of it depends only on serde (for the persisted forms the TS side builds with
 //! JSON); `sync::{crypto,wire,aad,replay,path_safety,rate_limit}` add the sync AEAD primitives
-//! (RustCrypto: aes-gcm/hkdf/sha2/hex), which are likewise pure computation — the TS core held
+//! (RustCrypto: aes-gcm/pbkdf2/sha2/hex), which are likewise pure computation — the TS core held
 //! the same crypto. Every rule is unit-testable on its own. The Rust sync wire format is pinned to
 //! a frozen golden-vector snapshot of the original TS server (sync-service/tests/parity.rs); the
 //! live browser client is TS, so the authoritative cross-language check is the end-to-end smoke
