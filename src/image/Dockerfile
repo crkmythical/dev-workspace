@@ -285,7 +285,7 @@ RUN echo '[]' > /opt/desktop-apps/.registry.json
 # Ensure proxy env is available in all shells (interactive terminals via code-server)
 RUN echo 'export http_proxy=http://127.0.0.1:7890' >> /etc/profile.d/proxy.sh && \
     echo 'export https_proxy=http://127.0.0.1:7890' >> /etc/profile.d/proxy.sh && \
-    echo 'export all_proxy=socks5://127.0.0.1:7890' >> /etc/profile.d/proxy.sh && \
+    echo 'export all_proxy=socks5h://127.0.0.1:7890' >> /etc/profile.d/proxy.sh && \
     echo 'export no_proxy=localhost,127.0.0.0/8,172.16.0.0/12,10.0.0.0/8,169.254.0.0/16' >> /etc/profile.d/proxy.sh && \
     echo 'export HTTP_PROXY=$http_proxy' >> /etc/profile.d/proxy.sh && \
     echo 'export HTTPS_PROXY=$https_proxy' >> /etc/profile.d/proxy.sh && \
@@ -372,9 +372,12 @@ COPY --from=spa-builder /opt/workspace/packages/spa/dist /opt/workspace/packages
 # required-env check and the whole boot). See ENTRYPOINT below.
 
 # Environment defaults (proxy points to Clash)
+# all_proxy uses socks5h (not socks5): the 'h' makes SOCKS-honoring tools send the hostname to
+# Clash to resolve, instead of resolving locally against the container resolver (1.1.1.1/8.8.8.8)
+# and leaking the DNS query. http(s)_proxy already pass the hostname via CONNECT.
 ENV http_proxy=http://127.0.0.1:7890 \
     https_proxy=http://127.0.0.1:7890 \
-    all_proxy=socks5://127.0.0.1:7890 \
+    all_proxy=socks5h://127.0.0.1:7890 \
     no_proxy=localhost,127.0.0.0/8,172.16.0.0/12,10.0.0.0/8,169.254.0.0/16
 
 # Liveness: Caddy ingress (:8080) + code-server (:8082) both accepting TCP.

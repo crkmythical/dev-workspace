@@ -24,7 +24,7 @@ export XDG_CACHE_HOME="${XDG_CACHE_HOME:-/tmp/.desktop-cache}"
 # Proxy settings for GUI apps (Firefox, Chromium, etc.)
 export http_proxy=http://127.0.0.1:7890
 export https_proxy=http://127.0.0.1:7890
-export all_proxy=socks5://127.0.0.1:7890
+export all_proxy=socks5h://127.0.0.1:7890
 export no_proxy=localhost,127.0.0.0/8,172.16.0.0/12,10.0.0.0/8
 export HTTP_PROXY=$http_proxy
 export HTTPS_PROXY=$https_proxy
