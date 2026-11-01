@@ -189,10 +189,12 @@ fn run_step(
             }
             if init_vault(VAULT_CIPHER_DIR, Some(&auth.master_password)) {
                 println!("Vault initialized (password = same as code-server).");
+                Ok(())
             } else {
-                eprintln!("WARNING: Vault init failed.");
+                // A real failure: mark the step degraded (run_boot logs it, the banner lists it)
+                // instead of warning and returning Ok, which left the boot looking healthy.
+                Err("vault initialization failed".to_string())
             }
-            Ok(())
         }
         "prepare-replication" => {
             let remote = match &config.git.vault_repo {
@@ -238,26 +240,28 @@ fn run_step(
                     for failure in hook_failures {
                         eprintln!("WARNING: post-unlock step failed: {failure}");
                     }
+                    Ok(())
                 }
                 UnlockResult::Noop => {
                     st.vault_mounted = true;
                     println!("Vault already unlocked.");
+                    Ok(())
                 }
                 UnlockResult::Failed { detail } => {
+                    // Surface it as a degraded boot step (run_boot logs it, the banner lists it)
+                    // rather than warning and returning Ok. The vault stays locked either way, and
+                    // the vault-gated steps below are skipped because vault_mounted is still false.
                     let joined = detail.trim().split('\n').collect::<Vec<_>>().join(" | ");
-                    eprintln!(
-                        "WARNING: Vault unlock failed{}",
-                        if joined.is_empty() {
-                            String::new()
-                        } else {
-                            format!(": {joined}")
-                        }
-                    );
                     let generated = auth.password_source == Some(PasswordSource::Generated);
                     for line in explain_unlock_failure(&detail, generated) {
                         eprintln!("  {line}");
                     }
                     eprintln!("  Run 'unlock-vault' once that is fixed.");
+                    Err(if joined.is_empty() {
+                        "vault unlock failed".to_string()
+                    } else {
+                        format!("vault unlock failed: {joined}")
+                    })
                 }
                 UnlockResult::Rejected { reason } => {
                     let r = match reason {
@@ -265,10 +269,9 @@ fn run_step(
                         UnlockRejectReason::EmptyPassphrase => "empty-passphrase",
                         UnlockRejectReason::Destroyed => "destroyed",
                     };
-                    eprintln!("WARNING: Vault not unlocked ({r}).");
+                    Err(format!("vault not unlocked ({r})"))
                 }
             }
-            Ok(())
         }
         "notify-egress" => {
             if let Some(report) = &st.egress {
@@ -333,7 +336,9 @@ fn run_step(
             Ok(())
         }
         "supervisord" => run_supervisord(),
-        _ => Ok(()),
+        // A BOOT_PLAN id with no arm here is a programmer error, not a silent success: report it
+        // (Degrade steps are recorded degraded; an Abort step would stop the boot visibly).
+        other => Err(format!("unhandled boot step '{other}' (no effect ran)")),
     }
 }
 

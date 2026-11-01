@@ -364,3 +364,46 @@ async fn upload_with_a_wrong_key_fails_to_authenticate() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(out["error"], "aead-failure");
 }
+
+#[tokio::test]
+async fn finalize_without_a_checksum_is_rejected() {
+    // The client always sends content_sha256; a finalize that omits it is malformed and must not
+    // commit unverified bytes. (Guards the integrity fix: the server used to accept it.)
+    let h = harness(both_on());
+    write(&h.state.passphrase_path, "the vault passphrase");
+    let key = derive_key("the vault passphrase");
+
+    // A chunk first, so finalize gets past the has-chunks check and reaches the checksum gate.
+    let ts1 = now_ms();
+    let chunk_aad = build_aad("put-chunk", ts1, &["fileNoSum", "0"]);
+    let (status, _) = send(
+        &h.state,
+        upload_req(
+            "put-chunk",
+            ts1,
+            "fileNoSum",
+            "0",
+            body(&key, &[7u8; 12], b"bytes", &chunk_aad),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Finalize WITHOUT content_sha256.
+    let ts2 = ts1 + 1;
+    let meta = r#"{"file_id":"fileNoSum","file_path":"x.txt"}"#;
+    let final_aad = build_aad("put-finalize", ts2, &["fileNoSum", "1"]);
+    let (status, out) = send(
+        &h.state,
+        upload_req(
+            "put-finalize",
+            ts2,
+            "fileNoSum",
+            "1",
+            body(&key, &[8u8; 12], meta.as_bytes(), &final_aad),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(out["error"], "missing-checksum");
+}

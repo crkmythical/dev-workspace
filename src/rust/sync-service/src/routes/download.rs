@@ -14,6 +14,8 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 
+use sdw_core::sync::protocol::{HEADER_AUTH, HEADER_TS};
+
 use crate::list_auth::authenticate_list;
 use crate::store;
 use crate::util::now_ms;
@@ -48,8 +50,8 @@ pub async fn download(
     };
 
     let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
-    let ts = header("x-sync-ts").and_then(|v| v.parse::<i64>().ok());
-    let (Some(ts), Some(auth)) = (ts, header("x-sync-auth")) else {
+    let ts = header(HEADER_TS).and_then(|v| v.parse::<i64>().ok());
+    let (Some(ts), Some(auth)) = (ts, header(HEADER_AUTH)) else {
         return err(StatusCode::UNAUTHORIZED, "unauthorized");
     };
     if authenticate_list(&key, ts, auth, &state.replay, now_ms()).is_err() {

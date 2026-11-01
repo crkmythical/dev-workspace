@@ -5,7 +5,7 @@
 Two top-level directories: `src/` holds everything that builds into the image (the Rust
 workspace, the browser TypeScript, the `image/` recipe, the `tests/`); `deploy/` holds host-side
 operation (setup/teardown scripts, systemd units, the standalone proxy `client/`, these `docs/`).
-The runtime is Rust; the only TypeScript left is the browser sync page.
+The runtime is Rust; the only TypeScript left is the browser upload page.
 
 ```
 src/rust/                 The runtime — a Cargo workspace, hexagonal
@@ -18,11 +18,13 @@ src/rust/                 The runtime — a Cargo workspace, hexagonal
 └── sync-service (lib)    The Axum sync API (/sync/api/*: upload / list / doctor / destruct); a
                           library folded into `sdw` and run as `sdw sync-service` (one binary).
 
-src/packages/             The only TypeScript — the browser sync page
+src/packages/             The only TypeScript — the browser upload page
 ├── core/   (@sdw/core)   The sync CLIENT the browser needs: sync/{aad,client,envelope,protocol}
 │                         (WebCrypto; also run by the host smoke fixture).
-└── spa/    (@sdw/spa)    The sync page (File System Access API + WebCrypto); Vite-built, served as
-                          static files by Caddy under /sync/.
+└── spa/    (@sdw/spa)    The browser UPLOAD page: a one-way encrypted push of a chosen local
+                          folder into the vault (File System Access API + WebCrypto). NOT a
+                          two-way sync — no download, delete or conflict handling. Vite-built,
+                          served by Caddy under /sync/ (plus a /sync/#emergency destruct panel).
 ```
 
 Hexagonal, unchanged by the Rust port: `core` holds the rules and use cases and depends on no

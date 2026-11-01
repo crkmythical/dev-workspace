@@ -21,11 +21,12 @@ use axum::{
 /// Build the application router: the /sync/api/* surface (upload / download / doctor /
 /// destruct). The static SPA under /sync/ is served by Caddy's file_server, not here.
 pub fn app(state: AppState) -> Router {
+    use sdw_core::sync::protocol::{API_DESTRUCT, API_DOCTOR, API_DOWNLOAD, API_UPLOAD};
     Router::new()
-        .route("/sync/api/upload", post(routes::upload::upload))
-        .route("/sync/api/download", get(routes::download::download))
-        .route("/sync/api/doctor", get(routes::doctor::doctor))
-        .route("/sync/api/destruct", post(routes::destruct::destruct))
+        .route(API_UPLOAD, post(routes::upload::upload))
+        .route(API_DOWNLOAD, get(routes::download::download))
+        .route(API_DOCTOR, get(routes::doctor::doctor))
+        .route(API_DESTRUCT, post(routes::destruct::destruct))
         .with_state(state)
 }
 

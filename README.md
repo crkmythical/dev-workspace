@@ -163,7 +163,7 @@ launchctl unload ~/Library/LaunchAgents/com.cloudflare.tunnel.plist
 | CLASH_SUBSCRIPTION_URL | 必填。Clash 代理订阅地址 |
 | PASSWORD | 统一密码：code-server、桌面和 vault 共用同一个。留空则首次启动随机生成并打印在启动横幅里，但这个密码只存在于该容器内：重启容器会保留，**重建容器（`docker compose up -d` 在重新构建或 pull 之后、`docker rm`）会生成新密码**，已有 vault 就打不开了（要用旧密码执行 `unlock-vault`）。务必保存横幅里的密码，或直接在 `.env` 里设置 |
 | DESKTOP_STACK | 构建时选择桌面栈：`kasmvnc`（默认）/ `selkies` / `both` |
-| SYNC_ENABLED | 默认关闭。启用浏览器文件同步页 `/sync/`；启用后每次解锁会把 vault 口令写入 `/workspace/.credentials/sync-passphrase`，关闭后下次解锁会删除它 |
+| SYNC_ENABLED | 默认关闭。启用浏览器**单向上传**页 `/sync/`(把所选本地文件夹加密推送进 vault——**不是双向同步**:无下载、无删除、无冲突处理);启用后每次解锁会把 vault 口令写入 `/workspace/.credentials/sync-passphrase`,关闭后下次解锁会删除它 |
 | REMOTE_DESTRUCT_ENABLED | 默认关闭。启用远程自毁端点 `POST /sync/api/destruct`；口令用 `destruct-passphrase` 查看 |
 | RESTIC_REPOSITORY | 设置后启用实时备份（还需 `RESTIC_PASSWORD` 与 S3 凭证）；仓库不存在时启动时自动创建。备份的是**明文**工作区，但**排除** `.credentials/`（SSH 密钥、同步口令）、`node_modules`、各类缓存/构建目录（清单见 `src/rust/core/src/backup/domain.rs` 的 `BACKUP_EXCLUSION_SET`）。**注意**：只配 restic 时 `.credentials/` 不在任何备份里——它只随加密 vault 的 git 复制（`VAULT_GIT_REPO`）走。restic 仓库是**明文**、仅由 `RESTIC_PASSWORD` 保护，自毁不删除它，要当作 vault 的一部分对待 |
 | COMPOSE_FILE | 默认不设。Linux + AppArmor 的宿主机取消注释，见上文 |

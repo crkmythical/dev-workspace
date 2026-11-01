@@ -27,7 +27,7 @@ use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Status {
     Ok,
     Warn,
@@ -300,23 +300,14 @@ pub fn run(_args: &[String]) -> i32 {
     for plugin in plugins() {
         for vault in &plugin.vaults {
             let component = format!("{} vault", capitalize(&vault.id));
-            match GocryptfsVolume.state(vault) {
-                VaultState::Unlocked => results.push(Row::new(
-                    &component,
-                    Status::Ok,
-                    Some(format!("mounted ({})", du_size(&vault.mount_point))),
-                )),
-                VaultState::Locked => results.push(Row::new(
-                    &component,
-                    Status::Ok,
-                    Some("locked (initialized)".to_string()),
-                )),
-                _ => results.push(Row::new(
-                    &component,
-                    Status::Ok,
-                    Some("not initialized (optional)".to_string()),
-                )),
-            }
+            let state = GocryptfsVolume.state(vault);
+            let (status, label) = plugin_vault_status(&state);
+            let detail = if matches!(state, VaultState::Unlocked) {
+                format!("mounted ({})", du_size(&vault.mount_point))
+            } else {
+                label.to_string()
+            };
+            results.push(Row::new(&component, status, Some(detail)));
         }
     }
 
@@ -400,5 +391,39 @@ fn capitalize(s: &str) -> String {
     match chars.next() {
         Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
         None => String::new(),
+    }
+}
+
+/// Health row for an optional plugin vault. It never FAILS (the vault is opt-in; a locked or
+/// uninitialized one is a normal resting state), but it reports the TRUE state rather than lumping
+/// a `Destroyed` vault in with "not initialized". The caller substitutes the mount size for the
+/// Unlocked detail.
+fn plugin_vault_status(state: &VaultState) -> (Status, &'static str) {
+    match state {
+        VaultState::Unlocked => (Status::Ok, "mounted"),
+        VaultState::Locked => (Status::Ok, "locked (initialized)"),
+        VaultState::Uninitialized => (Status::Ok, "not initialized (optional)"),
+        VaultState::Destroyed => (Status::Warn, "destroyed"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plugin_vault_row_never_fails_and_distinguishes_destroyed() {
+        // Optional vault: unlocked / locked / uninitialized are all fine, never a failure.
+        assert_eq!(plugin_vault_status(&VaultState::Unlocked).0, Status::Ok);
+        assert_eq!(plugin_vault_status(&VaultState::Locked).0, Status::Ok);
+        assert_eq!(
+            plugin_vault_status(&VaultState::Uninitialized).0,
+            Status::Ok
+        );
+        // ...but a destroyed vault is a distinct, notable state, not "not initialized".
+        assert_eq!(
+            plugin_vault_status(&VaultState::Destroyed),
+            (Status::Warn, "destroyed")
+        );
     }
 }

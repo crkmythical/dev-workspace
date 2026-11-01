@@ -53,7 +53,7 @@ docker logs -f dev-workspace
 |---|---|---|
 | VS Code(code-server) | http://localhost:18080 | `user` / 你的 PASSWORD |
 | 远程桌面(KasmVNC) | http://localhost:18080/vnc/ | 同上(KasmVNC 会再弹一次,正常) |
-| 同步页(需 `SYNC_ENABLED=1`) | http://localhost:18080/sync/ | 页面内输 vault 口令 |
+| 上传页/单向(需 `SYNC_ENABLED=1`) | http://localhost:18080/sync/ | 页面内输 vault 口令 |
 
 端口 18080 来自 `TUNNEL_HOST_PORT`(默认值);改了它横幅会打印实际端口。桌面默认 `autostart=false`,浏览器打开 `/vnc/` 即会按需拉起;或在容器内 `desktop-start`。
 

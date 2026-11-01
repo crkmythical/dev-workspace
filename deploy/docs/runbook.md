@@ -27,7 +27,7 @@ docker exec -it dev-workspace doctor         # Health check
 
 - Local: http://localhost:18080
 - Remote: https://<hostname> (the domain you gave `deploy/scripts/setup-cloudflared.sh`)
-- File sync: https://<hostname>/sync/ (needs `SYNC_ENABLED=1`)
+- File upload (one-way push into the vault): https://<hostname>/sync/ (needs `SYNC_ENABLED=1`)
 
 ## Password Rotation
 

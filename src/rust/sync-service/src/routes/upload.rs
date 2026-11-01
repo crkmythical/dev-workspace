@@ -19,6 +19,7 @@ use serde_json::{json, Value};
 use sdw_core::sync::aad::build_aad;
 use sdw_core::sync::crypto::decrypt;
 use sdw_core::sync::path_safety::{check_relative_path, PathCheck};
+use sdw_core::sync::protocol::{HEADER_CHUNK_IDX, HEADER_FILE_ID, HEADER_OP, HEADER_TS};
 use sdw_core::sync::wire::parse_upload_body;
 
 use crate::store;
@@ -60,20 +61,20 @@ pub async fn upload(State(state): State<AppState>, headers: HeaderMap, body: Byt
             .unwrap_or(default)
             .to_string()
     };
-    let op = hdr("x-sync-op", "put-chunk");
+    let op = hdr(HEADER_OP, "put-chunk");
     let now = now_ms();
     // A missing timestamp falls back to "now" (the AAD then will not match and the
     // envelope fails to authenticate, exactly as before); a present-but-unparseable
     // one is a bad timestamp.
-    let ts: i64 = match headers.get("x-sync-ts").and_then(|v| v.to_str().ok()) {
+    let ts: i64 = match headers.get(HEADER_TS).and_then(|v| v.to_str().ok()) {
         None => now,
         Some(s) => match s.parse::<i64>() {
             Ok(n) => n,
             Err(_) => return err(StatusCode::BAD_REQUEST, "bad-timestamp"),
         },
     };
-    let file_id_hdr = hdr("x-sync-fileid", "");
-    let chunk_idx = hdr("x-sync-chunkidx", "0");
+    let file_id_hdr = hdr(HEADER_FILE_ID, "");
+    let chunk_idx = hdr(HEADER_CHUNK_IDX, "0");
 
     let aad = build_aad(&op, ts, &[file_id_hdr.as_str(), chunk_idx.as_str()]);
     let plaintext = match decrypt(&key, frame.nonce, frame.ct_with_tag, &aad) {
@@ -136,7 +137,14 @@ pub async fn upload(State(state): State<AppState>, headers: HeaderMap, body: Byt
             }
         }
 
-        if let Some(expected) = data.get("content_sha256").and_then(Value::as_str) {
+        // Whole-file integrity is REQUIRED: the client always sends it (client.ts), so a finalize
+        // without it is malformed. Previously it was optional, which let a finalize commit the
+        // concatenated chunks with no assembly check.
+        let expected = match data.get("content_sha256").and_then(Value::as_str) {
+            Some(h) if !h.is_empty() => h.to_string(),
+            _ => return err(StatusCode::BAD_REQUEST, "missing-checksum"),
+        };
+        {
             let got = {
                 let dirs = dirs.clone();
                 let id = id.clone();
