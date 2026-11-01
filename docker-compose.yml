@@ -4,6 +4,9 @@ x-workspace: &workspace-base
     - 8.8.8.8
   cap_add:
     - SYS_ADMIN
+    # For the opt-in fail-closed egress firewall (EGRESS_ENFORCE): nftables needs NET_ADMIN.
+    # Harmless when the feature is off (the capability is simply available, unused).
+    - NET_ADMIN
   security_opt:
     # Required for XFCE desktop (glycin/bwrap sandbox needs pivot_root)
     - seccomp:unconfined

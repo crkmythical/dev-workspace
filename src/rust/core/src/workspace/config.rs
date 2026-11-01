@@ -128,7 +128,8 @@ mod tests {
                 backup: BackupGateEnv::default(),
                 features: FeatureFlags {
                     sync: false,
-                    remote_destruct: false
+                    remote_destruct: false,
+                    egress_enforce: false
                 },
             }
         );
@@ -161,6 +162,7 @@ mod tests {
             ("AWS_SECRET_ACCESS_KEY", "key"),
             ("SYNC_ENABLED", "1"),
             ("REMOTE_DESTRUCT_ENABLED", "true"),
+            ("EGRESS_ENFORCE", "1"),
         ]));
         assert_eq!(cfg.clash_subscription_url, "https://example.test/sub");
         assert_eq!(cfg.password.as_deref(), Some("s3cret"));
@@ -181,7 +183,8 @@ mod tests {
             cfg.features,
             FeatureFlags {
                 sync: true,
-                remote_destruct: true
+                remote_destruct: true,
+                egress_enforce: true
             }
         );
     }

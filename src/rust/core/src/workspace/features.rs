@@ -6,6 +6,10 @@
 pub struct FeatureFlags {
     pub sync: bool,
     pub remote_destruct: bool,
+    /// Enforce fail-closed egress with an nftables default-DROP filter (only loopback + Clash's
+    /// own uid may leave the box). Needs CAP_NET_ADMIN and Clash running as its own uid, so it is
+    /// opt-in; when on but unapplicable the boot fails closed rather than booting leaky.
+    pub egress_enforce: bool,
 }
 
 /// The same truthy set as the TS side: 1 / true / yes / on, case-insensitive, trimmed.
@@ -20,6 +24,7 @@ pub fn parse_feature_flags<F: Fn(&str) -> Option<String>>(get: F) -> FeatureFlag
     FeatureFlags {
         sync: is_on(get("SYNC_ENABLED").as_deref()),
         remote_destruct: is_on(get("REMOTE_DESTRUCT_ENABLED").as_deref()),
+        egress_enforce: is_on(get("EGRESS_ENFORCE").as_deref()),
     }
 }
 
@@ -50,6 +55,9 @@ mod tests {
         assert!(f.remote_destruct);
 
         let f = parse_feature_flags(|_| None);
-        assert!(!f.sync && !f.remote_destruct);
+        assert!(!f.sync && !f.remote_destruct && !f.egress_enforce);
+
+        let f = parse_feature_flags(|k| (k == "EGRESS_ENFORCE").then(|| "on".to_string()));
+        assert!(f.egress_enforce && !f.sync && !f.remote_destruct);
     }
 }

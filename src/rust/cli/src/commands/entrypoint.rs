@@ -10,7 +10,8 @@ use sdw_core::desktop::domain::DesktopTarget;
 use sdw_core::desktop::layout::{DESKTOP_CACHE_DIR, SELKIES_HOME, VNC_HOME};
 use sdw_core::egress::domain::{render_clash_config, DEFAULT_EGRESS_TIMING};
 use sdw_core::egress::layout::{
-    CLASH_CONFIG_PATH, CLASH_HTTP_PORT, CLASH_PROVIDERS_DIR, CLASH_TEMPLATE_PATH,
+    CLASH_CONFIG_PATH, CLASH_DIR, CLASH_HTTP_PORT, CLASH_PROVIDERS_DIR, CLASH_TEMPLATE_PATH,
+    CLASH_USER,
 };
 use sdw_core::egress::usecases::bring_up_egress;
 use sdw_core::plugins::all_vaults;
@@ -37,7 +38,8 @@ use sdw_infra::caddy::caddy_password_hash;
 use sdw_infra::cmd;
 use sdw_infra::desktop::{ensure_kasm_passwd, installed_stacks};
 use sdw_infra::egress::{
-    clash_egress_ports, sync_egress_notice, write_egress_status, NoticeResult,
+    apply_egress_firewall, clash_egress_ports, resolve_uid, sync_egress_notice,
+    write_egress_status, NoticeResult,
 };
 use sdw_infra::gocryptfs::{cleanup_stale_mount, init_vault, is_initialized, GocryptfsVolume};
 use sdw_infra::replication::{ensure_cipher_repo, EnsureResult};
@@ -141,8 +143,44 @@ fn run_step(
             cmd::ok("sysctl", &["-w", "fs.inotify.max_user_watches=524288"]);
             Ok(())
         }
+        "enforce-egress" => {
+            if !config.features.egress_enforce {
+                return Ok(()); // opt-in; default is the best-effort proxy env only
+            }
+            // Clash must run as its own uid for the firewall to single out its traffic.
+            let uid = resolve_uid(CLASH_USER)
+                .ok_or_else(|| format!("egress enforce: user '{CLASH_USER}' not found"))?;
+            // Clash is non-root under enforcement, so it must own its config dir (providers/cache).
+            cmd::ok(
+                "chown",
+                &["-R", &format!("{CLASH_USER}:{CLASH_USER}"), CLASH_DIR],
+            );
+            // Force the system resolver through Clash so no lookup leaks past it. Best-effort: the
+            // firewall is the security boundary; this only keeps hostname DNS working under it.
+            if fs::write("/etc/resolv.conf", "nameserver 127.0.0.1\n").is_err() {
+                eprintln!(
+                    "WARNING: could not point /etc/resolv.conf at Clash; hostname DNS may be \
+                     blocked by the egress filter until fixed."
+                );
+            }
+            // Load the ruleset. On failure (no NET_ADMIN / no nft) this Errs and, as an Abort step,
+            // fails the boot closed rather than booting while believing egress is enforced.
+            apply_egress_firewall(uid)?;
+            println!(
+                "Egress firewall enforced (fail-closed; direct egress only for Clash uid {uid})."
+            );
+            Ok(())
+        }
         "bring-up-egress" => {
-            let report = bring_up_egress(&clash_egress_ports(announce), DEFAULT_EGRESS_TIMING);
+            let clash_uid = if config.features.egress_enforce {
+                resolve_uid(CLASH_USER)
+            } else {
+                None
+            };
+            let report = bring_up_egress(
+                &clash_egress_ports(announce, clash_uid),
+                DEFAULT_EGRESS_TIMING,
+            );
             if let Err(e) = write_egress_status(&report) {
                 eprintln!("WARNING: could not record the egress status: {e}");
             }

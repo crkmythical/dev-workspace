@@ -80,7 +80,10 @@ pub fn run(args: &[String]) -> i32 {
         println!("  ✓ 订阅配置已更新");
         cmd::ok("pkill", &["-x", "clash"]);
         std::thread::sleep(Duration::from_millis(1000));
-        let report = bring_up_egress(&clash_egress_ports(|_: &str| {}), DEFAULT_EGRESS_TIMING);
+        let report = bring_up_egress(
+            &clash_egress_ports(|_: &str| {}, None),
+            DEFAULT_EGRESS_TIMING,
+        );
         if report.status == EgressStatus::Confirmed {
             println!("  ✓ 代理连接正常");
         } else {

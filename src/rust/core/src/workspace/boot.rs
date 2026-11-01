@@ -59,6 +59,14 @@ pub const BOOT_PLAN: &[BootStepSpec] = &[
         on_fail: OnFail::Degrade,
         when: None,
     },
+    // Fail-closed egress firewall. BEFORE bring-up-egress so Clash starts under the filter, and
+    // Abort: if enforcement was asked for but cannot be applied, do not boot into a leaky state.
+    // (A no-op returning Ok when EGRESS_ENFORCE is off, so Abort never triggers for the default.)
+    BootStepSpec {
+        id: "enforce-egress",
+        on_fail: OnFail::Abort,
+        when: None,
+    },
     BootStepSpec {
         id: "bring-up-egress",
         on_fail: OnFail::Degrade,
@@ -248,7 +256,10 @@ mod tests {
             .filter(|s| s.on_fail == OnFail::Abort)
             .map(|s| s.id)
             .collect();
-        assert_eq!(abort, ["preflight", "resolve-auth", "supervisord"]);
+        assert_eq!(
+            abort,
+            ["preflight", "enforce-egress", "resolve-auth", "supervisord"]
+        );
 
         let egress = BOOT_PLAN
             .iter()
@@ -262,6 +273,7 @@ mod tests {
         let must_precede = [
             ("cleanup-stale-mounts", "unlock-vault"),
             ("render-clash-config", "bring-up-egress"),
+            ("enforce-egress", "bring-up-egress"),
             ("resolve-auth", "init-vault"),
             ("resolve-auth", "unlock-vault"),
             ("init-vault", "unlock-vault"),

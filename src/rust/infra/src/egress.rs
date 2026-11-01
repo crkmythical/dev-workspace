@@ -12,11 +12,13 @@ use crate::time::now_iso;
 use sdw_core::egress::domain::{
     egress_notice, parse_egress_report, serialize_egress_report, EgressObservation, EgressReport,
 };
+use sdw_core::egress::firewall::egress_ruleset;
 use sdw_core::egress::layout::{
     CLASH_AUTO_GROUP, CLASH_BIN, CLASH_CONTROLLER_PORT, CLASH_DIR, CLASH_HTTP_PORT,
     CLASH_PROVIDER_NAME, EGRESS_NOTIFICATION_PATH, EGRESS_PROBE_URL, EGRESS_STATUS_PATH,
 };
 use sdw_core::egress::ports::EgressPorts;
+use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 
 fn port_accepts(port: u16) -> bool {
@@ -31,26 +33,33 @@ fn controller_url() -> String {
     format!("http://127.0.0.1:{CLASH_CONTROLLER_PORT}")
 }
 
-/// EgressPorts backed by Clash. `log` is where the bring-up narrates its progress.
+/// EgressPorts backed by Clash. `log` narrates the bring-up; `clash_uid` is Some under enforced
+/// egress, so Clash is spawned as its own uid (the only uid the firewall lets egress directly).
 pub struct ClashEgressPorts<L: Fn(&str)> {
     log: L,
+    clash_uid: Option<u32>,
 }
 
-pub fn clash_egress_ports<L: Fn(&str)>(log: L) -> ClashEgressPorts<L> {
-    ClashEgressPorts { log }
+pub fn clash_egress_ports<L: Fn(&str)>(log: L, clash_uid: Option<u32>) -> ClashEgressPorts<L> {
+    ClashEgressPorts { log, clash_uid }
 }
 
 impl<L: Fn(&str)> EgressPorts for ClashEgressPorts<L> {
     fn start_proxy(&self) -> Result<(), String> {
-        // A daemon: it must outlive this process, so spawn detached and do not wait on it.
-        Command::new(CLASH_BIN)
+        // A daemon: it must outlive this process, so spawn detached and do not wait on it. Under
+        // enforced egress, run it as the clash uid so the firewall can single out its traffic; the
+        // clash binary carries cap_net_bind_service (set in the image), so it can still bind the
+        // DNS port 53 as a non-root process.
+        let mut command = Command::new(CLASH_BIN);
+        command
             .args(["-d", CLASH_DIR])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map(|_child| ())
-            .map_err(|e| e.to_string())
+            .stderr(Stdio::null());
+        if let Some(uid) = self.clash_uid {
+            command.uid(uid);
+        }
+        command.spawn().map(|_child| ()).map_err(|e| e.to_string())
     }
 
     fn proxy_listening(&self) -> Result<bool, String> {
@@ -172,6 +181,27 @@ pub fn observe_egress() -> EgressObservation {
     EgressObservation {
         proxy_listening,
         probe_ok,
+    }
+}
+
+/// The numeric uid of a system user via `id -u`. None if the user does not exist.
+pub fn resolve_uid(user: &str) -> Option<u32> {
+    let (ok, out) = cmd::capture("id", &["-u", user]);
+    if !ok {
+        return None;
+    }
+    out.trim().parse::<u32>().ok()
+}
+
+/// Install the fail-closed egress firewall (nftables default-DROP OUTPUT; only loopback, the Clash
+/// uid, and established replies leave the box). Needs CAP_NET_ADMIN and `nft`; returns Err (so the
+/// boot can fail closed) when either is missing.
+pub fn apply_egress_firewall(clash_uid: u32) -> Result<(), String> {
+    let (ok, stderr) = cmd::run_stdin("nft", &["-f", "-"], &egress_ruleset(clash_uid));
+    if ok {
+        Ok(())
+    } else {
+        Err(format!("nft load failed: {stderr}"))
     }
 }
 

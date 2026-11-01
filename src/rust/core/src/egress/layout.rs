@@ -6,6 +6,9 @@ pub const CLASH_SOCKS_PORT: u16 = 7891;
 pub const CLASH_CONTROLLER_PORT: u16 = 9090;
 
 pub const CLASH_BIN: &str = "/usr/bin/clash";
+/// Dedicated system user Clash runs as, so the egress firewall can match its traffic by uid and
+/// let ONLY Clash reach the network directly (everything else is dropped). Created in the image.
+pub const CLASH_USER: &str = "clash";
 pub const CLASH_DIR: &str = "/etc/clash";
 pub const CLASH_CONFIG_PATH: &str = "/etc/clash/config.yaml";
 pub const CLASH_TEMPLATE_PATH: &str = "/etc/clash/config.yaml.template";

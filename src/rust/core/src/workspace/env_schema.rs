@@ -319,6 +319,20 @@ pub fn core_env_groups() -> Vec<EnvGroup> {
                         "1",
                     )
                 },
+                EnvVarSpec {
+                    opt_in: true,
+                    ..var(
+                        "EGRESS_ENFORCE",
+                        &[
+                            "Fail-closed egress. Installs an nftables default-DROP filter so ONLY loopback and",
+                            "Clash's own uid may leave the box: a process that ignores the proxy, speaks UDP/QUIC,",
+                            "or runs under `noproxy` is blocked, and DNS cannot leak past Clash. Off (default) is",
+                            "the best-effort proxy env vars only. Requires the container to hold CAP_NET_ADMIN",
+                            "(docker-compose.yml grants it); if asked for but unavailable, the boot fails closed.",
+                        ],
+                        "1",
+                    )
+                },
             ],
         },
     ]

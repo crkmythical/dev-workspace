@@ -110,6 +110,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     debootstrap \
     vim \
     firefox-esr \
+    nftables \
+    libcap2-bin \
     && sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen \
     && locale-gen \
     && rm -rf /var/lib/apt/lists/*
@@ -297,6 +299,15 @@ RUN set -eux; \
     gunzip < /tmp/clash.gz > /usr/bin/clash; \
     rm -f /tmp/clash.gz; \
     chmod +x /usr/bin/clash
+
+# Fail-closed egress (opt-in via EGRESS_ENFORCE): under enforcement Clash runs as its OWN uid so
+# the nftables OUTPUT filter can let only its traffic out. It still binds the DNS port 53, which a
+# non-root process cannot do without a capability, so grant the binary cap_net_bind_service.
+# nftables + libcap2-bin are installed in the core apt layer; the filter is applied at boot by
+# `sdw entrypoint` (the enforce-egress step). When EGRESS_ENFORCE is off, Clash runs as root as
+# before and none of this is engaged.
+RUN useradd --system --no-create-home --shell /usr/sbin/nologin clash \
+    && setcap 'cap_net_bind_service=+ep' /usr/bin/clash
 
 # Install code-server — pinned. The official installer fetches the matching
 # GitHub release; --version makes rebuilds deterministic.
