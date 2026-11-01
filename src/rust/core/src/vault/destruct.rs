@@ -23,4 +23,3 @@ pub const DESTRUCT_RATE_LIMIT_MAX_ATTEMPTS: u64 = 3;
 /// brute force that rotates X-Forwarded-For to defeat the per-IP budget (the per-IP key is
 /// client-influenced; this cap is not).
 pub const DESTRUCT_RATE_LIMIT_GLOBAL_MAX: u64 = 10;
-pub const DESTRUCT_RESPONSE_DELAY_MS: u64 = 200;

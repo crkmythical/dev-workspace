@@ -58,8 +58,8 @@ fn install_symlinks(dir: &str) -> i32 {
     0
 }
 
-/// Commands wired up so far. The rest of packages/cli lands here over the course of stage 3;
-/// until then an unknown command is an error and the image keeps running Bun.
+/// Every command the multi-call binary dispatches (the full surface). BIN_COMMANDS above is the
+/// subset that also gets a PATH symlink; the rest are invoked as `sdw <name>`. Unknown = usage error.
 const COMMANDS: &[&str] = &[
     "backup-init",
     "backup-watcher",

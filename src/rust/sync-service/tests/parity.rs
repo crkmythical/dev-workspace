@@ -1,9 +1,11 @@
-//! Cross-language parity: the Rust implementation must reproduce the golden
-//! wire vectors generated from the authoritative TypeScript implementation
-//! (packages/server/scripts/gen-wire-vectors.ts).
-//!
-//! Regenerate vectors with:
-//!   bun run packages/server/scripts/gen-wire-vectors.ts
+//! Cross-language parity: the Rust side must reproduce the golden wire vectors in
+//! testdata/wire-vectors.json. Those vectors are a FROZEN snapshot — they were generated from the
+//! original TypeScript server, whose crypto source and generator have since been removed, so they
+//! cannot be regenerated here and this test only checks Rust against them. It guards the Rust side
+//! from regressing; it does NOT observe the live TS browser client, so on its own it cannot catch a
+//! change made there. The authoritative end-to-end cross-language guard is the smoke suite
+//! (src/tests/smoke), which boots the image and drives the browser SPA against this daemon. If you
+//! deliberately change the wire format, change both sides and hand-update these vectors.
 
 use sdw_core::sync::aad::build_aad;
 use sdw_core::sync::crypto::{decrypt, derive_key, encrypt};

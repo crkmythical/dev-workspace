@@ -56,7 +56,3 @@ pub fn check_relative_path(input: &str) -> PathCheck {
     }
     PathCheck::Ok(out.join("/"))
 }
-
-pub fn is_safe_relative_path(input: &str) -> bool {
-    matches!(check_relative_path(input), PathCheck::Ok(_))
-}

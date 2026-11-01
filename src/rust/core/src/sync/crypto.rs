@@ -6,7 +6,7 @@
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use hkdf::Hkdf;
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 
 use super::protocol::{AES_KEY_LENGTH, HKDF_INFO, HKDF_SALT};
 
@@ -50,11 +50,4 @@ pub fn decrypt(
             },
         )
         .map_err(|e| e.to_string())
-}
-
-/// First 32 hex chars of SHA-256(key) — matches keyFingerprint() in TS.
-pub fn key_fingerprint(key: &[u8]) -> String {
-    let mut h = Sha256::new();
-    h.update(key);
-    hex::encode(h.finalize())[..32].to_string()
 }

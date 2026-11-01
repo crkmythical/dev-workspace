@@ -1,8 +1,7 @@
-# Rust workspace for the Secure Dev Workspace.
-#
-# Today it holds the sync-service (the tunnel-exposed daemon). The migration adds
-# `core`, `infra` and a `cli` multi-call binary as further members (see deploy/docs/rust-migration.md),
-# at which point the Bun runtime leaves the image.
+# Rust workspace for the Secure Dev Workspace: the `sdw` multi-call binary (cli) over pure domain
+# logic (core) and tool adapters (infra), plus the tunnel-exposed sync daemon (sync-service, also
+# run as `sdw sync-service`). This is the whole runtime; the image ships no Bun. See
+# deploy/docs/rust-migration.md.
 [workspace]
 resolver = "2"
 members = ["cli", "core", "infra", "sync-service"]
