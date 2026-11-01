@@ -9,7 +9,8 @@ ARG DESKTOP_STACK=kasmvnc
 # Compiled to a static musl binary so it drops into any base (glibc or not) with no runtime deps.
 # Pure-Rust crypto (no OpenSSL/ring), so musl-dev is all the toolchain it needs. --locked pins the
 # committed Cargo.lock. rust:1-alpine tracks the latest stable 1.x; CI can pin it tighter.
-FROM rust:1-alpine AS rust-builder
+# Digest-pinned for reproducible builds (bump the digest to move the toolchain). Tag: rust:1-alpine.
+FROM rust:1-alpine@sha256:7e9e2d068a107a2adafd19930011178d14a78326053cd4c3a9f7ad3fd049557d AS rust-builder
 RUN apk add --no-cache musl-dev
 WORKDIR /build
 COPY rust/ ./rust/
@@ -19,7 +20,8 @@ RUN cd rust && cargo build --release --locked \
 # --- SPA build stage: the browser sync page (stays TypeScript) -----------------------------------
 # Built with Bun here, at BUILD TIME ONLY, so the runtime image carries no Bun. The compiled dist
 # is copied into the final image and served by the Rust sync-service.
-FROM oven/bun:1.4.3 AS spa-builder
+# Digest-pinned for reproducible builds. Tag: oven/bun:1.4.3.
+FROM oven/bun:1.4.3@sha256:ec06c3b6cea04192ae6770c434f668ca41d343ad19fa6472216c7b48be39c598 AS spa-builder
 WORKDIR /opt/workspace
 COPY package.json bunfig.toml bun.lock ./
 COPY packages/ ./packages/
