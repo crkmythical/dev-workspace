@@ -1,3 +1,11 @@
+# Global options. The admin API (default 127.0.0.1:2019) is turned off: this Caddy runs a static
+# Caddyfile under supervisord and never reloads live, so nothing needs the admin socket — and
+# leaving it on lets any in-container process (e.g. a code-server terminal) reconfigure or stop the
+# gateway, including stripping the desktop/doctor auth. Off = one less loopback lever.
+{
+	admin off
+}
+
 :8080 {
 	# --- Remote desktop(s) (stack-specific routing) ---
 	# Per-stack snippets are provisioned at build time into /etc/caddy/desktop.d/
