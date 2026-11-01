@@ -390,6 +390,18 @@ RUN cp /opt/workspace/image/etc/desktop/start-xfce.sh /usr/local/bin/start-xfce.
     cp /opt/workspace/image/etc/desktop/start-audio.sh /usr/local/bin/start-audio.sh && \
     chmod +x /usr/local/bin/start-xfce.sh /usr/local/bin/start-audio.sh
 
+# glycin (GTK4's image loader, via librsvg) sandboxes each loader with bwrap/user-namespaces.
+# Where unprivileged userns is unavailable (colima/Lima, locked-down Docker/CI) bwrap fails and GTK
+# turns a failed SVG icon load into a FATAL assertion -> the XFCE session aborts (exit 134) in a
+# crash loop -> black screen. Shim bwrap to run glycin loaders directly ONLY when a user namespace
+# cannot be created; the real bwrap is kept (bwrap.real) and used on capable hosts and for every
+# non-glycin caller. See image/etc/desktop/glycin-bwrap-shim.sh.
+RUN if [ -e /usr/bin/bwrap ]; then \
+      [ -e /usr/bin/bwrap.real ] || mv /usr/bin/bwrap /usr/bin/bwrap.real; \
+      cp /opt/workspace/image/etc/desktop/glycin-bwrap-shim.sh /usr/bin/bwrap; \
+      chmod 755 /usr/bin/bwrap; \
+    fi
+
 # No per-session ssh-agent / gpg-agent in the desktops (system-wide xfce4-session default, below
 # any per-user setting). xfce4-session starts an ssh-agent that detaches into a session of its own
 # and listens on a socket in the session's HOME, which is inside the vault. A listening unix socket
