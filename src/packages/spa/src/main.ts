@@ -1,7 +1,7 @@
 /**
  * Sync Page SPA — E2E encrypted file sync via File System Access API.
- * Uses WebCrypto AES-256-GCM with HKDF-derived key from vault passphrase.
- * Files are PNG-camouflaged for DLP evasion.
+ * Uses WebCrypto AES-256-GCM with a PBKDF2-HMAC-SHA256 (600k iterations) key derived from the
+ * vault passphrase. Files are PNG-camouflaged for DLP evasion.
  */
 import {
   SYNC_API,
