@@ -19,7 +19,9 @@ use serde_json::{json, Value};
 use sdw_core::sync::aad::build_aad;
 use sdw_core::sync::crypto::decrypt;
 use sdw_core::sync::path_safety::{check_relative_path, PathCheck};
-use sdw_core::sync::protocol::{HEADER_CHUNK_IDX, HEADER_FILE_ID, HEADER_OP, HEADER_TS};
+use sdw_core::sync::protocol::{
+    HEADER_CHUNK_IDX, HEADER_FILE_ID, HEADER_OP, HEADER_TS, MAX_UPLOAD_BYTES, REPLAY_TOLERANCE_MS,
+};
 use sdw_core::sync::wire::parse_upload_body;
 
 use crate::store;
@@ -82,6 +84,13 @@ pub async fn upload(State(state): State<AppState>, headers: HeaderMap, body: Byt
         Err(_) => return err(StatusCode::BAD_REQUEST, "aead-failure"),
     };
 
+    // A present-but-out-of-tolerance timestamp is a stale/clock problem, distinct from a replay.
+    // Report it as such instead of the misleading "replay-detected" the window would otherwise
+    // return for the same condition.
+    if (now - ts).abs() > REPLAY_TOLERANCE_MS {
+        return err(StatusCode::BAD_REQUEST, "stale-timestamp");
+    }
+
     // Only an authentic envelope may claim a replay-window slot.
     {
         let nonce_hex = hex::encode(frame.nonce);
@@ -97,10 +106,16 @@ pub async fn upload(State(state): State<AppState>, headers: HeaderMap, body: Byt
         let Some(id) = flat_segment(&file_id_hdr) else {
             return err(StatusCode::BAD_REQUEST, "bad-file-id");
         };
-        let res =
-            tokio::task::spawn_blocking(move || store::append_chunk(&dirs, &id, &plaintext)).await;
-        if !matches!(res, Ok(Ok(()))) {
-            return err(StatusCode::INTERNAL_SERVER_ERROR, "internal");
+        let res = tokio::task::spawn_blocking(move || {
+            store::append_chunk(&dirs, &id, &plaintext, MAX_UPLOAD_BYTES)
+        })
+        .await;
+        match res {
+            Ok(Ok(())) => {}
+            Ok(Err(store::AppendError::TooLarge)) => {
+                return err(StatusCode::PAYLOAD_TOO_LARGE, "upload-too-large")
+            }
+            _ => return err(StatusCode::INTERNAL_SERVER_ERROR, "internal"),
         }
         let idx = chunk_idx.parse::<i64>().unwrap_or(0);
         return (
@@ -126,54 +141,35 @@ pub async fn upload(State(state): State<AppState>, headers: HeaderMap, body: Byt
             PathCheck::Err(_) => return err(StatusCode::BAD_REQUEST, "bad-file-path"),
         };
 
-        {
-            let dirs = dirs.clone();
-            let id = id.clone();
-            let present = tokio::task::spawn_blocking(move || store::has_chunks(&dirs, &id))
-                .await
-                .unwrap_or(false);
-            if !present {
-                return err(StatusCode::BAD_REQUEST, "no-chunks");
-            }
-        }
-
         // Whole-file integrity is REQUIRED: the client always sends it (client.ts), so a finalize
-        // without it is malformed. Previously it was optional, which let a finalize commit the
-        // concatenated chunks with no assembly check.
+        // without it is malformed. It is the only assembly check (the server does not track chunk
+        // counts), so it must be present before anything is committed.
         let expected = match data.get("content_sha256").and_then(Value::as_str) {
             Some(h) if !h.is_empty() => h.to_string(),
             _ => return err(StatusCode::BAD_REQUEST, "missing-checksum"),
         };
-        {
-            let got = {
-                let dirs = dirs.clone();
-                let id = id.clone();
-                tokio::task::spawn_blocking(move || store::sha256_hex(&dirs, &id)).await
-            };
-            let got = match got {
-                Ok(Ok(h)) => h,
-                _ => return err(StatusCode::INTERNAL_SERVER_ERROR, "internal"),
-            };
-            if got != expected {
-                let dirs = dirs.clone();
-                let id = id.clone();
-                let _ = tokio::task::spawn_blocking(move || store::discard(&dirs, &id)).await;
-                return err(StatusCode::BAD_REQUEST, "checksum-mismatch");
-            }
-        }
 
-        let res = {
+        // Hash-verify and commit in ONE blocking call so no concurrent append can slip between the
+        // checksum and the rename.
+        let outcome = {
             let rel = rel.clone();
-            tokio::task::spawn_blocking(move || store::commit(&dirs, &id, &rel)).await
+            tokio::task::spawn_blocking(move || {
+                store::finalize_verified(&dirs, &id, &rel, &expected)
+            })
+            .await
         };
-        if !matches!(res, Ok(Ok(()))) {
-            return err(StatusCode::INTERNAL_SERVER_ERROR, "internal");
-        }
-        return (
-            StatusCode::OK,
-            Json(json!({ "status": "upload-complete", "path": rel })),
-        )
-            .into_response();
+        return match outcome {
+            Ok(Ok(store::FinalizeOutcome::Committed)) => (
+                StatusCode::OK,
+                Json(json!({ "status": "upload-complete", "path": rel })),
+            )
+                .into_response(),
+            Ok(Ok(store::FinalizeOutcome::ChecksumMismatch)) => {
+                err(StatusCode::BAD_REQUEST, "checksum-mismatch")
+            }
+            Ok(Ok(store::FinalizeOutcome::NoChunks)) => err(StatusCode::BAD_REQUEST, "no-chunks"),
+            _ => err(StatusCode::INTERNAL_SERVER_ERROR, "internal"),
+        };
     }
 
     err(StatusCode::BAD_REQUEST, "unknown-op")

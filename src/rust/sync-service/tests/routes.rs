@@ -313,6 +313,27 @@ async fn upload_accepts_a_chunk_larger_than_axums_2mib_default() {
 }
 
 #[tokio::test]
+async fn upload_with_a_stale_timestamp_says_stale_not_replay() {
+    // An authentic envelope with an out-of-tolerance timestamp is a clock/stale problem, and now
+    // reports "stale-timestamp" rather than the misleading "replay-detected" it used to.
+    let h = harness(both_on());
+    write(&h.state.passphrase_path, "the vault passphrase");
+    let key = derive_key("the vault passphrase");
+    let ts = now_ms() - 10 * 60_000; // 10 min old, past the 5 min tolerance
+    let aad = build_aad("put-chunk", ts, &["f", "0"]);
+    let req = upload_req(
+        "put-chunk",
+        ts,
+        "f",
+        "0",
+        body(&key, &[3u8; 12], b"x", &aad),
+    );
+    let (status, out) = send(&h.state, req).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(out["error"], "stale-timestamp");
+}
+
+#[tokio::test]
 async fn upload_chunk_then_finalize_lands_the_file() {
     let h = harness(both_on());
     write(&h.state.passphrase_path, "the vault passphrase");

@@ -35,6 +35,12 @@ pub const REPLAY_TOLERANCE_MS: i64 = 300_000;
 // also bounds how much a single request can buffer in memory.
 pub const MAX_REQUEST_BODY_BYTES: usize = 5 * 1024 * 1024;
 
+// Server-side ceiling on one assembled upload, mirroring the browser client's SIZE_LIMIT
+// (packages/core/src/sync/protocol.ts = 500 MB). The client enforces it too, but the server must
+// not trust the client: without this an authenticated client (or a looping one) could grow a
+// single upload without bound and fill the vault disk. append_chunk refuses a crossing chunk.
+pub const MAX_UPLOAD_BYTES: u64 = 500 * 1024 * 1024;
+
 // HTTP wire contract: header names + API paths, the single Rust source the routes use. Mirrors
 // SYNC_HEADERS / SYNC_API in packages/core/src/sync/protocol.ts — the frozen values the browser
 // SPA speaks. The test below pins them so a Rust-side typo is caught; tests/smoke checks the two

@@ -36,14 +36,30 @@ pub struct SharedFile {
     pub mtime: u64,
 }
 
-pub fn append_chunk(dirs: &Dirs, id: &str, data: &[u8]) -> std::io::Result<()> {
-    fs::create_dir_all(&dirs.upload)?;
-    fs::create_dir_all(&dirs.shared)?;
+/// Why a chunk append can fail.
+#[derive(Debug)]
+pub enum AppendError {
+    /// Appending this chunk would push the assembled upload past `max_total`.
+    TooLarge,
+    Io(std::io::Error),
+}
+
+/// Append one decrypted chunk to the staging file, enforcing a total-size ceiling so a client (or
+/// a looping one) cannot fill the vault disk. `max_total` is the largest the assembled upload may
+/// reach; an append that would cross it is refused before any bytes are written.
+pub fn append_chunk(dirs: &Dirs, id: &str, data: &[u8], max_total: u64) -> Result<(), AppendError> {
+    fs::create_dir_all(&dirs.upload).map_err(AppendError::Io)?;
+    fs::create_dir_all(&dirs.shared).map_err(AppendError::Io)?;
+    let existing = fs::metadata(dirs.temp(id)).map(|m| m.len()).unwrap_or(0);
+    if existing.saturating_add(data.len() as u64) > max_total {
+        return Err(AppendError::TooLarge);
+    }
     let mut f = fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(dirs.temp(id))?;
-    f.write_all(data)
+        .open(dirs.temp(id))
+        .map_err(AppendError::Io)?;
+    f.write_all(data).map_err(AppendError::Io)
 }
 
 pub fn has_chunks(dirs: &Dirs, id: &str) -> bool {
@@ -76,6 +92,34 @@ pub fn commit(dirs: &Dirs, id: &str, relative_path: &str) -> std::io::Result<()>
         fs::create_dir_all(parent)?;
     }
     fs::rename(dirs.temp(id), final_path)
+}
+
+/// Outcome of verifying + committing an assembled upload.
+#[derive(Debug, PartialEq, Eq)]
+pub enum FinalizeOutcome {
+    Committed,
+    ChecksumMismatch,
+    NoChunks,
+}
+
+/// Verify the staged upload's whole-file checksum and commit it, all in ONE call so no concurrent
+/// append can slip between the hash and the rename (the former hash-then-commit sequence had that
+/// TOCTOU). A mismatch discards the staged file; a missing staged file is NoChunks, not an error.
+pub fn finalize_verified(
+    dirs: &Dirs,
+    id: &str,
+    relative_path: &str,
+    expected_sha256: &str,
+) -> std::io::Result<FinalizeOutcome> {
+    if !dirs.temp(id).exists() {
+        return Ok(FinalizeOutcome::NoChunks);
+    }
+    if sha256_hex(dirs, id)? != expected_sha256 {
+        discard(dirs, id);
+        return Ok(FinalizeOutcome::ChecksumMismatch);
+    }
+    commit(dirs, id, relative_path)?;
+    Ok(FinalizeOutcome::Committed)
 }
 
 /// Files in the shared directory, hidden entries skipped (same as the TS store).
@@ -124,8 +168,8 @@ mod tests {
     #[test]
     fn append_commit_and_list() {
         let (d, _guard) = dirs();
-        append_chunk(&d, "f1", b"hello ").unwrap();
-        append_chunk(&d, "f1", b"world").unwrap();
+        append_chunk(&d, "f1", b"hello ", 1 << 20).unwrap();
+        append_chunk(&d, "f1", b"world", 1 << 20).unwrap();
         assert!(has_chunks(&d, "f1"));
         // sha256("hello world")
         assert_eq!(
@@ -157,7 +201,7 @@ mod tests {
     #[test]
     fn discard_removes_the_staged_file() {
         let (d, _guard) = dirs();
-        append_chunk(&d, "f2", b"data").unwrap();
+        append_chunk(&d, "f2", b"data", 1 << 20).unwrap();
         assert!(has_chunks(&d, "f2"));
         discard(&d, "f2");
         assert!(!has_chunks(&d, "f2"));
@@ -167,5 +211,52 @@ mod tests {
     fn list_of_missing_dir_is_empty() {
         let (d, _guard) = dirs();
         assert!(list(&d).is_empty());
+    }
+
+    #[test]
+    fn append_chunk_refuses_to_exceed_the_cap() {
+        let (d, _guard) = dirs();
+        // First 6 bytes fit under a 10-byte cap.
+        append_chunk(&d, "cap", b"hello ", 10).unwrap();
+        // The next 5 would cross it (6 + 5 > 10): refused, and nothing is appended.
+        assert!(matches!(
+            append_chunk(&d, "cap", b"world", 10),
+            Err(AppendError::TooLarge)
+        ));
+        assert_eq!(sha256_hex(&d, "cap").unwrap(), {
+            use sha2::{Digest, Sha256};
+            hex::encode(Sha256::digest(b"hello "))
+        });
+    }
+
+    #[test]
+    fn finalize_verified_commits_discards_or_reports_no_chunks() {
+        let (d, _guard) = dirs();
+        // No staged file yet.
+        assert_eq!(
+            finalize_verified(&d, "none", "out.txt", "deadbeef").unwrap(),
+            FinalizeOutcome::NoChunks
+        );
+
+        append_chunk(&d, "ok", b"hello world", 1 << 20).unwrap();
+        let good = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
+        // A wrong checksum discards the staged file and does not commit.
+        assert_eq!(
+            finalize_verified(&d, "ok", "out.txt", "00").unwrap(),
+            FinalizeOutcome::ChecksumMismatch
+        );
+        assert!(!has_chunks(&d, "ok"), "a mismatch discards the staged file");
+
+        // The right checksum commits atomically.
+        append_chunk(&d, "ok2", b"hello world", 1 << 20).unwrap();
+        assert_eq!(
+            finalize_verified(&d, "ok2", "out2.txt", good).unwrap(),
+            FinalizeOutcome::Committed
+        );
+        assert!(!has_chunks(&d, "ok2"));
+        assert_eq!(
+            std::fs::read(format!("{}/out2.txt", d.shared)).unwrap(),
+            b"hello world"
+        );
     }
 }
