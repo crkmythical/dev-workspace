@@ -11,7 +11,7 @@
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
@@ -51,9 +51,18 @@ pub fn has_chunks(dirs: &Dirs, id: &str) -> bool {
 }
 
 pub fn sha256_hex(dirs: &Dirs, id: &str) -> std::io::Result<String> {
-    let bytes = fs::read(dirs.temp(id))?;
+    // Stream the file through the hasher instead of reading it whole: an upload can reach the
+    // client's 500 MB SIZE_LIMIT, and loading all of it into one Vec at finalize is an OOM vector.
+    let mut f = fs::File::open(dirs.temp(id))?;
     let mut h = Sha256::new();
-    h.update(&bytes);
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = f.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        h.update(&buf[..n]);
+    }
     Ok(hex::encode(h.finalize()))
 }
 
