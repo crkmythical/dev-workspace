@@ -93,7 +93,7 @@ set -a; . "$STATE"; set +a
 
 cf POST "/accounts/$CF_ACCOUNT_ID/access/apps" \
   "{\"name\":\"ws-$id\",\"domain\":\"$FQDN\",\"type\":\"self_hosted\",\"session_duration\":\"30m\"}" \
-  | save "access-app" "APP_ID:id" || exit 1
+  | save "access-app" "APP_ID:id" "APP_AUD:aud" || exit 1
 set -a; . "$STATE"; set +a
 
 cf POST "/accounts/$CF_ACCOUNT_ID/access/apps/$APP_ID/policies" \
@@ -116,3 +116,6 @@ echo "   human : browser -> Access login -> email OTP to $ALLOW_EMAIL"
 echo "   machine: CF-Access-Client-Id=$ST_CLIENT_ID  (secret in $STATE, not printed)"
 echo "   connector log: instances/$id.cloudflared.log   state: $STATE"
 echo "   point it at the real workspace by running that container on 127.0.0.1:$port"
+echo "   single-sign-on (skip the workspace's own login behind Access): set on the container"
+echo "     ACCESS_AUD=$APP_AUD"
+echo "     ACCESS_TEAM_DOMAIN=<your-team>.cloudflareaccess.com   (the host Access redirects to)"
