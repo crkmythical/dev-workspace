@@ -5,4 +5,5 @@
 //! the HTTP handlers and the key/credential wiring live in the always-on sync-service. See
 //! deploy/docs/design-unified-auth-gateway.md.
 
+pub mod access_jwt;
 pub mod session;

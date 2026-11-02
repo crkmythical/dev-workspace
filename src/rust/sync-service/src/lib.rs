@@ -52,6 +52,17 @@ pub fn run_blocking() {
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
     rt.block_on(async {
         let state = AppState::from_config(AppConfig::from_env());
+        // When behind Cloudflare Access, prime and keep the team JWKS fresh so /auth/verify can
+        // accept Access assertions. The initial fetch is awaited so the keys are ready before the
+        // first request; a background task then refreshes them.
+        if let Some(access) = state.auth.access.clone() {
+            if let Some(jwks) = fetch_jwks(&access.certs_url).await {
+                if let Ok(mut w) = access.jwks.write() {
+                    *w = jwks;
+                }
+            }
+            spawn_jwks_refresh(access);
+        }
         let addr = format!("127.0.0.1:{}", sdw_core::sync::layout::SYNC_SERVICE_PORT);
         let listener = tokio::net::TcpListener::bind(&addr)
             .await
@@ -59,4 +70,34 @@ pub fn run_blocking() {
         println!("sync-service (rust) listening on {addr}");
         axum::serve(listener, app(state)).await.expect("serve");
     });
+}
+
+/// Refresh the Access JWKS hourly in the background (keys rotate; this also recovers if the first
+/// fetch failed). Errors are swallowed — the gate's cookie path is unaffected and a stale/empty
+/// JWKS just means an Access assertion is not (yet) accepted.
+fn spawn_jwks_refresh(access: state::AccessState) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+            if let Some(jwks) = fetch_jwks(&access.certs_url).await {
+                if let Ok(mut w) = access.jwks.write() {
+                    *w = jwks;
+                }
+            }
+        }
+    });
+}
+
+/// Fetch the team JWKS with curl (so it uses the same proxy/TLS the rest of the image does, and no
+/// HTTP/TLS client is linked into the binary). None on any failure.
+async fn fetch_jwks(certs_url: &str) -> Option<sdw_core::auth::access_jwt::Jwks> {
+    let out = tokio::process::Command::new("curl")
+        .args(["-fsS", "--max-time", "15", certs_url])
+        .output()
+        .await
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    serde_json::from_slice(&out.stdout).ok()
 }

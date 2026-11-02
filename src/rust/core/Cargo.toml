@@ -16,11 +16,19 @@ serde_json = "1"
 # cross Cloudflare), then AES-256-GCM seals each one. Pinned by sync-service/tests/parity.rs.
 aes-gcm = "0.10"
 pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
-sha2 = "0.10"
+# `oid` lets Sha256 carry its AssociatedOid, which rsa's prefixed (RS256) PKCS1v15 verifier needs.
+sha2 = { version = "0.10", features = ["oid"] }
 hex = "0.4"
 # Session-cookie signing for the auth gateway (core::auth::session). HMAC-SHA256 as the MAC and
 # as a PRF for the persistent-key derivation. Pure computation; same RustCrypto family as above.
 hmac = "0.12"
+# Cloudflare Access JWT verification (core::auth::access_jwt): RS256 = RSASSA-PKCS1v1.5-SHA256 over
+# the team JWKS, so the gate can accept an edge-authenticated session. Pure-Rust (num-bigint-dig),
+# no ring/OpenSSL — consistent with the static musl build. base64url for the JWT segments.
+rsa = "0.9"
+base64 = "0.22"
 
 [dev-dependencies]
 proptest = "1"
+# Access-JWT tests generate a throwaway RSA key and sign test tokens with it.
+rand_core = { version = "0.6", features = ["getrandom"] }

@@ -156,7 +156,7 @@ snippets drop their own `basic_auth`; Selkies needs no change at all.
 is a core directive; if a route's `handle_response` redirect proves awkward, fall
 back to an explicit `reverse_proxy /auth/verify` matcher.)
 
-## 7. Edge unification with Cloudflare Access (optional, composable)
+## 7. Edge unification with Cloudflare Access (IMPLEMENTED, opt-in)
 
 When the deployment is behind Cloudflare Access (the ephemeral-orchestration model),
 Access already authenticates every request at the edge. To avoid a double login,
@@ -245,5 +245,6 @@ Smoke (live container, the real proof):
    (destruct stays open).
 3. Keep backend-native auth as defense-in-depth (extra prompt) vs. single-sign-on by
    turning it off. Recommend keep depth.
-4. Do the Access-JWT unification now (§7) or ship the origin gate first and add edge
-   trust later. Recommend origin gate first, Access trust as a fast follow.
+4. [DONE] Access-JWT unification (§7) is implemented: `/auth/verify` also accepts a valid
+   `Cf-Access-Jwt-Assertion` (RS256 verified against the team JWKS) when `ACCESS_TEAM_DOMAIN`
+   + `ACCESS_AUD` are set. Opt-in; unset = cookie-only, the header is never trusted.

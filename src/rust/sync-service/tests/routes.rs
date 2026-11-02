@@ -56,6 +56,7 @@ fn harness(features: Features) -> Harness {
             session_key: Arc::new([7u8; 32]),
             password_hash: Some(Arc::from(PASSPHRASE_HASH)),
             ttl_secs: 3600,
+            access: None,
         },
     };
     Harness {
@@ -240,6 +241,7 @@ async fn destruct_reports_an_error_when_the_trigger_cannot_launch() {
             session_key: Arc::new([7u8; 32]),
             password_hash: Some(Arc::from(PASSPHRASE_HASH)),
             ttl_secs: 3600,
+            access: None,
         },
     };
     let state = AppState::from_config(cfg);

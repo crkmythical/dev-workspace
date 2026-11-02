@@ -24,3 +24,9 @@ opt-level = 3
 opt-level = 3
 [profile.dev.package.hmac]
 opt-level = 3
+# RSA (Access-JWT verify + the test keygen) is painfully slow unoptimised; lift it and its bigint
+# backend so `cargo test` does not crawl.
+[profile.dev.package.rsa]
+opt-level = 3
+[profile.dev.package.num-bigint-dig]
+opt-level = 3

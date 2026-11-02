@@ -15,6 +15,7 @@ use axum::{
 };
 use serde::Deserialize;
 
+use sdw_core::auth::access_jwt::verify_access_jwt;
 use sdw_core::auth::session::{sign_session, verify_session, SessionVerdict, SESSION_COOKIE};
 
 use crate::util::now_ms;
@@ -125,17 +126,31 @@ pub async fn login_post(State(st): State<AppState>, Form(f): Form<LoginForm>) ->
         .into_response()
 }
 
-/// The `forward_auth` target. Caddy copies the client's headers here; we only need the cookie.
+/// The `forward_auth` target. Caddy copies the client's headers here. Two accepted credentials:
+/// (1) our own session cookie, (2) a valid Cloudflare Access assertion when the deployment is
+/// behind Access (so an Access login is not asked to log in again). Either passing → 200.
 pub async fn verify(State(st): State<AppState>, headers: HeaderMap) -> StatusCode {
-    match cookie_value(&headers, SESSION_COOKIE) {
-        Some(tok)
-            if verify_session(&st.auth.session_key[..], tok, now_secs())
-                == SessionVerdict::Valid =>
-        {
-            StatusCode::OK
+    let now = now_secs();
+    // 1) Our session cookie.
+    if let Some(tok) = cookie_value(&headers, SESSION_COOKIE) {
+        if verify_session(&st.auth.session_key[..], tok, now) == SessionVerdict::Valid {
+            return StatusCode::OK;
         }
-        _ => StatusCode::UNAUTHORIZED,
     }
+    // 2) Cloudflare Access assertion, only if configured (else the header is never trusted).
+    if let Some(access) = &st.auth.access {
+        if let Some(jwt) = headers
+            .get("cf-access-jwt-assertion")
+            .and_then(|v| v.to_str().ok())
+        {
+            if let Ok(jwks) = access.jwks.read() {
+                if verify_access_jwt(jwt, &jwks, &access.aud, &access.issuer, now).is_ok() {
+                    return StatusCode::OK;
+                }
+            }
+        }
+    }
+    StatusCode::UNAUTHORIZED
 }
 
 pub async fn logout() -> Response {

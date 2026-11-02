@@ -185,6 +185,31 @@ pub fn core_env_groups() -> Vec<EnvGroup> {
                         "1",
                     )
                 },
+                EnvVarSpec {
+                    opt_in: true,
+                    ..var(
+                        "ACCESS_TEAM_DOMAIN",
+                        &[
+                            "Cloudflare Access unification (optional). When the workspace sits behind Access,",
+                            "set this to your team domain so the auth gate ALSO accepts a valid Access session",
+                            "(the Cf-Access-Jwt-Assertion the edge injects) — no second login after Access.",
+                            "The gate verifies the JWT against the team's public keys; unset = cookie-only, and",
+                            "the header is never trusted. Set together with ACCESS_AUD.",
+                        ],
+                        "your-team.cloudflareaccess.com",
+                    )
+                },
+                EnvVarSpec {
+                    opt_in: true,
+                    ..var(
+                        "ACCESS_AUD",
+                        &[
+                            "The Access application's AUD tag (Access app → Overview). Required claim: the",
+                            "assertion is accepted only if its audience matches. Set with ACCESS_TEAM_DOMAIN.",
+                        ],
+                        "",
+                    )
+                },
             ],
         },
         EnvGroup {

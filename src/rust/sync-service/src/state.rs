@@ -5,7 +5,7 @@
 //! TS server). Paths and the destruct trigger are injected through `AppConfig` so
 //! the whole surface runs against a temp dir with a fake trigger in tests.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use sdw_core::sync::crypto::derive_key;
 use sdw_core::sync::layout::{SHARED_DIR, SYNC_PASSPHRASE_PATH, UPLOAD_TRACKING_DIR};
@@ -16,6 +16,7 @@ use sdw_core::vault::destruct::{
     DESTRUCT_RATE_LIMIT_WINDOW_MS,
 };
 
+use sdw_core::auth::access_jwt::Jwks;
 use sdw_core::auth::session::{derive_session_key_from_password, DEFAULT_SESSION_TTL_SECS};
 
 use crate::destruct::{DestructTrigger, SpawnSelfDestruct};
@@ -33,6 +34,20 @@ pub struct AuthState {
     /// authenticate and every login is rejected (fail-closed).
     pub password_hash: Option<Arc<str>>,
     pub ttl_secs: u64,
+    /// Cloudflare Access acceptance, when the deployment sits behind Access and names its team +
+    /// app. None → the gate is cookie-only (a deployment not behind Access never trusts the
+    /// Cf-Access-Jwt-Assertion header). See deploy/docs/design-unified-auth-gateway.md §7.
+    pub access: Option<AccessState>,
+}
+
+/// What the gate needs to accept a Cloudflare Access assertion: the app AUD, the team issuer, the
+/// certs URL, and the JWKS cached from it (refreshed in the background by the sync-service).
+#[derive(Clone)]
+pub struct AccessState {
+    pub aud: Arc<str>,
+    pub issuer: Arc<str>,
+    pub certs_url: Arc<str>,
+    pub jwks: Arc<RwLock<Jwks>>,
 }
 
 impl AuthState {
@@ -62,8 +77,29 @@ impl AuthState {
             session_key: Arc::new(session_key),
             password_hash,
             ttl_secs: DEFAULT_SESSION_TTL_SECS,
+            access: access_from_env(),
         }
     }
+}
+
+/// Build the Access acceptance config from the environment, or None when not behind Access. Both
+/// ACCESS_TEAM_DOMAIN and ACCESS_AUD must be set; otherwise the header is never trusted.
+fn access_from_env() -> Option<AccessState> {
+    let var = |k: &str| {
+        std::env::var(k)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+    let domain = var("ACCESS_TEAM_DOMAIN")?;
+    let aud = var("ACCESS_AUD")?;
+    let domain = domain.trim_end_matches('/');
+    Some(AccessState {
+        aud: Arc::from(aud),
+        issuer: Arc::from(format!("https://{domain}")),
+        certs_url: Arc::from(format!("https://{domain}/cdn-cgi/access/certs")),
+        jwks: Arc::new(RwLock::new(Jwks::default())),
+    })
 }
 
 fn random_key() -> [u8; 32] {
