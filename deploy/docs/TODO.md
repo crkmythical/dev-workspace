@@ -5,6 +5,27 @@
 > （`src/packages/spa`）和它用的同步客户端（`src/packages/core/src/sync`）。详见 deploy/docs/rust-migration.md。
 > 下面的「验证状态」是 cutover 之前的记录，smoke 数字（298）是当时的；Rust 迁移后的全量是 302/0。
 
+## 下周实现（架构 review backlog，2026-11-01）
+
+本周已完成并提交（背景，未 push）：统一鉴权网关（deny-by-default，会话 cookie + Cloudflare
+Access JWT 合流）、Clash DNS 开机自动探测 + `set-clash-dns`、桌面 glycin/bwrap 崩溃修复、
+一条命令的 Access-SSO 临时实例编排（`up.sh`/`down.sh`）、每实例资源上限（`pids_limit` 等）、
+应用级健康检查。下面是 review 里「要啃才质变」的四项，按优先级：
+
+- [ ] **#2 隔离强化（高）** — 现状：单容器、`CAP_SYS_ADMIN`、`seccomp:unconfined`、容器内全 root，
+      是安全主短板（见 threat-model 的「容器逃逸」「出口强制」）。目标：每个临时实例跑在 microVM
+      （Kata / Firecracker）或 gVisor 里；容器内服务降到非 root uid。验收：逃逸不直接拿到宿主 root；
+      egress 能按 uid 强制（现在因全 root 无法按 uid 下规则）；smoke 仍全过。工作量大，分步做。
+- [ ] **#4 审计 / 可观测（中）** — 现状：无登录/自毁/egress 的审计轨迹，无指标。目标：网关
+      （`sync-service`）输出结构化 JSON 审计事件（登录成功/失败、Access 放行、`destruct` 尝试、
+      egress 状态变化），可选 Prometheus 指标。验收：能从日志/`doctor` 追溯「谁、何时、什么结果」。
+- [ ] **#5 密钥脱离环境变量（中）** — 现状：PASSWORD / 订阅 / RESTIC_PASSWORD / AWS / VAULT_GIT_REPO
+      token / 编排的 CF token 都在 env / `.env`。目标：改走 tmpfs 挂载或 Docker secrets 或启动时拉取；
+      对齐 `deploy/docs/design-memory-only-secrets.md`（TPM/KMS + 把「登录凭据」与「vault 密钥」拆开）。
+- [ ] **交互卡顿：共享中继（中）** — 现状：CF 隧道墙内→海外边缘绕行，交互桌面卡。目标：一台好线路
+      VPS 跑 `frps` 或自建 `Headscale`/DERP，`provision` 时每实例自动注册（生成密钥 + 子域，和现在
+      CF 流程同构，仍可批量化）；桌面可配合切 Selkies（WebRTC）。验收：异地交互延迟明显下降。
+
 ## 验证状态
 
 两轮验证，都在真实容器里。第一轮在重构（阶段 0–6）之后，用 Debian 基础镜像；第二轮把验证做成了仓库里的 smoke test（`src/tests/smoke/`，`make smoke`），在生产基础（Kali）镜像上跑，并补上了原来没法测的外部服务替身、真实浏览器、Cloudflare 隧道和几条真实的联网路径。跑起来才暴露的问题已修掉，见下面「验证中发现并修复的问题」。
