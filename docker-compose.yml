@@ -41,6 +41,11 @@ x-workspace: &workspace-base
   environment:
     - DESKTOP_RESOLUTION=${DESKTOP_RESOLUTION:-1920x1080}
     - DESKTOP_AUDIO=${DESKTOP_AUDIO:-0}
+    # Cloudflare Access single-sign-on (empty = off). The orchestration (deploy/orchestration/up.sh)
+    # injects these from the provisioned Access app so the workspace gate accepts the edge session;
+    # empty by default so a plain `docker compose up` is unaffected.
+    - ACCESS_TEAM_DOMAIN=${ACCESS_TEAM_DOMAIN:-}
+    - ACCESS_AUD=${ACCESS_AUD:-}
   ulimits:
     core: 0
     nofile:
@@ -64,7 +69,9 @@ services:
         DESKTOP_STACK: ${DESKTOP_STACK:-kasmvnc}
         APT_MIRROR: ${APT_MIRROR:-mirrors.aliyun.com}
         KALI_MIRROR: ${KALI_MIRROR:-http.kali.org}
-    container_name: dev-workspace
+    # Parameterised so several ephemeral instances can run on one host (up.sh sets ws-<id>);
+    # defaults to dev-workspace for a plain single `docker compose up`.
+    container_name: ${WORKSPACE_CONTAINER_NAME:-dev-workspace}
 
 volumes:
   vault-data:

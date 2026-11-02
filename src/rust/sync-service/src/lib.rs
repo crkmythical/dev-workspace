@@ -56,11 +56,6 @@ pub fn run_blocking() {
         // accept Access assertions. The initial fetch is awaited so the keys are ready before the
         // first request; a background task then refreshes them.
         if let Some(access) = state.auth.access.clone() {
-            if let Some(jwks) = fetch_jwks(&access.certs_url).await {
-                if let Ok(mut w) = access.jwks.write() {
-                    *w = jwks;
-                }
-            }
             spawn_jwks_refresh(access);
         }
         let addr = format!("127.0.0.1:{}", sdw_core::sync::layout::SYNC_SERVICE_PORT);
@@ -72,18 +67,25 @@ pub fn run_blocking() {
     });
 }
 
-/// Refresh the Access JWKS hourly in the background (keys rotate; this also recovers if the first
-/// fetch failed). Errors are swallowed — the gate's cookie path is unaffected and a stale/empty
-/// JWKS just means an Access assertion is not (yet) accepted.
+/// Keep the Access JWKS fresh. Fetch immediately, then retry QUICKLY until the first success — at
+/// boot the egress proxy (Clash) the fetch goes through may still be coming up, so the initial try
+/// can fail, and waiting an hour to retry would leave Access single-sign-on broken until then. Once
+/// keys are in hand, refresh hourly for rotation. Errors are swallowed: the cookie path is
+/// unaffected, and an empty JWKS just means an Access assertion is not accepted until keys arrive.
 fn spawn_jwks_refresh(access: state::AccessState) {
     tokio::spawn(async move {
         loop {
-            tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
-            if let Some(jwks) = fetch_jwks(&access.certs_url).await {
-                if let Ok(mut w) = access.jwks.write() {
-                    *w = jwks;
+            let have_keys = match fetch_jwks(&access.certs_url).await {
+                Some(jwks) if !jwks.keys.is_empty() => {
+                    if let Ok(mut w) = access.jwks.write() {
+                        *w = jwks;
+                    }
+                    true
                 }
-            }
+                _ => false,
+            };
+            let delay = if have_keys { 3600 } else { 20 };
+            tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
         }
     });
 }

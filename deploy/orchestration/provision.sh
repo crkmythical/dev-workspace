@@ -31,6 +31,8 @@ STATE="$here/instances/$id.env"
 [ -e "$STATE" ] && { echo "instance '$id' already exists: $STATE (teardown first)" >&2; exit 1; }
 : > "$STATE"; chmod 600 "$STATE"
 { echo "FQDN=$FQDN"; echo "ORIGIN_PORT=$port"; } >> "$STATE"
+# Team domain (optional) carries into state so up.sh can wire the gate's Access single-sign-on.
+[ -n "${CF_TEAM_DOMAIN:-}" ] && echo "TEAM_DOMAIN=$CF_TEAM_DOMAIN" >> "$STATE"
 
 # Roll back everything created so far if we exit before finishing (so a partial run never leaks).
 DONE=0
