@@ -14,6 +14,7 @@ use sdw_core::sync::protocol::PNG_HEADER;
 use serde_json::Value;
 use sync_service::destruct::DestructTrigger;
 use sync_service::features::Features;
+use sync_service::state::AuthState;
 use sync_service::store::Dirs;
 use sync_service::util::now_ms;
 use sync_service::{app, AppConfig, AppState};
@@ -51,6 +52,11 @@ fn harness(features: Features) -> Harness {
         passphrase_path: p.join("sync-passphrase").to_string_lossy().into_owned(),
         key_hash_path: p.join("key-hash").to_string_lossy().into_owned(),
         destruct: Arc::new(Flag(fired.clone())),
+        auth: AuthState {
+            session_key: Arc::new([7u8; 32]),
+            password_hash: Some(Arc::from(PASSPHRASE_HASH)),
+            ttl_secs: 3600,
+        },
     };
     Harness {
         state: AppState::from_config(cfg),
@@ -230,6 +236,11 @@ async fn destruct_reports_an_error_when_the_trigger_cannot_launch() {
         passphrase_path: p.join("sync-passphrase").to_string_lossy().into_owned(),
         key_hash_path: p.join("key-hash").to_string_lossy().into_owned(),
         destruct: Arc::new(Failing),
+        auth: AuthState {
+            session_key: Arc::new([7u8; 32]),
+            password_hash: Some(Arc::from(PASSPHRASE_HASH)),
+            ttl_secs: 3600,
+        },
     };
     let state = AppState::from_config(cfg);
     write(&state.key_hash_path, PASSPHRASE_HASH);
@@ -455,4 +466,108 @@ async fn finalize_without_a_checksum_is_rejected() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(out["error"], "missing-checksum");
+}
+
+// --- unified auth gateway ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn gate_rejects_without_cookie_and_accepts_after_login() {
+    use axum::http::header::{CONTENT_TYPE, COOKIE, LOCATION, SET_COOKIE};
+    let h = harness(both_on());
+
+    // No cookie -> the gate denies (what Caddy forward_auth turns into a login redirect / WS fail).
+    let resp = app(h.state.clone())
+        .oneshot(Request::get("/auth/verify").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    // Wrong password -> 401 and no cookie issued.
+    let resp = app(h.state.clone())
+        .oneshot(
+            Request::post("/auth/login")
+                .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .body(Body::from("password=wrong&next=/"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    assert!(resp.headers().get(SET_COOKIE).is_none());
+
+    // Right password -> 303 to a safe `next`, with the session cookie.
+    let resp = app(h.state.clone())
+        .oneshot(
+            Request::post("/auth/login")
+                .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .body(Body::from(format!(
+                    "password={}&next=/vnc/",
+                    PASSPHRASE.replace(' ', "+")
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    assert_eq!(resp.headers().get(LOCATION).unwrap(), "/vnc/");
+    let set = resp
+        .headers()
+        .get(SET_COOKIE)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(set.starts_with("sdw_session=v1."), "{set}");
+    let token = set["sdw_session=".len()..]
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+
+    // That cookie satisfies the gate — this is exactly what a browser replays on the WS upgrade.
+    let resp = app(h.state.clone())
+        .oneshot(
+            Request::get("/auth/verify")
+                .header(COOKIE, format!("sdw_session={token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn open_redirect_in_next_is_neutralized() {
+    use axum::http::header::{CONTENT_TYPE, LOCATION};
+    let h = harness(both_on());
+    let resp = app(h.state.clone())
+        .oneshot(
+            Request::post("/auth/login")
+                .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .body(Body::from(format!(
+                    "password={}&next=//evil.example/x",
+                    PASSPHRASE.replace(' ', "+")
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    // Protocol-relative target rejected -> falls back to "/".
+    assert_eq!(resp.headers().get(LOCATION).unwrap(), "/");
+}
+
+#[tokio::test]
+async fn logout_clears_cookie() {
+    use axum::http::header::SET_COOKIE;
+    let h = harness(both_on());
+    let resp = app(h.state.clone())
+        .oneshot(Request::post("/auth/logout").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let c = resp.headers().get(SET_COOKIE).unwrap().to_str().unwrap();
+    assert!(c.contains("sdw_session=;"), "{c}");
+    assert!(c.contains("Max-Age=0"), "{c}");
 }

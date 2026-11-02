@@ -1,47 +1,62 @@
 # Global options. The admin API (default 127.0.0.1:2019) is turned off: this Caddy runs a static
 # Caddyfile under supervisord and never reloads live, so nothing needs the admin socket — and
 # leaving it on lets any in-container process (e.g. a code-server terminal) reconfigure or stop the
-# gateway, including stripping the desktop/doctor auth. Off = one less loopback lever.
+# gateway, including stripping the auth gate. Off = one less loopback lever.
 {
 	admin off
 }
 
 :8080 {
-	# --- Remote desktop(s) (stack-specific routing) ---
-	# Per-stack snippets are provisioned at build time into /etc/caddy/desktop.d/
-	# based on DESKTOP_STACK:
-	#   selkies  → desktop-selkies.caddy  (serves /desktop/, WS /desktop/websockets)
-	#   kasmvnc  → desktop-vnc.caddy      (serves /vnc/,     WS /vnc/websockify)
-	#   both     → both snippets active simultaneously
-	# All bind 127.0.0.1 and sit behind the shared $DESKTOP_BCRYPT_HASH auth.
-	import /etc/caddy/desktop.d/*.caddy
-
-	# --- Sync: static SPA served by Caddy, API proxied to the daemon ---
-	# sync-service is API-only (/sync/api/*). The compiled SPA is static files the image
-	# build placed in /opt/workspace/packages/spa/dist (vite base=/sync/), so Caddy serves
-	# them directly; handle_path strips the /sync prefix to map onto the dist root.
-	# doctor reports whether sync is enabled and whether the vault is currently unlocked. That is
-	# recon an unauthenticated caller over the tunnel should not get, so gate it behind the shared
-	# password. The sync page and the emergency remote-destruct endpoint stay open on purpose (you
-	# may need to destruct precisely when you have lost normal access); each protects itself with
-	# its own auth (the derived sync key / the destruct passphrase). The SPA only opens doctor via
-	# a manual "open in new tab" button, so a browser prompt there is acceptable.
-	handle /sync/api/doctor {
-		basic_auth {
-			user {$DESKTOP_BCRYPT_HASH}
+	# UNIFIED AUTH GATEWAY (see deploy/docs/design-unified-auth-gateway.md).
+	# Deny-by-default: ONE session-cookie check sits in front of every route, HTTP and WebSocket
+	# alike. A same-origin cookie rides the WS upgrade handshake (Basic Auth cannot), so the single
+	# gate covers code-server, KasmVNC and Selkies WebSockets uniformly — backends no longer each
+	# guard themselves at the perimeter. `route` makes the directives run in the written order.
+	route {
+		# --- Public allowlist (NOT gated) ---
+		# /auth/* is the login surface (must be reachable to log in). /sync/api/destruct is
+		# break-glass: remote self-destruct must work precisely when normal access is lost, and it
+		# authenticates itself with the destruct passphrase.
+		handle /auth/* {
+			reverse_proxy 127.0.0.1:8081
 		}
-		reverse_proxy 127.0.0.1:8081
-	}
-	handle /sync/api/* {
-		reverse_proxy 127.0.0.1:8081
-	}
-	handle_path /sync/* {
-		root * /opt/workspace/packages/spa/dist
-		file_server
-	}
+		handle /sync/api/destruct {
+			reverse_proxy 127.0.0.1:8081
+		}
 
-	# --- code-server (default) ---
-	handle {
-		reverse_proxy 127.0.0.1:8082
+		# --- The gate ---
+		# forward_auth asks the always-on sync-service whether the request carries a valid session
+		# (the cookie it set at login). 2xx → fall through to the backends below; 401 → browsers are
+		# redirected to the login page, WS upgrades simply fail (correct). Everything past this point
+		# is unreachable until it passes, so a mis-edited route is CLOSED, not exposed.
+		forward_auth 127.0.0.1:8081 {
+			uri /auth/verify
+			@denied status 401
+			handle_response @denied {
+				redir * /auth/login?next={http.request.orig_uri}
+			}
+		}
+
+		# --- Protected backends (reached only after the gate passes) ---
+		# Remote desktop(s): per-stack snippets provisioned at build time into /etc/caddy/desktop.d/
+		#   selkies → /desktop/ (+ WS /desktop/websockets)   kasmvnc → /vnc/ (+ WS /websockify)
+		# They keep any native backend auth as defense-in-depth (KasmVNC does); it is no longer the
+		# perimeter.
+		import /etc/caddy/desktop.d/*.caddy
+
+		# Sync: API proxied to the daemon, SPA served from dist. doctor is no longer specially
+		# gated — the session gate covers it (and everything) now.
+		handle /sync/api/* {
+			reverse_proxy 127.0.0.1:8081
+		}
+		handle_path /sync/* {
+			root * /opt/workspace/packages/spa/dist
+			file_server
+		}
+
+		# code-server (default). Keeps its own password as defense-in-depth behind the gate.
+		handle {
+			reverse_proxy 127.0.0.1:8082
+		}
 	}
 }

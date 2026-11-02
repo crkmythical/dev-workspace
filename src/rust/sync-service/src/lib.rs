@@ -22,6 +22,7 @@ use axum::{
 /// Build the application router: the /sync/api/* surface (upload / download / doctor /
 /// destruct). The static SPA under /sync/ is served by Caddy's file_server, not here.
 pub fn app(state: AppState) -> Router {
+    use sdw_core::auth::session::{AUTH_LOGIN_PATH, AUTH_LOGOUT_PATH, AUTH_VERIFY_PATH};
     use sdw_core::sync::protocol::{
         API_DESTRUCT, API_DOCTOR, API_DOWNLOAD, API_UPLOAD, MAX_REQUEST_BODY_BYTES,
     };
@@ -30,6 +31,13 @@ pub fn app(state: AppState) -> Router {
         .route(API_DOWNLOAD, get(routes::download::download))
         .route(API_DOCTOR, get(routes::doctor::doctor))
         .route(API_DESTRUCT, post(routes::destruct::destruct))
+        // Unified auth gateway (allowlisted un-gated in Caddy; the rest sits behind /auth/verify).
+        .route(
+            AUTH_LOGIN_PATH,
+            get(routes::auth::login_get).post(routes::auth::login_post),
+        )
+        .route(AUTH_VERIFY_PATH, get(routes::auth::verify))
+        .route(AUTH_LOGOUT_PATH, post(routes::auth::logout))
         // axum's default `Bytes` limit is 2 MiB, but the browser uploads up to 4 MiB chunks;
         // without this a real chunk is rejected 413 before the handler and files over ~2 MB
         // cannot be uploaded at all.

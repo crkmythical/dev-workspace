@@ -210,7 +210,9 @@ fn run_step(
             auth.master_password = password.value;
             auth.password_source = Some(password.source);
 
-            // bcrypt hash for Caddy's basic_auth (supervisord/Caddy inherit this env).
+            // bcrypt hash of the master password, exported so the auth gateway (sync-service)
+            // can verify logins against it. Set in this process's env so supervisord and its
+            // children (sync-service) inherit it. (DESKTOP_BCRYPT_HASH is the historical name.)
             let hash = caddy_password_hash(&auth.master_password);
             if hash.is_empty() {
                 eprintln!(

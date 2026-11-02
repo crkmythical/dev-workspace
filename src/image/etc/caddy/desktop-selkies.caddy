@@ -6,15 +6,13 @@
 # static client from /usr/share/selkies/web and reverse-proxies only the WebSocket.
 # The client opens <path>/websockets (plural).
 #
-# AUTH MODEL — HONEST CAVEAT: Basic Auth gates the static client (the page load), but the
-# WebSocket upgrade is NOT authenticated. Browsers do not attach basic-auth credentials to
-# JS-initiated WebSocket handshakes (a 401 there → blank "Waiting for stream..."), and Selkies on
-# :6080 has no auth of its own, so anyone who reaches :8080 can open /desktop/websockets and get
-# the live desktop stream + input WITHOUT the password. Nothing here enforces same-origin (Caddy
-# does not check Origin). This is tolerated ONLY because ingress is tunnel-only (no inbound ports,
-# upstream bound to 127.0.0.1) and the DEFAULT stack is kasmvnc, which authenticates its WS
-# natively end-to-end (see desktop-vnc.caddy). Running the selkies or "both" stack means treating
-# the desktop as reachable by anyone who reaches the tunnel until Selkies-level auth is added.
+# AUTH: both the static client AND the WebSocket are now behind the UNIFIED AUTH GATEWAY
+# (the forward_auth session gate in the main Caddyfile runs before this snippet). Selkies itself
+# has no auth of its own and none is needed here: the session cookie is required to reach either
+# /desktop/ or /desktop/websockets, and the cookie rides the WS upgrade. This closes the former
+# hole (unauthenticated WS = free desktop stream + input) as a property of the perimeter rather
+# than a per-snippet patch. Do NOT re-add a basic_auth here — it cannot gate the JS WebSocket and
+# would only add a redundant prompt on the static page.
 
 # (1) WebSocket — must come BEFORE the static handler (longer path = higher priority).
 @desktop_ws path /desktop/websockets
@@ -23,11 +21,8 @@ handle @desktop_ws {
 	reverse_proxy 127.0.0.1:6080
 }
 
-# (2) Static client — Caddy file_server serves the dashboard (Basic Auth gated).
+# (2) Static client — Caddy file_server serves the dashboard (gated upstream by the session gate).
 handle_path /desktop/* {
-	basic_auth {
-		user {$DESKTOP_BCRYPT_HASH}
-	}
 	root * /usr/share/selkies/web
 	file_server
 }

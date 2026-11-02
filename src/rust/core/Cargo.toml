@@ -18,6 +18,9 @@ aes-gcm = "0.10"
 pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 sha2 = "0.10"
 hex = "0.4"
+# Session-cookie signing for the auth gateway (core::auth::session). HMAC-SHA256 as the MAC and
+# as a PRF for the persistent-key derivation. Pure computation; same RustCrypto family as above.
+hmac = "0.12"
 
 [dev-dependencies]
 proptest = "1"

@@ -171,6 +171,20 @@ pub fn core_env_groups() -> Vec<EnvGroup> {
                         "workspace.example.com",
                     )
                 },
+                EnvVarSpec {
+                    opt_in: true,
+                    ..var(
+                        "AUTH_SESSION_PERSIST",
+                        &[
+                            "Keep browser logins across a container restart. The ingress auth gateway signs",
+                            "session cookies with a key chosen at boot: OFF (default) uses a random per-boot",
+                            "key, so a restart logs everyone out and they re-enter the master password; ON (1)",
+                            "derives the key from the master password, so sessions survive a restart. Needs a",
+                            "fixed PASSWORD (a generated one changes each boot, so it falls back to random).",
+                        ],
+                        "1",
+                    )
+                },
             ],
         },
         EnvGroup {
