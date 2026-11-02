@@ -191,6 +191,37 @@ pub const CLASH_DNS_PLACEHOLDER: &str = "{{CLASH_DNS_NAMESERVER}}";
 /// example 223.5.5.5,119.29.29.29).
 pub const DEFAULT_CLASH_DNS: &str = "https://1.1.1.1/dns-query,https://8.8.8.8/dns-query";
 
+/// Mainland-China fallback: plain-UDP domestic resolvers (AliDNS, DNSPod) that need no bootstrap
+/// and are not blocked there. What auto-detection picks when the global DoH probe fails.
+pub const DEFAULT_CLASH_DNS_CN: &str = "223.5.5.5,119.29.29.29";
+
+/// Pick the effective nameservers by precedence: a runtime override (written by `set-clash-dns`)
+/// wins, then the CLASH_DNS env var, then auto-detection. `foreign_dns_reachable` is a boot probe
+/// (is global DoH reachable?) consulted ONLY when neither of the first two is set: true keeps the
+/// global default, false — a censored network — uses the mainland-China resolvers. Blank/whitespace
+/// values count as unset so an empty override or env var does not wedge Clash.
+pub fn choose_clash_dns<'a>(
+    override_value: Option<&'a str>,
+    env_value: Option<&'a str>,
+    foreign_dns_reachable: bool,
+) -> &'a str {
+    fn nonempty(s: &str) -> Option<&str> {
+        let t = s.trim();
+        (!t.is_empty()).then_some(t)
+    }
+    if let Some(s) = override_value.and_then(nonempty) {
+        return s;
+    }
+    if let Some(s) = env_value.and_then(nonempty) {
+        return s;
+    }
+    if foreign_dns_reachable {
+        DEFAULT_CLASH_DNS
+    } else {
+        DEFAULT_CLASH_DNS_CN
+    }
+}
+
 /// Fill the template's placeholders: the subscription URL and the DNS nameserver list. Both come
 /// from user config, so each value is JSON-string-escaped (serde_json gives exactly what
 /// JSON.stringify does) and the replace is literal — `$&`/`$1` in a value are not special and a
@@ -496,5 +527,33 @@ mod tests {
         let evil = render_clash_config(&template, "u", "1.1.1.1\nrules: []");
         assert!(evil.contains(r#"    - "1.1.1.1\nrules: []""#));
         assert!(!evil.contains("\nrules: []"));
+    }
+
+    #[test]
+    fn choose_clash_dns_precedence() {
+        // Override beats env and auto-detect.
+        assert_eq!(
+            choose_clash_dns(Some("1.0.0.1"), Some("8.8.8.8"), true),
+            "1.0.0.1"
+        );
+        assert_eq!(choose_clash_dns(Some(" 1.0.0.1 "), None, false), "1.0.0.1");
+        // Env beats auto-detect when there is no override.
+        assert_eq!(choose_clash_dns(None, Some("8.8.4.4"), false), "8.8.4.4");
+        assert_eq!(
+            choose_clash_dns(Some("  "), Some("8.8.4.4"), true),
+            "8.8.4.4"
+        );
+        // Neither set → auto-detect: reachable keeps global, blocked uses domestic.
+        assert_eq!(choose_clash_dns(None, None, true), DEFAULT_CLASH_DNS);
+        assert_eq!(choose_clash_dns(None, None, false), DEFAULT_CLASH_DNS_CN);
+        // Blank override AND blank env also fall through to auto-detect.
+        assert_eq!(
+            choose_clash_dns(Some(""), Some("  "), false),
+            DEFAULT_CLASH_DNS_CN
+        );
+        assert_eq!(
+            choose_clash_dns(Some(" "), Some(""), true),
+            DEFAULT_CLASH_DNS
+        );
     }
 }

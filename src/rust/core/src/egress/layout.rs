@@ -13,6 +13,9 @@ pub const CLASH_DIR: &str = "/etc/clash";
 pub const CLASH_CONFIG_PATH: &str = "/etc/clash/config.yaml";
 pub const CLASH_TEMPLATE_PATH: &str = "/etc/clash/config.yaml.template";
 pub const CLASH_PROVIDERS_DIR: &str = "/etc/clash/providers";
+/// Runtime DNS override written by `set-clash-dns`. On the clash-config volume, so it survives a
+/// restart/recreate and takes precedence over CLASH_DNS and auto-detection at the next render.
+pub const CLASH_DNS_OVERRIDE_PATH: &str = "/etc/clash/dns.override";
 
 /// Names defined by config.yaml.template: the subscription provider and its url-test group.
 pub const CLASH_PROVIDER_NAME: &str = "subscription";

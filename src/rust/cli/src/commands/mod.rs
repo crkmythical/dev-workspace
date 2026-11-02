@@ -1,5 +1,6 @@
 pub mod backup_init;
 pub mod backup_watcher;
+pub mod clash_dns;
 pub mod desktop_install;
 pub mod desktop_start;
 pub mod desktop_stop;

@@ -73,9 +73,10 @@ pub fn run(args: &[String]) -> i32 {
     } else {
         let _ = fs::create_dir_all(CLASH_PROVIDERS_DIR);
         let template = fs::read_to_string(CLASH_TEMPLATE_PATH).unwrap_or_default();
+        let (dns, _source) = crate::commands::clash_dns::resolve_dns();
         let _ = fs::write(
             CLASH_CONFIG_PATH,
-            render_clash_config(&template, &clash_url, &config.clash_dns),
+            render_clash_config(&template, &clash_url, &dns),
         );
         println!("  ✓ 订阅配置已更新");
         cmd::ok("pkill", &["-x", "clash"]);

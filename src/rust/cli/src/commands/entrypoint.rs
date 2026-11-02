@@ -117,14 +117,15 @@ fn run_step(
             {
                 return Ok(());
             }
+            let (dns, source) = crate::commands::clash_dns::resolve_dns();
             let template = fs::read_to_string(CLASH_TEMPLATE_PATH).map_err(|e| e.to_string())?;
             let _ = fs::create_dir_all(CLASH_PROVIDERS_DIR);
             fs::write(
                 CLASH_CONFIG_PATH,
-                render_clash_config(&template, &config.clash_subscription_url, &config.clash_dns),
+                render_clash_config(&template, &config.clash_subscription_url, &dns),
             )
             .map_err(|e| e.to_string())?;
-            println!("Clash config generated from template.");
+            println!("Clash config generated from template (DNS: {dns} [{source}]).");
             Ok(())
         }
         "git-globals" => {

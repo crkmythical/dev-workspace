@@ -14,8 +14,9 @@ use sdw_core::egress::domain::{
 };
 use sdw_core::egress::firewall::egress_ruleset;
 use sdw_core::egress::layout::{
-    CLASH_AUTO_GROUP, CLASH_BIN, CLASH_CONTROLLER_PORT, CLASH_DIR, CLASH_HTTP_PORT,
-    CLASH_PROVIDER_NAME, EGRESS_NOTIFICATION_PATH, EGRESS_PROBE_URL, EGRESS_STATUS_PATH,
+    CLASH_AUTO_GROUP, CLASH_BIN, CLASH_CONFIG_PATH, CLASH_CONTROLLER_PORT, CLASH_DIR,
+    CLASH_HTTP_PORT, CLASH_PROVIDER_NAME, EGRESS_NOTIFICATION_PATH, EGRESS_PROBE_URL,
+    EGRESS_STATUS_PATH,
 };
 use sdw_core::egress::ports::EgressPorts;
 use std::os::unix::process::CommandExt;
@@ -182,6 +183,56 @@ pub fn observe_egress() -> EgressObservation {
         proxy_listening,
         probe_ok,
     }
+}
+
+/// Boot probe for DNS auto-detection: can we reach the GLOBAL DoH resolvers directly? A DoH query
+/// is sent straight to 1.1.1.1 / 8.8.8.8 (both IPs, so no name to resolve first), bypassing the
+/// Clash proxy env vars (--noproxy, since Clash may not be up yet). On a censored network the TLS
+/// to them is reset and both fail fast, so the caller falls back to domestic resolvers. true as
+/// soon as one responds.
+pub fn foreign_dns_reachable() -> bool {
+    for ip in ["1.1.1.1", "8.8.8.8"] {
+        let url = format!("https://{ip}/dns-query?name=www.cloudflare.com&type=A");
+        if cmd::ok(
+            "curl",
+            &[
+                "-fsS",
+                "--noproxy",
+                "*",
+                "--max-time",
+                "3",
+                "-H",
+                "accept: application/dns-json",
+                &url,
+                "-o",
+                "/dev/null",
+            ],
+        ) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Hot-reload Clash from its on-disk config via the controller API (a full config reload, so DNS
+/// re-initializes — no dropped process). false when the controller is not reachable (Clash not up
+/// yet); the next (re)start reads the new file regardless.
+pub fn reload_clash() -> bool {
+    let url = format!("{}/configs?force=true", controller_url());
+    let body = format!("{{\"path\":\"{CLASH_CONFIG_PATH}\"}}");
+    cmd::ok(
+        "curl",
+        &[
+            "-fsS",
+            "-X",
+            "PUT",
+            &url,
+            "-H",
+            "Content-Type: application/json",
+            "-d",
+            &body,
+        ],
+    )
 }
 
 /// The numeric uid of a system user via `id -u`. None if the user does not exist.
