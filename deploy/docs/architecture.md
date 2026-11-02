@@ -114,17 +114,28 @@ it failed) or `down` (proxy not listening). It is reported in the start-up banne
 ## Security Layers
 
 ```
-L5: E2E encryption (WebCrypto AES-256-GCM)     ← Sync file transfer
-L4: code-server password                        ← Access control
-L3: Cloudflare Tunnel (TLS)                     ← Network encryption
-L2: gocryptfs (AES-256)                         ← Disk encryption
-L1: Clash proxy (VLESS+WS+TLS)                  ← Traffic obfuscation
+L6: E2E encryption (WebCrypto AES-256-GCM)       ← Sync file transfer
+L5: gocryptfs (AES-256)                           ← Disk encryption at rest
+L4: Unified auth gateway — deny-by-default        ← Perimeter: ONE session-cookie / Cloudflare
+    (Caddy forward_auth -> sync-service)             Access-JWT check in front of every route, HTTP + WS
+L3: Backend auth (code-server / KasmVNC native)   ← Defense-in-depth behind the gate
+L2: Cloudflare Tunnel (TLS) [+ Access at edge]    ← Network encryption + optional edge zero-trust
+L1: Clash proxy (VLESS+WS+TLS)                    ← Traffic obfuscation (egress; best-effort)
 ```
+
+The gate (`deploy/docs/design-unified-auth-gateway.md`) terminates authentication once at the
+ingress: a signed session cookie (login with the master password) OR, when behind Access, the
+`Cf-Access-Jwt-Assertion` the edge injects (RS256-verified against the team JWKS). The cookie
+rides the WebSocket upgrade, so code-server, KasmVNC `/websockify` and Selkies `/desktop/websockets`
+are all covered by the same check; only `/auth/*` and the break-glass `/sync/api/destruct` are
+un-gated. Backends keep their own auth as defense-in-depth.
 
 ## Data Flow
 
 ```
-Browser → Cloudflare Tunnel → Caddy(:8080) → code-server(:8082) / sync-service(:8081)
+Browser → Cloudflare Tunnel [+ Access] → Caddy(:8080)
+        → auth gate (forward_auth → sync-service /auth/verify; deny-by-default)
+        → code-server(:8082) / sync-service(:8081) / desktops
 Proxy-aware egress → Clash(:7890) → Proxy nodes → Internet   (not enforced: see Egress)
 Vault sync → git push (via Clash) → GitHub (encrypted ciphertext)
 Realtime backup → restic (via Clash) → S3 (restic-encrypted, deduplicated snapshots)

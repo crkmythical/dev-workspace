@@ -37,6 +37,13 @@ x-workspace: &workspace-base
     - "127.0.0.1:${TUNNEL_HOST_PORT:-18080}:8080"
   restart: unless-stopped
   mem_reservation: ${MEMORY_RESERVATION:-8g}
+  # Hard caps so one instance cannot exhaust the host — important when running several ephemeral
+  # instances on one host (up.sh). Defaults keep single-instance behaviour unchanged:
+  #   MEMORY_LIMIT / CPU_LIMIT = 0 → no limit (set per instance for batch, e.g. 4g / 2)
+  #   PIDS_LIMIT = 4096 → a fork-bomb guard that normal use never reaches (-1 to disable)
+  mem_limit: ${MEMORY_LIMIT:-0}
+  cpus: ${CPU_LIMIT:-0}
+  pids_limit: ${PIDS_LIMIT:-4096}
   env_file: .env
   environment:
     - DESKTOP_RESOLUTION=${DESKTOP_RESOLUTION:-1920x1080}

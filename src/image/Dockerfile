@@ -436,12 +436,13 @@ ENV http_proxy=http://127.0.0.1:7890 \
     all_proxy=socks5h://127.0.0.1:7890 \
     no_proxy=localhost,127.0.0.0/8,172.16.0.0/12,10.0.0.0/8,169.254.0.0/16
 
-# Liveness: Caddy ingress (:8080) + code-server (:8082) both accepting TCP.
-# Assumption-free port probe (nc from netcat-openbsd). The generous
-# start-period covers Clash bootstrap + vault unlock before supervisord brings
-# the services up. For an app-level signal, swap to:
-#   CMD curl -fsS http://127.0.0.1:8080/ -o /dev/null || exit 1
+# Liveness, app-level: the Caddy ingress must actually serve the auth gate's login endpoint
+# (proves Caddy AND the always-on sync-service that backs the gate are up — /auth/login is the
+# un-gated allowlisted route, so a 200 means the whole front path works), and code-server must be
+# accepting TCP. Deliberately does NOT fail on a locked vault or degraded egress: those are
+# reported, not fatal, and the workspace is meant to run in those states. The generous start-period
+# covers Clash bootstrap + vault unlock before supervisord brings the services up.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=3 \
-  CMD nc -z 127.0.0.1 8080 && nc -z 127.0.0.1 8082 || exit 1
+  CMD curl -fsS -o /dev/null http://127.0.0.1:8080/auth/login && nc -z 127.0.0.1 8082 || exit 1
 
 ENTRYPOINT ["tini", "--", "/usr/local/bin/sdw", "entrypoint"]
