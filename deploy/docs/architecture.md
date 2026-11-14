@@ -10,6 +10,7 @@ shipped with it is wasm-bindgen's generated loader.
 ```
 src/rust/                 Cargo workspace, hexagonal runtime plus browser client
 ├── core/   (sdw-core)    Pure rules, use cases and the shared sync wire builders; no I/O
+├── host/   (sdw-host)   Typed macOS/Linux destroy, watcher, Cloudflare orchestration and services
 ├── infra/  (sdw-infra)   Adapters: gocryptfs, supervisorctl, Clash, restic, git, audit, shred, ...
 ├── cli/    (sdw, bin)    Multi-call Linux binary: commands, entrypoint and daemons
 ├── sync-service (lib)    Axum ingress/auth/sync API, linked into `sdw`
@@ -22,7 +23,9 @@ src/tests/                Shell-driven system smoke tests plus a small Playwrigh
 
 Hexagonal boundaries remain: `core` holds rules and use cases and depends on no adapter crate;
 `infra` implements core's ports; `cli`, `sync-service`, `web` and `smoke-client` are driving
-adapters. The browser and native probe both call `core::sync::client`, so the wire protocol has one
+adapters. `sdw-host` is a separate host boundary: it depends only on serde/zeroize plus the
+standard library, invokes installed Docker/cloudflared/curl/systemd tools, and never pulls the
+container runtime crates onto the host. The browser and native probe both call `core::sync::client`, so the wire protocol has one
 Rust implementation. `src/rust/sync-service/tests/parity.rs` keeps frozen compatibility vectors.
 
 ## Plugins
@@ -211,13 +214,13 @@ from a terminal inside the container:
 
 ## Host services
 
-The host side (Cloudflare Tunnel, `host-watcher`) runs as a LaunchAgent on macOS and as
-systemd user units on Linux (`deploy/linux-systemd/`). When the container reports a completed
-self-destruct, the watcher runs `destroy.sh --force --paranoid --delete-project`, which removes those very
-services. The service manager kills everything a removed service started, so the cleanup runs
-outside the watcher's service (`run_outside_service` in `deploy/scripts/host-watcher.sh`: a new
-session on macOS, a transient `systemd-run --user` unit on Linux). Run as its child it was cut
-off at the first line that removed the service, on both platforms.
+The host side is managed by `sdw-host`: Cloudflare Tunnel and the self-destruct watcher run as a
+LaunchAgent on macOS or systemd user units on Linux. When the container exposes a completed marker,
+the watcher resolves only its configured container/volume and launches `sdw-host destroy --force
+--paranoid --delete-project`. Cleanup runs in a new session on macOS or a transient
+`systemd-run --user` unit on Linux, so removing the watcher service cannot kill its own cleanup.
+Docker operations share one optional `SDW_DOCKER_CONTEXT` fail-closed guard. The `.sh` files under
+`deploy/` are compatibility launchers, not parallel policy implementations.
 
 ## Remote Desktop: Selkies vs KasmVNC
 

@@ -10,7 +10,7 @@
 
 ```bash
 # 1. 配置环境变量
-cp .env.example .env
+install -m 600 .env.example .env
 # 设置 PASSWORD（留空则自动生成）
 # 设置 CLASH_SUBSCRIPTION_URL（必填）
 
@@ -236,14 +236,11 @@ docker exec -it dev-workspace backup-init             # 初始化 restic 仓库�
 通过 Cloudflare Tunnel 暴露工作区到公网（零入站端口）：
 
 ```bash
-# 一次性配置（在宿主机执行，非容器内）
+# 一次性配置（宿主先安装 cloudflared；macOS：brew install cloudflared）
 ./deploy/scripts/setup-cloudflared.sh --hostname <hostname>   # 或在 .env 设置 TUNNEL_HOSTNAME
 
-# 启动 tunnel（LaunchAgent，开机自启 + 崩溃自动重启）
-launchctl load ~/Library/LaunchAgents/com.cloudflare.tunnel.plist
-
-# 停止 tunnel
-launchctl unload ~/Library/LaunchAgents/com.cloudflare.tunnel.plist
+# macOS 脚本会立即加载并保持 LaunchAgent；默认 TUNNEL_NAME=dev-workspace 时停止：
+launchctl unload ~/Library/LaunchAgents/com.cloudflare.tunnel.dev-workspace.plist
 
 # 从任何地方访问（<hostname> 是你自己的域名）：
 # https://<hostname>
@@ -251,7 +248,7 @@ launchctl unload ~/Library/LaunchAgents/com.cloudflare.tunnel.plist
 # https://<hostname>/desktop/    (Selkies，仅 DESKTOP_STACK=selkies|both 的镜像)
 ```
 
-`setup-cloudflared.sh` 会自动安装 cloudflared、登录 Cloudflare、创建 tunnel、配置 DNS，并在 macOS 上安装 LaunchAgent。没有默认域名，必须通过 `--hostname` 或 `.env` 指定。Linux 宿主机用 systemd 用户服务：`bash deploy/linux-systemd/install.sh --cloudflared`（见 `deploy/linux-systemd/README.md`；已在 Ubuntu 24.04 虚拟机的真实 systemd 下验证单元的安装、启动、自动重启和自毁后的清理链，未在真机和真实 Cloudflare Tunnel 上验证）。
+`setup-cloudflared.sh` 是 `sdw-host setup-tunnel` 的兼容入口：它要求宿主已有 cloudflared，随后登录、创建/复用 tunnel、配置 DNS，并写入独立的 `~/.cloudflared/sdw-<name>.yml`，不会覆盖其它 tunnel 的全局配置；macOS 同时安装并加载独立 LaunchAgent。没有默认域名，必须通过 `--hostname` 或 `.env` 指定。Linux 再运行 `bash deploy/linux-systemd/install.sh --cloudflared`。真实 Cloudflare 账户路径本轮未执行，只完成了全生命周期 mock。
 
 ## 环境变量 (.env)
 
@@ -273,6 +270,7 @@ launchctl unload ~/Library/LaunchAgents/com.cloudflare.tunnel.plist
 | REMOTE_DESTRUCT_ENABLED | 默认关闭。启用远程自毁端点 `POST /sync/api/destruct`；口令用 `destruct-passphrase` 查看 |
 | RESTIC_REPOSITORY | 设置后启用实时备份（还需 `RESTIC_PASSWORD` 与 S3 凭证）；仓库不存在时启动时自动创建。备份的是**明文**工作区，但**排除** `.credentials/`（SSH 密钥、同步口令）、`node_modules`、各类缓存/构建目录（清单见 `src/rust/core/src/backup/domain.rs` 的 `BACKUP_EXCLUSION_SET`）。**注意**：只配 restic 时 `.credentials/` 不在任何备份里——它只随加密 vault 的 git 复制（`VAULT_GIT_REPO`）走。restic 仓库是**明文**、仅由 `RESTIC_PASSWORD` 保护，自毁不删除它，要当作 vault 的一部分对待 |
 | COMPOSE_FILE | 默认不设。叠加可选的覆盖文件（AppArmor、文件型密钥、pentest），见「快速开始」里的表 |
+| SDW_DOCKER_CONTEXT | 可选宿主安全锁，例如 `colima-dev-workspace`；`sdw-host` 的 up/down/destroy/watcher 在当前 Docker context 不一致时拒绝操作 |
 | `<NAME>_FILE` | 任一密钥（PASSWORD、CLASH_SUBSCRIPTION_URL、VAULT_GIT_REPO、RESTIC_PASSWORD、AWS_*、PENTEST_VAULT_PASSWORD、CROC_PASS）都可以给成「装着它的文件的路径」，这样环境里只有路径，`docker inspect` 和各进程的 `/proc/<pid>/environ` 里没有值。`docker-compose.secrets.yml` + `make secrets-init` 是现成的做法（PASSWORD 与订阅 URL）；非空的 `<NAME>` 仍然优先，所以要把它从 `.env` 删掉；读不了的文件会让容器拒绝启动。Compose 的文件型 secret 是宿主文件的 bind mount，不是 tmpfs |
 | METRICS_ENABLED | 默认关闭。开启后 `GET /sync/api/metrics` 给出 Prometheus 文本指标（登录、网关放行/拒绝、自毁请求计数），在登录网关之后 |
 | BUILD_PROXY / BUILD_NO_PROXY | 只用于 `docker compose build`：构建步骤走的 HTTP 代理（不写进镜像）。见「在 Mac 上本机构建」 |
@@ -289,6 +287,18 @@ make smoke-build                          # 先按生产基础（Kali）另外�
 
 用法、检查清单和它证明 / 不证明什么见 [`src/tests/smoke/README.md`](src/tests/smoke/README.md)；CI 里对应 `.github/workflows/smoke.yml`（手动触发，或改动了镜像 / compose / 测试本身的 PR）。
 
+## Rust 宿主工具
+
+高风险宿主逻辑统一在 `sdw-host`：工作区销毁、self-destruct watcher、Cloudflare 命名隧道、临时实例编排、systemd 单元和文件型密钥初始化。原有 11 个 `.sh` 路径从约 970 行收缩到共 60 行，只负责定位项目和 `exec`。
+
+```bash
+make host          # 构建 src/rust/target/release/sdw-host
+make install-host  # 可选：安装到 ~/.local/bin/sdw-host
+make test-host     # 全生命周期 fake Cloudflare/Docker + 销毁范围测试
+```
+
+仓库入口在检测到 Cargo 时会增量构建当前 checkout，避免破坏性操作误用旧版本；没有 Cargo 时使用 PATH 中预安装的 `sdw-host`。复杂策略和 JSON 状态只在 Rust 中存在，Shell 仅定位项目与 `exec`。
+
 ## 维护
 
 | 命令 | 作用 |
@@ -297,7 +307,7 @@ make smoke-build                          # 先按生产基础（Kali）另外�
 | `make audit` | Cargo workspace 全部 Rust 依赖（原生运行时、WASM 和 smoke client）的已知漏洞；忽略项及理由在 `src/rust/.cargo/audit.toml` |
 | `make lint-sh` | 全部 shell 脚本过一遍 shellcheck |
 | `make install-hooks` | 每个 clone 做一次：提交前拒绝带进密钥文件，或带进 `.env` 里出现过的值 |
-| `make secrets-init` | 把 PASSWORD 和订阅地址从 `.env` 写成 `secrets/*`（0600），配合 `docker-compose.secrets.yml` |
+| `make secrets-init` | Rust `sdw-host` 把 PASSWORD 和订阅地址原子写成 `secrets/*`（0600）；输入 `.env` 也必须是 0600，缺必填项时一个文件都不改 |
 | `make env-example` | 改了 `env_schema.rs` 之后重新生成 `.env.example`（测试会在两者不一致时失败） |
 | `make purge-env-history` | 把 `.env` 从整个 git 历史里清掉。**改写历史**：默认只演习，`YES=1` 才真做，会先备份。推送或分享之前，同时要轮换里面出现过的密钥 |
 

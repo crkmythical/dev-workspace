@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Tests for destroy.sh against a fake `docker`, `cloudflared` and `gh` on the PATH: what it removes
-# (only THIS compose project's volumes), what it keeps (the checkout, unless --delete-project), and
-# that its summary is true. The script is destructive, so it is never run for real here.
-# Run: src/tests/scripts/destroy.test.sh   (needs only bash)
+# Tests for `sdw-host destroy` through the compatibility script, against fake Docker/cloudflared/gh.
+# They prove project-scoped removal, truthful summaries, credential-free argv and guarded checkout
+# deletion. No real daemon or account is touched. Needs Bash and Cargo.
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../../.." && pwd)"
+host_bin="$repo/src/rust/target/debug/sdw-host"
+cargo build --quiet --locked --manifest-path "$repo/src/rust/Cargo.toml" -p sdw-host || exit 1
 failed=0
 check() { # name expected actual
   if [ "$2" = "$3" ]; then printf '  PASS  %s\n' "$1"; else printf '  FAIL  %s\n        expected [%s]\n        got      [%s]\n' "$1" "$2" "$3"; failed=1; fi
@@ -48,6 +49,13 @@ cat >"$bin/cloudflared" <<'EOF'
 echo "cloudflared $*" >>"$FAKE_STATE/calls.log"
 exit "${FAKE_CLOUDFLARED_RC:-0}"
 EOF
+cat >"$bin/curl" <<'EOF'
+#!/usr/bin/env bash
+root="$(cd "$(dirname "$0")/.." && pwd)"
+cat >/dev/null 2>&1 || true
+echo "curl $*" >>"$root/state/calls.log"
+exit 1
+EOF
 cat >"$bin/gh" <<'EOF'
 #!/usr/bin/env bash
 echo "gh $*" >>"$FAKE_STATE/calls.log"
@@ -58,9 +66,9 @@ chmod +x "$bin"/*
 # A project directory shaped like the real one: the script, its helpers, a compose file.
 new_project() {
   rm -rf "$work/fakeproj"
-  mkdir -p "$work/fakeproj/deploy/scripts/lib"
+  mkdir -p "$work/fakeproj/deploy/scripts"
   cp "$repo/destroy.sh" "$work/fakeproj/"
-  cp "$repo/deploy/scripts/lib/env.sh" "$repo/deploy/scripts/lib/scrub.sh" "$work/fakeproj/deploy/scripts/lib/"
+  cp "$repo/deploy/scripts/sdw-host.sh" "$work/fakeproj/deploy/scripts/"
   : >"$work/fakeproj/docker-compose.yml"
   printf 'fakeproj_vault-data\nfakeproj_audit-data\nfakeproj_notmine\n' >"$state/vol.fakeproj"
   printf 'otherproj_vault-data\n' >"$state/vol.otherproj"
@@ -69,7 +77,7 @@ new_project() {
   : >"$state/calls.log"
 }
 run_destroy() { # args...  → prints the output, sets $rc
-  OUT="$(cd "$work/fakeproj" && env PATH="$bin:$PATH" FAKE_STATE="$state" HOME="$work/home" ./destroy.sh --force "$@" 2>&1)"
+  OUT="$(cd "$work/fakeproj" && env PATH="$bin:$PATH" SDW_HOST_BIN="$host_bin" FAKE_STATE="$state" HOME="$work/home" ./destroy.sh --force "$@" 2>&1)"
   rc=$?
 }
 mkdir -p "$work/home"
@@ -107,7 +115,7 @@ check "the checkout is kept so the run can be repeated, even with --delete-proje
 echo "== volumes that survive 'down'"
 # The fake 'down' empties the project's volumes; here it does not, and the backstop must finish the job.
 new_project
-OUT="$(cd "$work/fakeproj" && env PATH="$bin:$PATH" FAKE_STATE="$state" FAKE_DOWN_FAILS=1 HOME="$work/home" ./destroy.sh --force 2>&1)"
+OUT="$(cd "$work/fakeproj" && env PATH="$bin:$PATH" SDW_HOST_BIN="$host_bin" FAKE_STATE="$state" FAKE_DOWN_FAILS=1 HOME="$work/home" ./destroy.sh --force 2>&1)"
 rc=$?
 check "the backstop removes the workspace's own volumes and only those" "fakeproj_notmine" "$(cat "$state/vol.fakeproj")"
 has "… of which two were the workspace's" "$(cat "$state/calls.log")" 'volume rm fakeproj_vault-data fakeproj_audit-data'
@@ -116,19 +124,20 @@ check "exits non-zero" 1 "$rc"
 
 echo "== Docker not running"
 new_project
-OUT="$(cd "$work/fakeproj" && env PATH="$bin:$PATH" FAKE_STATE="$state" FAKE_DOCKER_DOWN=1 HOME="$work/home" ./destroy.sh --force 2>&1)"
+OUT="$(cd "$work/fakeproj" && env PATH="$bin:$PATH" SDW_HOST_BIN="$host_bin" FAKE_STATE="$state" FAKE_DOCKER_DOWN=1 HOME="$work/home" ./destroy.sh --force 2>&1)"
 rc=$?
 check "exits non-zero" 1 "$rc"
 has "it says nothing was removed" "$OUT" 'Docker is not reachable: .*NOT removed'
 
 echo "== the tunnel and the remote repo are reported as they went"
 new_project
-OUT="$(cd "$work/fakeproj" && env PATH="$bin:$PATH" FAKE_STATE="$state" FAKE_CLOUDFLARED_RC=1 HOME="$work/home" ./destroy.sh --force 2>&1)"
+OUT="$(cd "$work/fakeproj" && env PATH="$bin:$PATH" SDW_HOST_BIN="$host_bin" FAKE_STATE="$state" FAKE_CLOUDFLARED_RC=1 HOME="$work/home" ./destroy.sh --force 2>&1)"
 has "a tunnel that could not be deleted is not claimed deleted" "$OUT" "Tunnel 'dev-workspace' not deleted"
 new_project
-printf 'VAULT_GIT_REPO=owner/vault\n' >"$work/fakeproj/.env"
+printf 'VAULT_GIT_REPO=https://ghp_secret_must_not_leak@github.com/owner/vault.git\n' >"$work/fakeproj/.env"
 run_destroy --remote
 has "a remote that could not be deleted is not claimed deleted" "$OUT" '! The remote vault repo was NOT deleted'
+hasnt "the URL credential is removed from process arguments" "$(cat "$state/calls.log")" 'ghp_secret_must_not_leak'
 check "exits non-zero" 1 "$rc"
 
 if [ "$failed" -eq 0 ]; then echo "all passed"; else echo "FAILED"; fi

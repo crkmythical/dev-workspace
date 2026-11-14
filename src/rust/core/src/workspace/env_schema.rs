@@ -332,6 +332,19 @@ pub fn core_env_groups() -> Vec<EnvGroup> {
                 ),
                 EnvVarSpec {
                     opt_in: true,
+                    external: Some("sdw-host".to_string()),
+                    ..var(
+                        "SDW_DOCKER_CONTEXT",
+                        &[
+                            "Optional host safety lock for destructive and multi-instance commands.",
+                            "When set (for example colima-dev-workspace), sdw-host refuses up/down/destroy",
+                            "unless `docker context show` matches, preventing cleanup in the wrong daemon.",
+                        ],
+                        "colima-dev-workspace",
+                    )
+                },
+                EnvVarSpec {
+                    opt_in: true,
                     external: Some("docker compose".to_string()),
                     ..var(
                         "COMPOSE_FILE",
@@ -546,11 +559,11 @@ pub fn render_env_example(groups: &[EnvGroup]) -> String {
         .map(|v| v.name.as_str())
         .collect();
     let copy_line = if required.is_empty() {
-        "# Copy to `.env` and fill in. Nothing is required.".to_string()
+        "# Create `.env` with mode 0600 and fill it in. Nothing is required.".to_string()
     } else {
         let verb = if required.len() > 1 { "are" } else { "is" };
         format!(
-            "# Copy to `.env` and fill in. Only {} {verb} required.",
+            "# Create `.env` with mode 0600 and fill it in. Only {} {verb} required.",
             required.join(", ")
         )
     };

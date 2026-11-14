@@ -1,7 +1,7 @@
 # Secure Dev Workspace — Rust-first build and validation
 .PHONY: build image-export image-import test lint format check build-web web-tools env-example \
         secrets-init smoke smoke-build install-hooks update-tools check-tools purge-env-history \
-        lint-sh audit clean
+        lint-sh audit clean host install-host test-host
 
 RUST_MANIFEST := src/rust/Cargo.toml
 WASM_TARGET := wasm32-unknown-unknown
@@ -32,7 +32,7 @@ lint:
 format:
 	cargo fmt --manifest-path $(RUST_MANIFEST) --all
 
-check: lint test lint-sh
+check: lint test lint-sh test-host
 
 # One-time local prerequisites for compiling the browser UI. Docker and CI install the same pinned
 # tools themselves; this target is only for host-side development.
@@ -76,7 +76,9 @@ purge-env-history:
 	deploy/scripts/purge-env-history.sh $(if $(YES),--yes)
 
 lint-sh:
-	git ls-files -co --exclude-standard '*.sh' | xargs shellcheck -x -S warning deploy/scripts/git-hooks/pre-commit
+	@set -e; git ls-files -co --exclude-standard '*.sh' | while IFS= read -r file; do \
+		[ ! -f "$$file" ] || shellcheck -x -S warning "$$file"; \
+	done; shellcheck -x -S warning deploy/scripts/git-hooks/pre-commit
 
 audit:
 	cd src/rust && cargo audit
@@ -88,6 +90,18 @@ smoke:
 
 smoke-build:
 	src/tests/smoke/run.sh --build --services
+
+host:
+	cargo build --release --locked --manifest-path $(RUST_MANIFEST) -p sdw-host
+
+install-host: host
+	mkdir -p $(HOME)/.local/bin
+	install -m 0755 src/rust/target/release/sdw-host $(HOME)/.local/bin/sdw-host
+
+test-host:
+	cargo build --locked --manifest-path $(RUST_MANIFEST) -p sdw-host
+	bash src/tests/scripts/host-orchestration.test.sh
+	bash src/tests/scripts/destroy.test.sh
 
 clean:
 	cargo clean --manifest-path $(RUST_MANIFEST)

@@ -57,6 +57,22 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
 
+  host-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          components: clippy
+      - name: Compile host operations on macOS
+        working-directory: src/rust
+        run: cargo clippy --locked -p sdw-host -- -D warnings
+      - name: Render services without changing the runner
+        working-directory: src/rust
+        run: cargo run --locked -p sdw-host -- services --project-dir ../.. --cloudflared --host-watcher --dry-run
+
   # Known vulnerabilities in every Rust dependency used by the native runtime, browser WASM and
   # native smoke client. The policy, with a reason for each ignored advisory, is audit.toml.
   audit:
@@ -82,6 +98,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Setup Rust host tool
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
       - name: No secrets file is tracked
         run: deploy/scripts/check-tracked-secrets.sh
       - name: shellcheck
@@ -89,6 +109,6 @@ jobs:
       # The host scripts that handle secrets or delete things, against fakes (no Docker needed).
       - name: Script tests
         run: |
-          bash src/tests/scripts/orchestration-lib.test.sh
+          bash src/tests/scripts/host-orchestration.test.sh
           bash src/tests/scripts/destroy.test.sh
           bash src/tests/scripts/secrets-guard.test.sh

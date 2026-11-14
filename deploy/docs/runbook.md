@@ -3,7 +3,7 @@
 ## First-Time Setup
 
 ```bash
-cp .env.example .env          # then set CLASH_SUBSCRIPTION_URL (required) and, better, PASSWORD
+install -m 600 .env.example .env  # then set CLASH_SUBSCRIPTION_URL and, better, PASSWORD
 docker compose build          # ~5 min first time
 docker compose up -d          # creates AND unlocks the vault on first start; the banner shows the state
 ./deploy/scripts/setup-cloudflared.sh --hostname <hostname>
@@ -177,6 +177,10 @@ What it changes for the people using the workspace:
 ./destroy.sh --force --delete-project   # ... and this checkout itself (nothing deletes it unless you say so)
 ```
 
+These compatibility commands execute the typed Rust `sdw-host destroy` implementation. It locks to
+`SDW_DOCKER_CONTEXT` when configured, verifies actual Docker leftovers before deleting the checkout,
+and keeps the project/state when cleanup is incomplete.
+
 The volumes removed are the ones of THIS compose project (matched by label, not by name), so a
 second workspace on the same machine keeps its vault.
 
@@ -234,7 +238,7 @@ curl -X POST https://<hostname>/sync/api/destruct \
 ### 销毁后行为
 
 1. 容器进入 inert 模式 (`sleep infinity`)
-2. 宿主机 host-watcher 检测到 marker → 自动执行 `destroy.sh --force --paranoid --delete-project`（在监视器的服务之外运行：`--paranoid` 会卸载监视器自己的服务，作为子进程运行会被一起杀掉，清理在这一步被截断；已修复，升级后需要重启监视器）。watcher 只盯**它自己那个容器**的 destruct-state 卷（容器名取自 `WORKSPACE_CONTAINER_NAME`），同一台机器上别的工作区实例的自毁不会触发它
+2. 宿主 `sdw-host watch` 检测到 marker 后，在监视服务之外启动 `sdw-host destroy --force --paranoid --delete-project`。macOS 使用新 session，Linux 使用 transient systemd unit，所以卸载 watcher 不会截断清理。它只读取配置容器的 destruct-state 卷，并受 `SDW_DOCKER_CONTEXT` 约束。
 3. 清理: `docker compose down -v` 即可移除 inert 容器
 
 ### 安装 host-watcher

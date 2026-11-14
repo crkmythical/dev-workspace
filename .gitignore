@@ -33,7 +33,7 @@ src/image/*.tar.gz
 # Docker build cache
 .docker/
 
-# Cloudflare orchestration (PoC) — API token secrets and per-instance state, never commit
+# Cloudflare orchestration — API token secrets and typed per-instance state, never commit
 deploy/orchestration/secrets.env
 deploy/orchestration/instances/
 

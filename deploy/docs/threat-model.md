@@ -99,7 +99,7 @@ What this system does NOT promise, so nobody relies on it:
 | 信息泄露 (passphrase 正确性) | 所有失败统一返回 404 (无区分) |
 | 重放攻击 | 无状态 API，但 bcrypt 验证本身是幂等的；销毁后 inert 模式阻止重复执行 |
 | 未授权远程触发 | Cloudflare Access OAuth 前置认证 + destruct passphrase 双因素 |
-| 宿主机残留 | host-watcher 检测 marker → `destroy.sh --paranoid` (清理 Docker 缓存、shell 历史、DNS) |
+| 宿主机残留 | `sdw-host watch` 检测 marker → `sdw-host destroy --paranoid`（清理 Docker 缓存、shell 历史、DNS） |
 | 密钥派生弱点 | HKDF-SHA256 with domain-separated salt ("destruct-key-v1") |
 | 容器重启后恢复 | `completed` marker 持久化在 named volume → entrypoint 检测 → inert mode |
 | 挂载被占用 (EBUSY) | 逐级升级：`fusermount -u` → 杀掉占用挂载点的进程 → 杀掉占用整个文件系统的进程 → lazy 卸载。**绝不杀调用者自己及其祖先进程**（终端里运行 `self-destruct` 时，杀掉 shell 会挂断终端并带走调用者，密钥来不及销毁）；调用者先离开挂载点（否则 lazy 卸载后 `getcwd` 失败，后续每一步都报 ENOENT）。两种情形都在容器里复现并修复，见 `src/rust/infra/src/gocryptfs.rs` |
@@ -110,4 +110,4 @@ What this system does NOT promise, so nobody relies on it:
 - 攻击者已知 vault passphrase → 可推导 destruct passphrase (设计如此: 同一信任根)
 - 物理访问 + 已开机 + vault 已解锁 → 可直接读取明文 (与无 self-destruct 时相同)
 - Docker socket 暴露 → 可 exec 任意命令 (与无 self-destruct 时相同)
-- **host-watcher 的容器→宿主升级**：可选安装的 host-watcher 仅凭 destruct-state 卷里出现 `completed` 标记，就在宿主上运行 `destroy.sh --force --paranoid --delete-project`（删项目目录、`~/.cloudflared` 凭据、刷 DNS、洗 shell history）。标记所在的 `/var/run/self-destruct` 现在只有 root 能写，所以工作区里的代码（以 `dev` 运行，包括 code-server 被攻陷的情形）无法再诱发它；容器内取得 root 的攻击者仍可以——破坏而非窃取或执行。watcher 默认不安装（bootstrap 询问，默认否），只监视**它自己那个容器**的 destruct-state 卷；`destroy.sh` 的清理限定在该 compose 项目的卷，删除项目目录必须显式加 `--delete-project`，并有目标校验（拒绝空/`/`/`$HOME`/非项目目录）。不信任容器不被攻陷时，不要安装它
+- **host-watcher 的容器→宿主升级**：可选的 `sdw-host watch` 仅凭它所配置容器的 destruct-state 卷出现 `completed` marker，就在宿主新会话中执行 `sdw-host destroy --force --paranoid --delete-project`（删除项目目录、Cloudflare 凭据、Docker 缓存并清理历史/DNS）。marker 目录只有容器 root 可写，因此普通 `dev` 工作负载不能触发；取得容器 root 的攻击者仍能造成宿主侧破坏。watcher 默认不安装，Docker context 可用 `SDW_DOCKER_CONTEXT` 锁定；销毁按 Compose JSON 中的真实项目名和资源 label 选择卷，拒绝猜测失败的配置，实际残留会阻止 checkout 删除，删除目标也拒绝 `/`、`$HOME` 和缺少项目 marker 的目录。不信任容器 root 时不要安装 watcher

@@ -1,0 +1,15 @@
+[package]
+name = "sdw-host"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Typed macOS/Linux host orchestration and destruction for Secure Dev Workspace"
+
+[[bin]]
+name = "sdw-host"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+zeroize = { version = "1", features = ["derive"] }

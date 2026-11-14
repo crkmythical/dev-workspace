@@ -1,10 +1,9 @@
-# Rust workspace for the Secure Dev Workspace: the `sdw` multi-call binary (cli) over pure domain
-# logic (core) and tool adapters (infra), plus the tunnel-exposed sync daemon (sync-service, also
-# run as `sdw sync-service`). This is the whole runtime; the image ships no Bun. See
+# Rust workspace for the Secure Dev Workspace: container domain/adapters/runtime, browser WASM,
+# native smoke protocol client, and the cross-platform `sdw-host` orchestration binary. See
 # deploy/docs/rust-migration.md.
 [workspace]
 resolver = "2"
-members = ["cli", "core", "infra", "smoke-client", "sync-service", "web"]
+members = ["cli", "core", "host", "infra", "smoke-client", "sync-service", "web"]
 
 # One small, static binary is the point: optimise for size, strip, and abort on panic
 # (no unwinding tables). Tests run under the dev profile, so this does not affect them.

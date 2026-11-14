@@ -12,7 +12,8 @@ implemented in the Cargo workspace under `src/rust/`.
 | Auth and sync HTTP service | Rust (`sync-service`) | Axum adapter over `sdw-core` |
 | Browser sync UI | Rust (`sdw-web`) compiled to WebAssembly | Removes the duplicate TypeScript protocol and frontend build stack |
 | Native protocol smoke probe | Rust (`sdw-smoke-client`) | Exercises the exact request builders used by WASM |
-| Host install/orchestration | Bash, kept thin | Must run before the image exists and primarily composes OS tools |
+| Host destruction/orchestration | Rust (`sdw-host`) | Typed state, rollback, PID/path/context checks and secret handling |
+| Host bootstrap and OS recipes | Thin Bash | Locate/exec `sdw-host` or list platform commands before a binary exists |
 | Full-browser smoke | Small JavaScript Playwright driver | Playwright's browser-control API is the adapter; no product logic lives there |
 | Third-party runtime | Caddy, mihomo, gocryptfs, restic, code-server, desktops, supervisor | External pinned tools, not project implementation languages |
 
@@ -26,6 +27,7 @@ second application implementation.
 ```
 src/rust/
 ├── core/           Pure rules, use cases, crypto and sync request construction
+├── host/           macOS/Linux destruction, watcher, Cloudflare orchestration, services and secrets
 ├── infra/          Linux/container adapters
 ├── cli/            `sdw` multi-call executable
 ├── sync-service/   Axum ingress/auth/sync adapter, linked into `sdw`
@@ -35,7 +37,8 @@ src/rust/
 
 Dependency direction remains inward. `core` knows no browser, HTTP server or OS process. The WASM
 and native smoke adapters both use `core::sync::client`; the server consumes the corresponding
-`core::sync` parser, crypto and constants.
+`core::sync` parser, crypto and constants. `host` stays independent of container crates and uses
+only std, serde and zeroize around installed host commands.
 
 ## Browser design
 
@@ -90,6 +93,7 @@ cargo fmt --all --check
 cargo clippy --all-targets -- -D warnings
 cargo clippy -p sdw-web --target wasm32-unknown-unknown -- -D warnings
 cargo test --workspace --locked
+make test-host
 ```
 
 CI also builds the WASM artifact and asserts that wasm-bindgen emitted no `.d.ts`. The system smoke
@@ -100,13 +104,42 @@ Frozen wire vectors remain in `sync-service/testdata/` as compatibility fixtures
 mediate between two live language implementations; both sides now use Rust and the native/WASM
 end-to-end checks detect adapter errors.
 
+## Host migration assessment
+
+| Area | Difficulty | Benefit | Decision |
+|---|---:|---:|---|
+| Destructive cleanup | Medium | Very high | Rust: canonical paths, Compose JSON/labels, verified leftovers, context lock |
+| Self-destruct watcher | Medium | High | Rust: typed Docker inspect, no FIFO, checked PID/process groups, detached cleanup |
+| Ephemeral Cloudflare Access | Medium-high | Very high | Rust: API JSON, atomic resumable state, rollback after each resource |
+| Named Cloudflare tunnel | Medium | High | Rust: scoped config, strict hostname/name parsing, no unverified binary download |
+| File-secret initialization | Low | High | Rust: shared env parser, validate-before-write, atomic 0600 output |
+| systemd/LaunchAgent rendering | Low-medium | Medium | Rust: escaping and captured Docker context; shell entry only |
+| Bootstrap | Medium | Low until binaries are packaged | Keep Shell: it must work before a host binary/toolchain exists |
+| Kata/AVF installation | High | Low | Keep Shell: declarative privileged OS command recipes, little reusable policy |
+| Smoke checks | High rewrite cost | Negative | Keep Shell/Playwright: they are external black-box adapters, not product logic |
+| Tool-pin updater | High | Medium | Candidate later; independent from runtime/orchestration migration |
+
+The migrated compatibility surface fell from roughly 970 lines of host Shell to 60 lines across
+11 launchers; those launchers contain no state or parsing. Rust is more verbose in raw lines, but
+there is now one typed implementation and one error/rollback model instead of shell, jq, Python
+snippets and service-specific copies.
+
+The host Rust code is intentionally not linked into the container binary. It adds only serde and
+zeroize and continues to drive curl, Docker, cloudflared and native service managers rather than
+adding a second HTTP/container stack.
+
 ## Shell reduction policy
 
-Do not mechanically rewrite every shell file. Keep shell where it is a short composition of
-`docker`, `launchctl`, `systemctl`, `cloudflared`, `crictl` or test assertions. Move code to Rust
-when a script begins owning policy, parsing untrusted structured data, maintaining state, handling
-secrets, or duplicating rules already in `sdw-core`.
+The high-risk host policy has moved to `sdw-host`: destroy, Docker-context enforcement,
+self-destruct watcher, named tunnels, ephemeral Cloudflare Access instances, atomic rollback state,
+systemd units and file-secret initialization. Compatibility `.sh` files now locate/build the
+binary and `exec` it.
 
-The next consolidation candidate is a host-side `sdw-host` Rust binary for Cloudflare orchestration,
-Docker-context safeguards and destructive cleanup. Bootstrap must retain a minimal shell entry until
-a trusted prebuilt host binary or a required host Rust toolchain is part of the installation model.
+Do not mechanically rewrite the remaining shell files. Keep shell where it is a short list of
+platform commands: bootstrap before a host binary is available, Kata/AVF installation, and system
+smoke assertions. Move another script only when it owns policy, parses untrusted structured data,
+maintains state, handles secrets, or duplicates a Rust rule.
+
+The remaining packaging task is to publish prebuilt `sdw-host` binaries for macOS/Linux so hosts
+without Cargo do not compile on first use. Until then repository launchers incrementally build the
+current checkout when Cargo exists, or use `SDW_HOST_BIN`/an installed binary.

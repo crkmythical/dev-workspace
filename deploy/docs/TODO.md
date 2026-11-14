@@ -1,5 +1,11 @@
 # TODO
 
+> **2026-11-15 宿主 Rust 化更新**：新增 `sdw-host`，接管 destroy、self-destruct watcher、
+> 命名 tunnel、临时 Cloudflare Access 实例、systemd 单元、Docker context 安全锁和
+> secrets-init。原 Shell 路径仅保留定位项目后 `exec` 的兼容入口；Cloudflare 状态改为
+> 原子 0600 JSON，失败删除会保留状态。全生命周期 fake Cloudflare/Docker/PID 测试通过。
+> 真实 Cloudflare 账户和真实 Linux systemd 尚未在迁移后重跑。
+
 > **2026-11-14 Rust-first 更新**：浏览器同步页和协议客户端已从 TypeScript/WebCrypto 迁到
 > `src/rust/web`（Rust/WASM），原生 smoke probe 位于 `src/rust/smoke-client`，共同复用
 > `sdw-core::sync::client`。Bun、Vite、Biome、TypeScript 配置和全部维护中的 `.ts` 源码已删除。

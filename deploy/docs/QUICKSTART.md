@@ -3,6 +3,7 @@
 ## 0. 前置条件
 - **Docker**:Docker Desktop(macOS,无 AppArmor,最省心)或 Colima。建议给 Docker ≥ 12 GB 内存、≥ 100 GB 磁盘(Colima 默认的 2 CPU / 2 GiB 编译 Rust 会被 OOM 杀掉)。**必须装 buildx 插件**:没有它 `docker compose build` 会悄悄退回经典构建器,这个 Dockerfile 的 `COPY --chmod` 过不去。Mac 上用 Colima 的完整步骤(含专用 VM、国内网络、代理)见 README 的「在 Mac 上本机构建」。
 - `git`、`curl`。
+- **宿主自动化**（销毁、tunnel、临时实例、watcher）使用 Rust `sdw-host`。仓库入口会在有 Cargo 时增量构建；没有 Cargo 时先通过 `make install-host` 或提供 `SDW_HOST_BIN` 指向预编译二进制。仅执行 `docker compose up` 不需要宿主 Rust。
 - **一个 Clash 订阅地址**(`CLASH_SUBSCRIPTION_URL`,唯一必填项)。
 
 > ⚠️ Colima / Linux 且发行版带 AppArmor:Docker 默认 profile 会挡住 gocryptfs 的 FUSE 挂载,vault 会解不开(日志报 `fusermount3: mount failed: Permission denied`)。解决:在 `.env` 里取消注释 `COMPOSE_FILE=docker-compose.yml:docker-compose.apparmor.yml`。Docker Desktop(macOS)无此问题。
@@ -13,7 +14,7 @@
 
 ```bash
 # 1) 配置:只有 CLASH_SUBSCRIPTION_URL 必填;强烈建议同时设 PASSWORD
-cp .env.example .env
+install -m 600 .env.example .env
 #   编辑 .env:
 #     CLASH_SUBSCRIPTION_URL=https://你的订阅?target=clash
 #     PASSWORD=选一个强密码           # 留空=首次启动随机生成并打印在日志里
@@ -101,11 +102,10 @@ docker compose up -d
 
 ## 5. 远程访问(可选,Cloudflare Tunnel,零入站端口)
 ```bash
-# 宿主机执行(不是容器内)
+# 宿主机执行；先安装 cloudflared（macOS: brew install cloudflared）
 ./deploy/scripts/setup-cloudflared.sh --hostname workspace.example.com
-# macOS:
-launchctl load ~/Library/LaunchAgents/com.cloudflare.tunnel.plist
-# Linux: bash deploy/linux-systemd/install.sh --cloudflared
+# macOS 会自动加载独立 LaunchAgent；Linux 再执行：
+bash deploy/linux-systemd/install.sh --cloudflared
 ```
 之后从任何地方访问 `https://workspace.example.com`(及 `/vnc/`)。
 
@@ -116,7 +116,7 @@ launchctl load ~/Library/LaunchAgents/com.cloudflare.tunnel.plist
 ./bootstrap.sh --init                        # 全新 vault
 ./bootstrap.sh --vault-repo git@host:you/dev-vault.git   # 从已有加密 vault 仓库迁移
 ```
-它会:查依赖 → `cp .env.example .env` 并让你编辑 → `docker compose build` → 跑 `setup-docker.sh`/`setup-cloudflared.sh` → 迁移模式下**先把克隆来的密文放进 vault 卷**(在容器第一次启动之前;卷里已有 vault 时拒绝覆盖) → `up -d` → 问是否装 host-watcher(自毁后宿主清理)。迁移时 `.env` 里的 `PASSWORD` 必须是旧 vault 的口令。
+它会:查依赖 → 以 0600 权限从 `.env.example` 创建 `.env` 并让你编辑 → `docker compose build` → 跑 `setup-docker.sh`/`setup-cloudflared.sh` → 迁移模式下**先把克隆来的密文放进 vault 卷**(在容器第一次启动之前;卷里已有 vault 时拒绝覆盖) → `up -d` → 问是否装 host-watcher(自毁后宿主清理)。迁移时 `.env` 里的 `PASSWORD` 必须是旧 vault 的口令。
 
 ---
 
