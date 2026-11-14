@@ -26,7 +26,7 @@ pub fn run(_args: &[String]) -> i32 {
     println!("Store it in a password manager immediately.\n");
 
     // gocryptfs prompts for the passphrase on the inherited TTY.
-    if cmd::inherit("gocryptfs", &["-init", VAULT_CIPHER_DIR]) != 0 {
+    if !sdw_infra::gocryptfs::init_vault(VAULT_CIPHER_DIR, None) {
         eprintln!("gocryptfs init failed.");
         return 1;
     }

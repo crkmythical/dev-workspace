@@ -8,8 +8,9 @@ step "sync protocol, end to end"
 # on the HOST (the runtime image carries no Bun) against the published port, through Caddy into the
 # Rust sync-service. The upload still lands in the container's vault, checked below.
 REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-PW="$(dx printenv PASSWORD 2>/dev/null)"
-OUT="$(cd "$REPO_ROOT" && bun run tests/smoke/fixtures/sync_e2e.ts "http://127.0.0.1:${SMOKE_PORT:-18090}" "$PW" 2>&1)"
+# The master password is the throwaway workspace's PASSWORD (smoke.env). It is not read back from
+# the container: a workspace that takes its secrets from files has no PASSWORD in its environment.
+OUT="$(cd "$REPO_ROOT" && bun run tests/smoke/fixtures/sync_e2e.ts "http://127.0.0.1:${SMOKE_PORT:-18090}" "$SMOKE_PASSWORD" 2>&1)"
 printf '%s\n' "$OUT" | sed 's/^/  | /'
 expect_match "every protocol check passed" '^ALL SYNC CHECKS PASSED' "$OUT"
 expect_no_match "no protocol check failed" '^FAIL ' "$OUT"

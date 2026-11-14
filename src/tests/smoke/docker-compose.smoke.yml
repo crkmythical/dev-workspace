@@ -37,6 +37,13 @@ services:
     env_file: !override
       - src/tests/smoke/smoke.env
       - ${SMOKE_EXTRA_ENV:-src/tests/smoke/empty.env}
+    # The pentest plugin's capabilities. The default compose file leaves them out (the opt-in
+    # docker-compose.pentest.yml adds them), but 45-plugins exercises the plugin on every instance,
+    # so they are listed here too.
+    cap_add:
+      - SYS_CHROOT
+      - MKNOD
+      - NET_RAW
     environment:
       CLASH_SUBSCRIPTION_URL: http://${SMOKE_UPSTREAM_IP:-172.30.77.10}:8000/${SMOKE_SUB:-sub.yaml}
       TUNNEL_HOST_PORT: ${SMOKE_PORT:-18090}

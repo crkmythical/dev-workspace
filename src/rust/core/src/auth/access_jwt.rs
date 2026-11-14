@@ -73,6 +73,29 @@ struct Claims {
     exp: u64,
     #[serde(default)]
     nbf: Option<u64>,
+    /// Who Access authenticated. Informational (audit trail): the gate decides on the signature,
+    /// audience, issuer and times alone.
+    #[serde(default)]
+    email: Option<String>,
+    #[serde(default)]
+    sub: Option<String>,
+}
+
+/// The identity an accepted Access assertion carries, for the audit trail ("who").
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AccessIdentity {
+    pub email: Option<String>,
+    pub sub: Option<String>,
+}
+
+impl AccessIdentity {
+    /// One short label: the e-mail when Access sent one, else the subject, else "access".
+    pub fn label(&self) -> String {
+        self.email
+            .clone()
+            .or_else(|| self.sub.clone())
+            .unwrap_or_else(|| "access".to_string())
+    }
 }
 
 /// Verify `token` against the JWKS, the expected app AUD and team issuer at `now` (epoch seconds).
@@ -85,6 +108,17 @@ pub fn verify_access_jwt(
     expected_iss: &str,
     now: u64,
 ) -> Result<(), AccessError> {
+    verify_access_jwt_identity(token, jwks, expected_aud, expected_iss, now).map(|_| ())
+}
+
+/// Same checks as [`verify_access_jwt`], returning who the assertion is for.
+pub fn verify_access_jwt_identity(
+    token: &str,
+    jwks: &Jwks,
+    expected_aud: &str,
+    expected_iss: &str,
+    now: u64,
+) -> Result<AccessIdentity, AccessError> {
     let parts: Vec<&str> = token.split('.').collect();
     if parts.len() != 3 {
         return Err(AccessError::Malformed);
@@ -124,7 +158,10 @@ pub fn verify_access_jwt(
             return Err(AccessError::NotYetValid);
         }
     }
-    Ok(())
+    Ok(AccessIdentity {
+        email: claims.email,
+        sub: claims.sub,
+    })
 }
 
 fn decode_json<T: for<'de> Deserialize<'de>>(b64url: &str) -> Option<T> {
@@ -189,6 +226,39 @@ mod tests {
         // aud as a bare string is also accepted.
         let t2 = make_jwt(H, &format!(r#"{{"aud":"{AUD}","iss":"{ISS}","exp":5000}}"#));
         assert_eq!(verify_access_jwt(&t2, &jwks(), AUD, ISS, 1500), Ok(()));
+    }
+
+    #[test]
+    fn an_accepted_token_names_who_it_is_for() {
+        let with_email = make_jwt(
+            H,
+            &format!(
+                r#"{{"aud":["{AUD}"],"iss":"{ISS}","exp":5000,"email":"me@example.com","sub":"abc"}}"#
+            ),
+        );
+        let id = verify_access_jwt_identity(&with_email, &jwks(), AUD, ISS, 1500).unwrap();
+        assert_eq!(id.email.as_deref(), Some("me@example.com"));
+        assert_eq!(id.label(), "me@example.com");
+        // A service token carries no e-mail: the subject is the label.
+        let service = make_jwt(
+            H,
+            &format!(r#"{{"aud":["{AUD}"],"iss":"{ISS}","exp":5000,"sub":"svc-1"}}"#),
+        );
+        let id = verify_access_jwt_identity(&service, &jwks(), AUD, ISS, 1500).unwrap();
+        assert_eq!(id.label(), "svc-1");
+        // Neither: still accepted, labelled generically.
+        let t = make_jwt(H, &good_claims(5000));
+        assert_eq!(
+            verify_access_jwt_identity(&t, &jwks(), AUD, ISS, 1500)
+                .unwrap()
+                .label(),
+            "access"
+        );
+        // Identity never loosens the checks.
+        assert_eq!(
+            verify_access_jwt_identity(&with_email, &jwks(), "other", ISS, 1500),
+            Err(AccessError::WrongAudience)
+        );
     }
 
     #[test]

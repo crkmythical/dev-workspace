@@ -3,6 +3,7 @@
 //! golden vectors from the authoritative TS side, and by the shared HTTP contract
 //! in tests/smoke. See README.md.
 
+pub mod audit;
 pub mod destruct;
 pub mod features;
 pub mod list_auth;
@@ -24,12 +25,13 @@ use axum::{
 pub fn app(state: AppState) -> Router {
     use sdw_core::auth::session::{AUTH_LOGIN_PATH, AUTH_LOGOUT_PATH, AUTH_VERIFY_PATH};
     use sdw_core::sync::protocol::{
-        API_DESTRUCT, API_DOCTOR, API_DOWNLOAD, API_UPLOAD, MAX_REQUEST_BODY_BYTES,
+        API_DESTRUCT, API_DOCTOR, API_DOWNLOAD, API_METRICS, API_UPLOAD, MAX_REQUEST_BODY_BYTES,
     };
     Router::new()
         .route(API_UPLOAD, post(routes::upload::upload))
         .route(API_DOWNLOAD, get(routes::download::download))
         .route(API_DOCTOR, get(routes::doctor::doctor))
+        .route(API_METRICS, get(routes::metrics::metrics))
         .route(API_DESTRUCT, post(routes::destruct::destruct))
         // Unified auth gateway (allowlisted un-gated in Caddy; the rest sits behind /auth/verify).
         .route(
@@ -75,19 +77,24 @@ pub fn run_blocking() {
 fn spawn_jwks_refresh(access: state::AccessState) {
     tokio::spawn(async move {
         loop {
-            let have_keys = match fetch_jwks(&access.certs_url).await {
-                Some(jwks) if !jwks.keys.is_empty() => {
-                    if let Ok(mut w) = access.jwks.write() {
-                        *w = jwks;
-                    }
-                    true
-                }
-                _ => false,
-            };
+            let have_keys = refresh_jwks(&access).await;
             let delay = if have_keys { 3600 } else { 20 };
             tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
         }
     });
+}
+
+/// Fetch the team's keys and, when there are any, replace the cached ones. True when it got keys.
+pub(crate) async fn refresh_jwks(access: &state::AccessState) -> bool {
+    match fetch_jwks(&access.certs_url).await {
+        Some(jwks) if !jwks.keys.is_empty() => {
+            if let Ok(mut w) = access.jwks.write() {
+                *w = jwks;
+            }
+            true
+        }
+        _ => false,
+    }
 }
 
 /// Fetch the team JWKS with curl (so it uses the same proxy/TLS the rest of the image does, and no

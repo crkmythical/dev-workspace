@@ -17,6 +17,27 @@ pub struct VaultSpec {
     /// by default; a volume that holds a root file system needs it (tor runs as debian-tor, apt
     /// downloads as _apt, and both would get "Permission denied" without it).
     pub allow_other: bool,
+    /// Present every file in the volume as owned by this uid:gid (gocryptfs `-force_owner`), whoever
+    /// created it. The volume is mounted by root, but its files belong to an unprivileged user.
+    pub owner: Option<(u32, u32)>,
+}
+
+/// The mode of a volume's ciphertext directory. The mount's root directory takes its attributes
+/// from this directory, so the mode decides who can enter the volume as well as who can read the
+/// ciphertext (the wrapped master key in `gocryptfs.conf` among it).
+///
+/// * 0700 (root alone) for a volume whose files are shown as one user's (`owner`: the workspace,
+///   where the forced owner makes the mount root theirs, whatever the mode underneath) or that no
+///   one else may enter;
+/// * 0711 for a volume other users must reach through (`allow_other` without a forced owner: the
+///   pentest rootfs, where tor runs as `debian-tor` and apt as `_apt`). They can pass through, but
+///   not list the ciphertext, and its key files are 0400.
+pub fn cipher_dir_mode(spec: &VaultSpec) -> u32 {
+    if spec.allow_other && spec.owner.is_none() {
+        0o711
+    } else {
+        0o700
+    }
 }
 
 /// "destroyed" is terminal: the self-destruct completion marker exists.
@@ -351,6 +372,34 @@ pub const DESTROY_PHASES: &[DestroyPhase] = &[
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    fn spec_with(allow_other: bool, owner: Option<(u32, u32)>) -> VaultSpec {
+        VaultSpec {
+            id: "v".to_string(),
+            cipher_dir: "/c".to_string(),
+            mount_point: "/m".to_string(),
+            allow_other,
+            owner,
+        }
+    }
+
+    #[test]
+    fn ciphertext_is_root_only_unless_other_users_must_pass_through() {
+        // The workspace: other users allowed in the FUSE sense, but every file shown as dev's.
+        assert_eq!(cipher_dir_mode(&spec_with(true, Some((1000, 1000)))), 0o700);
+        // A volume only its mounter uses.
+        assert_eq!(cipher_dir_mode(&spec_with(false, None)), 0o700);
+        // The pentest rootfs: root-owned files that debian-tor and _apt must reach.
+        assert_eq!(cipher_dir_mode(&spec_with(true, None)), 0o711);
+        // Never readable or listable by others, whatever the volume.
+        for spec in [
+            spec_with(true, Some((1, 1))),
+            spec_with(false, None),
+            spec_with(true, None),
+        ] {
+            assert_eq!(cipher_dir_mode(&spec) & 0o077 & !0o011, 0, "{spec:?}");
+        }
+    }
 
     fn unlock(p: &str) -> VaultCommand {
         VaultCommand::Unlock {

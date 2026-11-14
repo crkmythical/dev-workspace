@@ -29,24 +29,53 @@ pub fn ensure_dirs(cipher_dir: &str, mount_point: &str) {
     let _ = fs::create_dir_all(mount_point);
 }
 
+/// scrypt cost of a NEW vault's key wrap, as log2(N): N = 2^18 where gocryptfs defaults to 2^16.
+/// The passphrase-wrapped master key sits in `gocryptfs.conf`, which is replicated with the
+/// ciphertext to the git remote, so whoever gets that file can guess the passphrase offline. Four
+/// times the work per guess costs an unlock about 0.4 s and 256 MiB of memory for that moment.
+/// An existing vault keeps its own cost; `gocryptfs -passwd -scryptn 18 /vault/cipher` raises it.
+pub const SCRYPT_LOG_N: u8 = 18;
+// Weaker than gocryptfs's own default (16) would be a regression: refuse to compile it.
+const _: () = assert!(SCRYPT_LOG_N > 16);
+
+/// The `gocryptfs -init` command line (without the program name). Pure, for testing.
+pub fn gocryptfs_init_args(cipher_dir: &str, quiet: bool) -> Vec<String> {
+    let mut args = vec!["-init".to_string()];
+    if quiet {
+        args.push("-q".to_string());
+    }
+    args.push("-scryptn".to_string());
+    args.push(SCRYPT_LOG_N.to_string());
+    args.push(cipher_dir.to_string());
+    args
+}
+
 /// Initialize a gocryptfs vault. With a passphrase it is piped (twice, init confirmation); without
 /// one gocryptfs prompts on the inherited TTY. Returns true on success.
 pub fn init_vault(cipher_dir: &str, passphrase: Option<&str>) -> bool {
     match passphrase {
         Some(p) => {
-            cmd::run_stdin(
-                "gocryptfs",
-                &["-init", "-q", cipher_dir],
-                &format!("{p}\n{p}\n"),
-            )
-            .0
+            let args = gocryptfs_init_args(cipher_dir, true);
+            let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+            cmd::run_stdin("gocryptfs", &argv, &format!("{p}\n{p}\n")).0
         }
-        None => cmd::inherit("gocryptfs", &["-init", cipher_dir]) == 0,
+        None => {
+            let args = gocryptfs_init_args(cipher_dir, false);
+            let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+            cmd::inherit("gocryptfs", &argv) == 0
+        }
     }
 }
 
-/// The gocryptfs command line for a mount. Pure, so it can be tested without FUSE.
-pub fn gocryptfs_mount_args(cipher_dir: &str, mount_point: &str, allow_other: bool) -> Vec<String> {
+/// The gocryptfs command line for a mount. Pure, so it can be tested without FUSE. `owner` makes
+/// every file show as owned by that uid:gid (`-force_owner`): the volume is mounted by root, and
+/// its files belong to the unprivileged workload user.
+pub fn gocryptfs_mount_args(
+    cipher_dir: &str,
+    mount_point: &str,
+    allow_other: bool,
+    owner: Option<(u32, u32)>,
+) -> Vec<String> {
     let mut args = vec![
         "gocryptfs".to_string(),
         "-q".to_string(),
@@ -54,6 +83,10 @@ pub fn gocryptfs_mount_args(cipher_dir: &str, mount_point: &str, allow_other: bo
     ];
     if allow_other {
         args.push("-allow_other".to_string());
+    }
+    if let Some((uid, gid)) = owner {
+        args.push("-force_owner".to_string());
+        args.push(format!("{uid}:{gid}"));
     }
     args.push(cipher_dir.to_string());
     args.push(mount_point.to_string());
@@ -66,9 +99,10 @@ pub fn mount_vault(
     mount_point: &str,
     passphrase: &str,
     allow_other: bool,
+    owner: Option<(u32, u32)>,
 ) -> MountOutcome {
     let _ = fs::create_dir_all(mount_point);
-    let args = gocryptfs_mount_args(cipher_dir, mount_point, allow_other);
+    let args = gocryptfs_mount_args(cipher_dir, mount_point, allow_other, owner);
     let argv: Vec<&str> = args[1..].iter().map(String::as_str).collect();
     let (ok, stderr) = cmd::run_stdin("gocryptfs", &argv, &format!("{passphrase}\n"));
     MountOutcome {
@@ -256,6 +290,7 @@ impl VolumeDriver for GocryptfsVolume {
             &spec.mount_point,
             passphrase,
             spec.allow_other,
+            spec.owner,
         )
     }
 
@@ -276,7 +311,7 @@ mod tests {
     #[test]
     fn mount_args_are_quiet_nonempty_and_order_preserved() {
         assert_eq!(
-            gocryptfs_mount_args("/vault/cipher", "/workspace", false),
+            gocryptfs_mount_args("/vault/cipher", "/workspace", false, None),
             [
                 "gocryptfs",
                 "-q",
@@ -288,9 +323,40 @@ mod tests {
     }
 
     #[test]
+    fn a_new_vault_gets_a_stronger_key_wrap_than_gocryptfs_defaults_to() {
+        // The default is 16; 18 is four times the work per passphrase guess.
+        assert_eq!(
+            gocryptfs_init_args("/vault/cipher", true),
+            ["-init", "-q", "-scryptn", "18", "/vault/cipher"]
+        );
+        // The interactive form differs only in letting gocryptfs talk.
+        assert_eq!(
+            gocryptfs_init_args("/pentest/cipher", false),
+            ["-init", "-scryptn", "18", "/pentest/cipher"]
+        );
+    }
+
+    #[test]
+    fn a_forced_owner_follows_allow_other() {
+        assert_eq!(
+            gocryptfs_mount_args("/vault/cipher", "/workspace", true, Some((1000, 1000))),
+            [
+                "gocryptfs",
+                "-q",
+                "-nonempty",
+                "-allow_other",
+                "-force_owner",
+                "1000:1000",
+                "/vault/cipher",
+                "/workspace"
+            ]
+        );
+    }
+
+    #[test]
     fn allow_other_is_inserted_before_the_paths() {
         assert_eq!(
-            gocryptfs_mount_args("/pentest/cipher", "/pentest/rootfs", true),
+            gocryptfs_mount_args("/pentest/cipher", "/pentest/rootfs", true, None),
             [
                 "gocryptfs",
                 "-q",

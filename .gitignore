@@ -1,6 +1,9 @@
-# Secrets
-#.env
+# Secrets: the real configuration (master password, subscription URL, tokens) never goes in git.
+# Start from .env.example; `make install-hooks` adds a guard against committing one by mistake.
+.env
 
+# File secrets for docker-compose.secrets.yml (make secrets-init)
+secrets/
 # Vault ciphertext (cloned separately)
 vault-cipher/
 
@@ -26,7 +29,6 @@ src/image/*.tar.gz
 
 # PoC / temporary files
 .poc-tmp/
-iE
 
 # Docker build cache
 .docker/
@@ -34,3 +36,6 @@ iE
 # Cloudflare orchestration (PoC) — API token secrets and per-instance state, never commit
 deploy/orchestration/secrets.env
 deploy/orchestration/instances/
+
+# A smoke check writes the rotated password here for a moment (checks/66-rotation.sh).
+src/tests/smoke/rotated-env.*

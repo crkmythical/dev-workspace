@@ -59,25 +59,62 @@ pub fn core_env_groups() -> Vec<EnvGroup> {
             }],
         },
         EnvGroup {
-            title: "EGRESS — Clash proxy (optional)".to_string(),
-            vars: vec![EnvVarSpec {
-                opt_in: true,
-                ..var(
-                    "CLASH_DNS",
-                    &[
-                        "DNS resolvers Clash itself uses to resolve proxy-node and subscription",
-                        "hostnames, comma-separated. LEAVE UNSET to auto-detect at boot: the workspace",
-                        "probes whether global DoH (1.1.1.1 / 8.8.8.8) is reachable and, on a censored",
-                        "network such as mainland China — where those are blocked and Clash would load",
-                        "ZERO nodes — switches to domestic resolvers (223.5.5.5,119.29.29.29) by itself.",
-                        "Set this to pin a specific list, e.g. CLASH_DNS=223.5.5.5,119.29.29.29.",
-                        "You can also change it at runtime from the code-server / VNC terminal with",
-                        "  set-clash-dns 223.5.5.5,119.29.29.29   (persists, no rebuild/restart)",
-                        "Plain IPs (UDP), tls:// (DoT) and https:// (DoH) entries are all accepted.",
-                    ],
-                    "https://1.1.1.1/dns-query,https://8.8.8.8/dns-query",
-                )
-            }],
+            title: "EGRESS — Clash proxy and the fail-closed firewall (optional)".to_string(),
+            vars: vec![
+                EnvVarSpec {
+                    opt_in: true,
+                    ..var(
+                        "CLASH_DNS",
+                        &[
+                            "DNS resolvers Clash itself uses to resolve proxy-node and subscription",
+                            "hostnames, comma-separated. LEAVE UNSET to auto-detect at boot: the workspace",
+                            "probes whether global DoH (1.1.1.1 / 8.8.8.8) is reachable and, on a censored",
+                            "network such as mainland China — where those are blocked and Clash would load",
+                            "ZERO nodes — switches to domestic resolvers (223.5.5.5,119.29.29.29) by itself.",
+                            "Set this to pin a specific list, e.g. CLASH_DNS=223.5.5.5,119.29.29.29.",
+                            "You can also change it at runtime from the code-server / VNC terminal with",
+                            "  set-clash-dns 223.5.5.5,119.29.29.29   (persists, no rebuild/restart)",
+                            "Plain IPs (UDP), tls:// (DoT) and https:// (DoH) entries are all accepted.",
+                        ],
+                        "https://1.1.1.1/dns-query,https://8.8.8.8/dns-query",
+                    )
+                },
+                EnvVarSpec {
+                    opt_in: true,
+                    ..var(
+                        "EGRESS_ENFORCE",
+                        &[
+                            "The fail-closed egress firewall. ON BY DEFAULT: an nftables default-DROP filter lets",
+                            "ONLY loopback, Clash's own uid and the networks in EGRESS_ALLOW_CIDRS leave the box.",
+                            "A process that ignores the proxy, speaks UDP/QUIC, runs under `noproxy` or resolves",
+                            "names itself is blocked instead of connecting with this machine's real address, and",
+                            "DNS cannot leak past Clash. ssh is sent through Clash as well. The filter needs",
+                            "CAP_NET_ADMIN (docker-compose.yml grants it); if it cannot be loaded the boot stops.",
+                            "Set 0 (or false / no / off) to run without it. Any value that is not a clear 'no'",
+                            "keeps the firewall on. To reach one network directly, list it in EGRESS_ALLOW_CIDRS",
+                            "rather than turning the firewall off.",
+                        ],
+                        "0",
+                    )
+                },
+                EnvVarSpec {
+                    opt_in: true,
+                    ..var(
+                        "EGRESS_ALLOW_CIDRS",
+                        &[
+                            "Networks the workspace may reach DIRECTLY, not through Clash, while the firewall is",
+                            "on: IPv4/IPv6 addresses or CIDR blocks, separated by commas or spaces, for example a",
+                            "LAN host or the Docker network of a database (192.168.1.0/24, 10.0.0.5). Traffic to",
+                            "them leaves with this machine's real address, so list only what must stay local.",
+                            "Blocks wider than /8 (IPv6: /16), names and malformed entries are refused, and the",
+                            "boot stops. Tools learn of the networks through no_proxy; names are not resolved for",
+                            "you (use extra_hosts in the compose file); for ssh put `ProxyCommand none` for the",
+                            "host in ~/.ssh/config. Ignored when the firewall is off.",
+                        ],
+                        "192.168.1.0/24,10.0.0.5",
+                    )
+                },
+            ],
         },
         EnvGroup {
             title: "IMAGE BUILD — used by `docker compose build`".to_string(),
@@ -114,18 +151,62 @@ pub fn core_env_groups() -> Vec<EnvGroup> {
                     &[
                         "Apt mirror host for a Kali base (the same repositories, a different host).",
                         "  http.kali.org                    the official redirector, picks one by location (default)",
-                        "  mirrors.tuna.tsinghua.edu.cn     a fast mirror inside mainland China",
+                        "  mirrors.aliyun.com               a fast mirror inside mainland China",
+                        "  mirrors.ustc.edu.cn              another one (mirrors.tuna.tsinghua.edu.cn answers 403)",
                         "The redirector can pick a very slow mirror from some networks (~14 KB/s was seen).",
                     ],
                     "http.kali.org",
                 ),
+                EnvVarSpec {
+                    opt_in: true,
+                    ..var(
+                        "BUILD_PROXY",
+                        &[
+                            "HTTP(S) proxy for the image BUILD only (empty = none). Use it where GitHub, Docker",
+                            "Hub, crates.io or npm are blocked or flaky. The build runs inside the Docker VM, so",
+                            "127.0.0.1 is the VM itself: use the address under which the VM reaches your host,",
+                            "e.g. http://192.168.5.2:1080 on Colima (the proxy must accept connections from it).",
+                            "It reaches every build step but is not stored in the image or its history. Image",
+                            "PULLS are made by the Docker daemon and need the proxy on the daemon itself.",
+                        ],
+                        "http://192.168.5.2:1080",
+                    )
+                },
+                EnvVarSpec {
+                    opt_in: true,
+                    ..var(
+                        "BUILD_NO_PROXY",
+                        &[
+                            "Hosts the build reaches directly, comma-separated, used with BUILD_PROXY. Put the",
+                            "apt mirror here when it is faster direct (default: localhost,127.0.0.0/8).",
+                        ],
+                        "localhost,127.0.0.0/8,mirrors.aliyun.com",
+                    )
+                },
+                EnvVarSpec {
+                    opt_in: true,
+                    ..var(
+                        "SDW_GH_MIRROR",
+                        &[
+                            "GitHub download mirror for the pinned third-party tools (Caddy, restic, croc, mise,",
+                            "code-server, KasmVNC, Selkies, mihomo), used only by `docker compose build`. GitHub",
+                            "release downloads are the ones that get throttled or blocked; set this to a caching",
+                            "reverse proxy and the build fetches <mirror><github-url> first, then falls back to",
+                            "GitHub itself. The pinned sha256 is still verified, so a mirror can only serve the",
+                            "exact pinned bytes — a tampered or wrong mirror is rejected, never trusted. Empty =",
+                            "straight from GitHub (default). Note the trailing slash.",
+                        ],
+                        "https://ghfast.top/",
+                    )
+                },
                 var(
                     "DESKTOP_STACK",
                     &[
                         "Remote desktop(s) to install:",
                         "  kasmvnc  KasmVNC only, at /vnc/ (default; small, builds in seconds)",
-                        "  selkies  Selkies only, at /desktop/ (H.264; ~420 MB venv, slow build layer)",
+                        "  selkies  Selkies only, at /desktop/ (H.264; a ~160 MB Python environment, slower build)",
                         "  both     Selkies and KasmVNC, in parallel",
+                        "  none     headless — no desktop, code-server only (the lean phone/AVF profile)",
                     ],
                     "kasmvnc",
                 ),
@@ -179,8 +260,8 @@ pub fn core_env_groups() -> Vec<EnvGroup> {
                             "Keep browser logins across a container restart. The ingress auth gateway signs",
                             "session cookies with a key chosen at boot: OFF (default) uses a random per-boot",
                             "key, so a restart logs everyone out and they re-enter the master password; ON (1)",
-                            "derives the key from the master password, so sessions survive a restart. Needs a",
-                            "fixed PASSWORD (a generated one changes each boot, so it falls back to random).",
+                            "keeps a random key in the container (/var/lib/sdw/session.key, root-only), so",
+                            "sessions survive a restart. The key is never derived from the password.",
                         ],
                         "1",
                     )
@@ -263,6 +344,40 @@ pub fn core_env_groups() -> Vec<EnvGroup> {
                         "docker-compose.yml:docker-compose.apparmor.yml",
                     )
                 },
+            ],
+        },
+        EnvGroup {
+            title: "WORKSPACE USER (optional)".to_string(),
+            vars: vec![EnvVarSpec {
+                opt_in: true,
+                ..var(
+                    "WORKLOAD_ENV",
+                    &[
+                        "Everything you run in the workspace (the code-server terminal, the desktops) runs as an",
+                        "unprivileged user that sees only a short list of environment variables, NOT this file's",
+                        "secrets (PASSWORD, RESTIC_*, AWS_*, CLASH_SUBSCRIPTION_URL, ...). Name here, comma",
+                        "separated, any other variable from this file that your tools should see, for example",
+                        "WORKLOAD_ENV=GITHUB_TOKEN,NPM_TOKEN. A name that is one of the workspace's own secrets",
+                        "is refused with a warning.",
+                    ],
+                    "GITHUB_TOKEN,NPM_TOKEN",
+                )
+            },
+            EnvVarSpec {
+                opt_in: true,
+                ..var(
+                    "WORKLOAD_ROOT",
+                    &[
+                        "Let the workspace user become root in its own terminal with a single `root` (or any",
+                        "`doas <cmd>`), no password. OFF by default: normally the workload user is confined and",
+                        "cannot escalate, so code you run (dependencies, tools, pentest targets) cannot turn off",
+                        "the egress firewall, read the unlocked vault or kill self-destruct. Set 1/true/yes/on",
+                        "only if you alone use this box and trust what you run. The confinement-preserving way to",
+                        "get root is `docker exec -u root` from the host instead.",
+                    ],
+                    "1",
+                )
+            },
             ],
         },
         EnvGroup {
@@ -360,8 +475,9 @@ pub fn core_env_groups() -> Vec<EnvGroup> {
                         "SYNC_ENABLED",
                         &[
                             "Browser file-sync page (/sync/) and its upload/list API.",
-                            "Enabling writes the vault passphrase to /workspace/.credentials/sync-passphrase on",
-                            "every unlock (that file is the sync key source). Disabling removes it on the next unlock.",
+                            "Enabling writes the vault passphrase to /run/sdw/sync-passphrase on every unlock",
+                            "(the sync key source). That directory is root-only and outside the vault, so code",
+                            "running in the workspace cannot read it; locking the vault removes the file.",
                         ],
                         "1",
                     )
@@ -382,18 +498,36 @@ pub fn core_env_groups() -> Vec<EnvGroup> {
                 EnvVarSpec {
                     opt_in: true,
                     ..var(
-                        "EGRESS_ENFORCE",
+                        "METRICS_ENABLED",
                         &[
-                            "Fail-closed egress. Installs an nftables default-DROP filter so ONLY loopback and",
-                            "Clash's own uid may leave the box: a process that ignores the proxy, speaks UDP/QUIC,",
-                            "or runs under `noproxy` is blocked, and DNS cannot leak past Clash. Off (default) is",
-                            "the best-effort proxy env vars only. Requires the container to hold CAP_NET_ADMIN",
-                            "(docker-compose.yml grants it); if asked for but unavailable, the boot fails closed.",
+                            "Prometheus text metrics at GET /sync/api/metrics (logins, gate decisions, self-destruct",
+                            "requests). Behind the same login gate as the rest of /sync/api/*: a scraper needs a session",
+                            "cookie or a Cloudflare Access service token. Off = 404. Audit events (who logged in or",
+                            "tried to, self-destruct calls, egress changes) are always recorded: run `audit-log`.",
                         ],
                         "1",
                     )
                 },
             ],
+        },
+        EnvGroup {
+            title: "SECRETS AS FILES — keep them out of the environment (optional)".to_string(),
+            vars: vec![EnvVarSpec {
+                opt_in: true,
+                ..var(
+                    "PASSWORD_FILE",
+                    &[
+                        "Every secret can be given as a file instead of a value: set <NAME>_FILE to the path of a",
+                        "file holding it (Docker/Compose secrets are mounted at /run/secrets/<name>). Names:",
+                        "PASSWORD, CLASH_SUBSCRIPTION_URL, VAULT_GIT_REPO, RESTIC_PASSWORD, AWS_ACCESS_KEY_ID,",
+                        "AWS_SECRET_ACCESS_KEY, PENTEST_VAULT_PASSWORD, CROC_PASS. Only the path is then in the",
+                        "environment (docker inspect, /proc/<pid>/environ); the value is read from the file when",
+                        "needed. A non-empty <NAME> still wins, so remove it from this file; an unreadable",
+                        "<NAME>_FILE stops the boot. Ready-made: docker-compose.secrets.yml and `make secrets-init`.",
+                    ],
+                    "/run/secrets/password",
+                )
+            }],
         },
     ]
 }

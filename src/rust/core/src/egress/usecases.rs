@@ -91,15 +91,6 @@ pub fn bring_up_egress<P: EgressPorts>(ports: &P, timing: EgressTiming) -> Egres
         };
         ports.log(&loaded_msg);
 
-        if let Err(e) = ports.select_auto_node() {
-            // Do not silently leave GLOBAL on its DIRECT default: a probe would still pass while
-            // traffic bypasses every node, which would read as a false "confirmed".
-            ports.log(&format!(
-                "WARNING: {e}. A 'confirmed' egress proves only that the proxy PORT reached the \
-                 target, not that traffic went through a subscription node."
-            ));
-        }
-
         // Give Clash a moment to establish its first connection before probing.
         ports.sleep(timing.settle_ms);
         probe_ok = wait_for(ports, |p| p.probe(), timing.probe);
@@ -141,7 +132,6 @@ mod tests {
         /// Attempt (1-based) at which the probe starts succeeding; NEVER = never.
         probe_ok_at_attempt: u32,
         start_throws: bool,
-        select_throws: bool,
     }
 
     impl Default for Scenario {
@@ -153,7 +143,6 @@ mod tests {
                 refresh_throws: false,
                 probe_ok_at_attempt: 1,
                 start_throws: false,
-                select_throws: false,
             }
         }
     }
@@ -226,13 +215,6 @@ mod tests {
             self.refreshed.set(true);
             Ok(())
         }
-        fn select_auto_node(&self) -> Result<(), String> {
-            self.calls.borrow_mut().push("select".to_string());
-            if self.s.select_throws {
-                return Err("controller refused".to_string());
-            }
-            Ok(())
-        }
         fn probe(&self) -> Result<bool, String> {
             let p = self.probes.get() + 1;
             self.probes.set(p);
@@ -272,18 +254,14 @@ mod tests {
                 provider_nodes: Some(12),
             }
         );
-        // The order matters: the auto group is selected before the first probe.
-        assert_eq!(
-            f.calls(),
-            ["start", "listening?", "nodes?", "select", "probe"]
-        );
+        assert_eq!(f.calls(), ["start", "listening?", "nodes?", "probe"]);
         assert_eq!(f.elapsed_ms.get(), T.settle_ms);
         assert!(f.logs().iter().any(|l| l == "Clash ready."));
         assert!(last_log(&f).contains("Egress confirmed"));
     }
 
     #[test]
-    fn a_proxy_that_never_listens_is_down_without_probing_or_selecting() {
+    fn a_proxy_that_never_listens_is_down_without_probing() {
         let f = fake(Scenario {
             listens_at_attempt: NEVER,
             ..Default::default()
@@ -293,7 +271,6 @@ mod tests {
         assert_eq!(report.provider_nodes, None);
         assert_eq!(f.count("listening?"), T.proxy_wait.attempts as usize);
         assert!(!f.calls().iter().any(|c| c == "nodes?"));
-        assert!(!f.calls().iter().any(|c| c == "select"));
         assert!(!f.calls().iter().any(|c| c == "probe"));
         // The most a dead proxy can delay a start-up: 29 gaps of one second, nothing after.
         assert_eq!(
@@ -480,16 +457,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_refused_auto_select_does_not_abort_the_bring_up() {
-        let f = fake(Scenario {
-            select_throws: true,
-            ..Default::default()
-        });
-        assert_eq!(bring_up_egress(&f, T).status, EgressStatus::Confirmed);
-        assert!(f.calls().iter().any(|c| c == "probe"));
-    }
-
     struct AlwaysThrows;
     impl EgressPorts for AlwaysThrows {
         fn start_proxy(&self) -> Result<(), String> {
@@ -502,9 +469,6 @@ mod tests {
             Err("boom".to_string())
         }
         fn refresh_provider(&self) -> Result<(), String> {
-            Err("boom".to_string())
-        }
-        fn select_auto_node(&self) -> Result<(), String> {
             Err("boom".to_string())
         }
         fn probe(&self) -> Result<bool, String> {

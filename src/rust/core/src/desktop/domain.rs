@@ -34,11 +34,13 @@ fn programs(target: DesktopTarget) -> &'static [&'static str] {
 }
 
 /// Which stacks an image contains, from the build-time marker file:
-/// "both" → [selkies, vnc]; "kasmvnc" → [vnc]; anything else → legacy selkies-only.
+/// "both" → [selkies, vnc]; "kasmvnc" → [vnc]; "none" → [] (headless, code-server only);
+/// anything else → legacy selkies-only.
 pub fn parse_stack_marker(raw: Option<&str>) -> Vec<DesktopTarget> {
     match raw.map(str::trim) {
         Some("both") => vec![DesktopTarget::Selkies, DesktopTarget::Vnc],
         Some("kasmvnc") => vec![DesktopTarget::Vnc],
+        Some("none") => vec![],
         _ => vec![DesktopTarget::Selkies],
     }
 }
@@ -150,6 +152,12 @@ mod tests {
         assert_eq!(
             parse_stack_marker(Some("nonsense")),
             vec![DesktopTarget::Selkies]
+        );
+        // "none" is the headless profile: explicitly no stacks (NOT the legacy selkies fallback).
+        assert_eq!(parse_stack_marker(Some("none")), Vec::<DesktopTarget>::new());
+        assert_eq!(
+            parse_stack_marker(Some("none\n")),
+            Vec::<DesktopTarget>::new()
         );
     }
 }

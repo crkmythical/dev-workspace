@@ -17,7 +17,7 @@ pub enum EgressStatus {
 }
 
 impl EgressStatus {
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             EgressStatus::Confirmed => "confirmed",
             EgressStatus::Degraded => "degraded",
@@ -184,6 +184,18 @@ pub fn egress_health(
 
 pub const CLASH_URL_PLACEHOLDER: &str = "{{CLASH_SUBSCRIPTION_URL}}";
 pub const CLASH_DNS_PLACEHOLDER: &str = "{{CLASH_DNS_NAMESERVER}}";
+pub const CLASH_SECRET_PLACEHOLDER: &str = "{{CLASH_CONTROLLER_SECRET}}";
+pub const CLASH_LAN_PLACEHOLDER: &str = "{{CLASH_ALLOW_LAN}}";
+
+/// Every placeholder the template must contain. A template that lacks one would render without
+/// the corresponding setting (an open controller, a Clash that ignores the subscription), so
+/// `render_clash_config` refuses it instead of producing a config that merely looks fine.
+const CLASH_PLACEHOLDERS: [&str; 4] = [
+    CLASH_URL_PLACEHOLDER,
+    CLASH_DNS_PLACEHOLDER,
+    CLASH_SECRET_PLACEHOLDER,
+    CLASH_LAN_PLACEHOLDER,
+];
 
 /// DNS resolvers Clash uses to resolve proxy-node and subscription hostnames (comma-separated).
 /// Global anycast DoH: correct and fast on most networks. Inside mainland China these are blocked
@@ -222,20 +234,87 @@ pub fn choose_clash_dns<'a>(
     }
 }
 
-/// Fill the template's placeholders: the subscription URL and the DNS nameserver list. Both come
-/// from user config, so each value is JSON-string-escaped (serde_json gives exactly what
-/// JSON.stringify does) and the replace is literal — `$&`/`$1` in a value are not special and a
-/// value cannot break out of its YAML context (a newline, quote or `#` is escaped, not honoured).
-pub fn render_clash_config(
-    template: &str,
-    subscription_url: &str,
-    dns_nameservers: &str,
-) -> String {
-    let quoted = serde_json::to_string(subscription_url).expect("a string serializes");
-    let escaped = &quoted[1..quoted.len() - 1];
-    template
-        .replace(CLASH_URL_PLACEHOLDER, escaped)
-        .replace(CLASH_DNS_PLACEHOLDER, &clash_dns_block(dns_nameservers))
+/// What differs from one rendering of the Clash template to the next.
+#[derive(Debug, Clone, Copy)]
+pub struct ClashRender<'a> {
+    pub subscription_url: &'a str,
+    /// Comma-separated nameservers (see `choose_clash_dns`).
+    pub dns_nameservers: &'a str,
+    /// Bearer token the controller on 127.0.0.1 demands. Without it any process in the container
+    /// can re-route or reconfigure Clash.
+    pub controller_secret: &'a str,
+    /// Listen on every interface rather than loopback only. The standalone client needs this for a
+    /// published container port to reach Clash; the workspace never does.
+    pub allow_lan: bool,
+}
+
+/// `s` as the inside of a double-quoted YAML scalar (JSON string escaping, which YAML accepts):
+/// a quote, backslash, `#` or line break in a value is escaped, never honoured.
+fn yaml_dq_inner(s: &str) -> String {
+    let quoted = serde_json::to_string(s).expect("a string serializes");
+    quoted[1..quoted.len() - 1].to_string()
+}
+
+/// Fill the template's placeholders in ONE pass over the template, so a value is never rescanned:
+/// a subscription URL that happens to contain another placeholder's text is not expanded, and
+/// `$&`/`$1` in a value are not special. User-supplied values are escaped for their YAML context.
+fn fill_template(template: &str, p: &ClashRender) -> String {
+    let values = [
+        (CLASH_URL_PLACEHOLDER, yaml_dq_inner(p.subscription_url)),
+        (CLASH_DNS_PLACEHOLDER, clash_dns_block(p.dns_nameservers)),
+        (CLASH_SECRET_PLACEHOLDER, yaml_dq_inner(p.controller_secret)),
+        (
+            CLASH_LAN_PLACEHOLDER,
+            if p.allow_lan { "true" } else { "false" }.to_string(),
+        ),
+    ];
+    let mut out = String::with_capacity(template.len() + 256);
+    let mut rest = template;
+    while let Some(at) = rest.find("{{") {
+        out.push_str(&rest[..at]);
+        let here = &rest[at..];
+        match values.iter().find(|(name, _)| here.starts_with(name)) {
+            Some((name, value)) => {
+                out.push_str(value);
+                rest = &here[name.len()..];
+            }
+            None => {
+                out.push_str("{{");
+                rest = &here[2..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Render the Clash config from its template. Refuses a template that lacks any placeholder, and
+/// checks the result reads back with the secret it was given, so a template edit cannot silently
+/// drop the controller secret (or the subscription) from the config.
+pub fn render_clash_config(template: &str, p: &ClashRender) -> Result<String, String> {
+    if p.controller_secret.is_empty() {
+        return Err("the controller secret is empty".to_string());
+    }
+    for placeholder in CLASH_PLACEHOLDERS {
+        if !template.contains(placeholder) {
+            return Err(format!("the Clash template has no {placeholder}"));
+        }
+    }
+    let out = fill_template(template, p);
+    if parse_controller_secret(&out).as_deref() != Some(p.controller_secret) {
+        return Err("the rendered config does not carry the controller secret".to_string());
+    }
+    Ok(out)
+}
+
+/// The controller secret of a config we rendered: the top-level `secret: "<json string>"` line.
+/// None when absent, empty or not a quoted string (which our renderer never writes).
+pub fn parse_controller_secret(config: &str) -> Option<String> {
+    let value = config
+        .lines()
+        .find_map(|line| line.strip_prefix("secret:"))?;
+    let secret: String = serde_json::from_str(value.trim()).ok()?;
+    (!secret.is_empty()).then_some(secret)
 }
 
 /// The comma-separated nameservers as an indented YAML list to drop under `nameserver:`. Each is a
@@ -444,18 +523,31 @@ mod tests {
             .contains(":7890"));
     }
 
+    /// `fill_template` with the secret and LAN flag fixed, for the tests that are about one value.
+    fn fill(template: &str, url: &str, dns: &str) -> String {
+        fill_template(
+            template,
+            &ClashRender {
+                subscription_url: url,
+                dns_nameservers: dns,
+                controller_secret: "s3cret",
+                allow_lan: false,
+            },
+        )
+    }
+
     #[test]
     fn render_clash_config_cases() {
         let dns = "223.5.5.5";
         let template =
             format!("proxy-providers:\n  subscription:\n    url: \"{CLASH_URL_PLACEHOLDER}\"\n");
         assert_eq!(
-            render_clash_config(&template, "https://sub.example/api?token=abc", dns),
+            fill(&template, "https://sub.example/api?token=abc", dns),
             "proxy-providers:\n  subscription:\n    url: \"https://sub.example/api?token=abc\"\n"
         );
 
         let twice = format!("{CLASH_URL_PLACEHOLDER} {CLASH_URL_PLACEHOLDER}");
-        assert_eq!(render_clash_config(&twice, "u", dns), "u u");
+        assert_eq!(fill(&twice, "u", dns), "u u");
 
         // A string replacement would paste the placeholder back for `$&`; ours does not.
         for url in [
@@ -465,14 +557,14 @@ mod tests {
             "https://x/$`z",
         ] {
             assert_eq!(
-                render_clash_config(&format!("url: \"{CLASH_URL_PLACEHOLDER}\""), url, dns),
+                fill(&format!("url: \"{CLASH_URL_PLACEHOLDER}\""), url, dns),
                 format!("url: \"{url}\"")
             );
         }
 
         // Escapes what would end the quoted YAML scalar.
         assert_eq!(
-            render_clash_config(
+            fill(
                 &format!("url: \"{CLASH_URL_PLACEHOLDER}\""),
                 "https://x/\"q\"\\n",
                 dns
@@ -481,12 +573,31 @@ mod tests {
         );
 
         // Keeps a url with a real line break on one line.
-        let out = render_clash_config(
+        let out = fill(
             &format!("url: \"{CLASH_URL_PLACEHOLDER}\""),
             "https://x\nevil: 1",
             dns,
         );
         assert_eq!(out.lines().count(), 1);
+    }
+
+    #[test]
+    fn a_value_is_never_rescanned_for_placeholders() {
+        // The subscription URL is user input. If it contained another placeholder's text, a
+        // sequence of replaces would expand it (here: paste the controller secret into the URL).
+        let template =
+            format!("url: \"{CLASH_URL_PLACEHOLDER}\"\nsecret: \"{CLASH_SECRET_PLACEHOLDER}\"\n");
+        let out = fill(
+            &template,
+            &format!("https://x/{CLASH_SECRET_PLACEHOLDER}"),
+            "d",
+        );
+        assert_eq!(
+            out,
+            format!("url: \"https://x/{CLASH_SECRET_PLACEHOLDER}\"\nsecret: \"s3cret\"\n")
+        );
+        // A lone `{{` that is not one of ours passes through untouched.
+        assert_eq!(fill("a {{ b }} {{", "u", "d"), "a {{ b }} {{");
     }
 
     #[test]
@@ -496,23 +607,23 @@ mod tests {
         // Comma-separated nameservers become an indented, quoted YAML list; surrounding
         // whitespace is trimmed and blank entries dropped.
         assert_eq!(
-            render_clash_config(&template, "u", "223.5.5.5, 119.29.29.29"),
+            fill(&template, "u", "223.5.5.5, 119.29.29.29"),
             "dns:\n  nameserver:\n    - \"223.5.5.5\"\n    - \"119.29.29.29\"\n"
         );
         assert_eq!(
-            render_clash_config(&template, "u", "  ,, 1.1.1.1 ,"),
+            fill(&template, "u", "  ,, 1.1.1.1 ,"),
             "dns:\n  nameserver:\n    - \"1.1.1.1\"\n"
         );
 
         // DoH/DoT forms (with `#` params) survive intact inside the quoted scalar.
         assert_eq!(
-            render_clash_config(&template, "u", "https://doh.pub/dns-query#h3=true"),
+            fill(&template, "u", "https://doh.pub/dns-query#h3=true"),
             "dns:\n  nameserver:\n    - \"https://doh.pub/dns-query#h3=true\"\n"
         );
 
         // An empty (or all-blank) list falls back to the global default, never an empty list.
         for empty in ["", "   ", " , , "] {
-            let out = render_clash_config(&template, "u", empty);
+            let out = fill(&template, "u", empty);
             assert!(
                 out.contains("    - \"https://1.1.1.1/dns-query\""),
                 "{empty:?}"
@@ -524,9 +635,117 @@ mod tests {
         }
 
         // A nameserver cannot break out of the list: a newline/quote is escaped, not honoured.
-        let evil = render_clash_config(&template, "u", "1.1.1.1\nrules: []");
+        let evil = fill(&template, "u", "1.1.1.1\nrules: []");
         assert!(evil.contains(r#"    - "1.1.1.1\nrules: []""#));
         assert!(!evil.contains("\nrules: []"));
+    }
+
+    fn params<'a>(url: &'a str, secret: &'a str, allow_lan: bool) -> ClashRender<'a> {
+        ClashRender {
+            subscription_url: url,
+            dns_nameservers: "223.5.5.5",
+            controller_secret: secret,
+            allow_lan,
+        }
+    }
+
+    /// A template with every placeholder, the shape of the shipped one.
+    fn full_template() -> String {
+        format!(
+            "allow-lan: {CLASH_LAN_PLACEHOLDER}\nsecret: \"{CLASH_SECRET_PLACEHOLDER}\"\n\
+             dns:\n  nameserver:\n{CLASH_DNS_PLACEHOLDER}\nurl: \"{CLASH_URL_PLACEHOLDER}\"\n"
+        )
+    }
+
+    #[test]
+    fn render_fills_every_placeholder_and_the_secret_reads_back() {
+        let out = render_clash_config(&full_template(), &params("https://sub/x", "abc123", true))
+            .unwrap();
+        assert!(out.contains("allow-lan: true\n"));
+        assert!(out.contains("url: \"https://sub/x\"\n"));
+        assert!(out.contains("    - \"223.5.5.5\""));
+        assert!(!out.contains("{{"));
+        assert_eq!(parse_controller_secret(&out).as_deref(), Some("abc123"));
+
+        let closed = render_clash_config(&full_template(), &params("u", "abc123", false)).unwrap();
+        assert!(closed.contains("allow-lan: false\n"));
+    }
+
+    #[test]
+    fn a_template_missing_a_placeholder_is_refused() {
+        // Each placeholder in turn removed: the result would silently lack that setting.
+        for missing in CLASH_PLACEHOLDERS {
+            let template = full_template().replace(missing, "x");
+            let err = render_clash_config(&template, &params("u", "abc123", false)).unwrap_err();
+            assert!(err.contains(missing), "{err}");
+        }
+        // An empty secret would render `secret: ""`, which means no authentication.
+        assert!(render_clash_config(&full_template(), &params("u", "", false)).is_err());
+    }
+
+    #[test]
+    fn the_secret_survives_a_hostile_value_and_reads_back_exactly() {
+        // A secret with quote, backslash and a line break still round-trips through the file.
+        let secret = "a\"b\\c\nd";
+        let out = render_clash_config(&full_template(), &params("u", secret, false)).unwrap();
+        assert_eq!(parse_controller_secret(&out).as_deref(), Some(secret));
+        assert_eq!(out.lines().filter(|l| l.starts_with("secret:")).count(), 1);
+    }
+
+    #[test]
+    fn parse_controller_secret_cases() {
+        assert_eq!(
+            parse_controller_secret("a: 1\nsecret: \"xyz\"\nb: 2\n").as_deref(),
+            Some("xyz")
+        );
+        // Only the top-level key counts; an indented one belongs to something else.
+        assert_eq!(parse_controller_secret("x:\n  secret: \"nested\"\n"), None);
+        // An empty, unquoted or absent secret is no secret.
+        assert_eq!(parse_controller_secret("secret: \"\"\n"), None);
+        assert_eq!(parse_controller_secret("secret: bare\n"), None);
+        assert_eq!(parse_controller_secret("a: 1\n"), None);
+        assert_eq!(parse_controller_secret(""), None);
+    }
+
+    /// The template that ships in the image: renders with every placeholder consumed and carries
+    /// the secret. (Whether Clash accepts the result is the smoke suite's question.)
+    const SHIPPED_TEMPLATE: &str =
+        include_str!("../../../../image/share/clash/config.yaml.template");
+
+    #[test]
+    fn the_shipped_template_renders_completely() {
+        let out = render_clash_config(
+            SHIPPED_TEMPLATE,
+            &ClashRender {
+                subscription_url: "https://sub.example/api?token=abc",
+                dns_nameservers: "223.5.5.5,119.29.29.29",
+                controller_secret: "0123456789abcdef",
+                allow_lan: false,
+            },
+        )
+        .unwrap();
+        assert!(!out.contains("{{"), "an unfilled placeholder is left");
+        assert_eq!(
+            parse_controller_secret(&out).as_deref(),
+            Some("0123456789abcdef")
+        );
+        assert!(out.contains("\nallow-lan: false\n"));
+        assert!(out.contains("\nexternal-controller: 127.0.0.1:9090\n"));
+        assert!(out.contains("url: \"https://sub.example/api?token=abc\"\n"));
+        // The controller stays on loopback even when the proxy ports are opened up.
+        let lan =
+            render_clash_config(SHIPPED_TEMPLATE, &params("u", "0123456789abcdef", true)).unwrap();
+        assert!(lan.contains("\nallow-lan: true\n"));
+        assert!(lan.contains("\nexternal-controller: 127.0.0.1:9090\n"));
+        // The names the rest of the code looks up (layout.rs) are defined by the template.
+        assert!(out.contains("\n  subscription:\n"));
+        assert!(out.contains("name: auto-select\n"));
+        // An empty subscription must end in REJECT, not in the DIRECT an empty group falls back to.
+        assert!(out.contains("proxies:\n      - REJECT\n    include-all-providers: true\n"));
+        // Routing is declared, not selected at run time: a `global` mode would send everything
+        // DIRECT until something picked the auto-select group.
+        assert!(out.contains("\nmode: rule\n"));
+        assert!(out.contains("\n  - MATCH,auto-select\n"));
     }
 
     #[test]

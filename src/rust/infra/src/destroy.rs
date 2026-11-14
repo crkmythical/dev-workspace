@@ -7,12 +7,15 @@
 
 use crate::cmd;
 use crate::shred::FileShredder;
+use sdw_core::auth::session::SESSION_KEY_PATH;
 use sdw_core::egress::layout::CLASH_CONFIG_PATH;
 use sdw_core::shared::layout::CREDENTIALS_DIR;
+use sdw_core::sync::layout::SYNC_PASSPHRASE_PATH;
 use sdw_core::vault::destruct::{
     DESTRUCT_COMPLETED_PATH, DESTRUCT_KEY_HASH_PATH, DESTRUCT_STATE_DIR,
 };
 use sdw_core::vault::ports::{DestroyEffects, RemoteRepoResult, Shredder};
+use sdw_core::workspace::workload::GENERATED_PASSWORD_PATH;
 use std::fs;
 use std::path::Path;
 
@@ -77,7 +80,20 @@ impl DestroyEffects for ShellDestroyEffects {
     }
 
     fn scrub_credentials(&self) -> Result<(), String> {
-        let clash = FileShredder.shred(CLASH_CONFIG_PATH, 3);
+        // Everything outside the vault that holds a secret: the Clash config (subscription URL), the
+        // sync key source (the vault passphrase), a saved generated password, the session key.
+        // (Every one is tried even if an earlier one fails: collect first, then judge.)
+        let clash = [
+            CLASH_CONFIG_PATH,
+            SYNC_PASSPHRASE_PATH,
+            GENERATED_PASSWORD_PATH,
+            SESSION_KEY_PATH,
+        ]
+        .iter()
+        .map(|path| FileShredder.shred(path, 3))
+        .collect::<Vec<_>>()
+        .into_iter()
+        .all(|shredded| shredded);
         let creds = cmd::ok(
             "rm",
             &[

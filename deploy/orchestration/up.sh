@@ -13,9 +13,10 @@
 # the team domain and the app's AUD, and this script passes them to the container as ACCESS_* so the
 # gate accepts the Access session. Without CF_TEAM_DOMAIN the instance still comes up, but the
 # workspace gate asks for its own login after Access.
-# shellcheck disable=SC1090,SC1091  # instances/<id>.env is written by provision.sh at runtime
+# shellcheck disable=SC1091  # lib.sh and instances/<id>.env are resolved at runtime
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
+. "$here/lib.sh"
 root="$(cd "$here/../.." && pwd)"
 id="${1:?usage: up.sh <id> [origin_port]}"
 port="${2:-}"
@@ -30,9 +31,18 @@ fi
 
 # 1) The Cloudflare edge: tunnel, DNS, Access app + policies, service token, connector.
 bash "$here/provision.sh" "$id" "$port"
-
+# If the container then fails to come up, do not leave a tunnel, DNS record, Access app and
+# service token at the edge that point at nothing: take it all down again.
+ok=0
+cleanup_on_failure() {
+  [ "$ok" = 1 ] && return 0
+  echo "up: the container did not start; tearing the edge down again" >&2
+  docker compose -p "ws-$id" -f "$root/docker-compose.yml" -f "$root/docker-compose.apparmor.yml" down -v >/dev/null 2>&1 || true
+  bash "$here/teardown.sh" "$id" || true
+}
+trap cleanup_on_failure EXIT
 # 2) Load what it recorded (FQDN, APP_AUD, TEAM_DOMAIN).
-set -a; . "$here/instances/$id.env"; set +a
+load_env "$here/instances/$id.env"
 
 # 3) The container, Access-wired for single-sign-on, isolated per instance.
 sso="off (set CF_TEAM_DOMAIN in secrets.env to enable)"
@@ -41,7 +51,7 @@ ACCESS_AUD="${APP_AUD:-}" ACCESS_TEAM_DOMAIN="${TEAM_DOMAIN:-}" \
 TUNNEL_HOST_PORT="$port" WORKSPACE_CONTAINER_NAME="ws-$id" \
   docker compose -p "ws-$id" \
     -f "$root/docker-compose.yml" -f "$root/docker-compose.apparmor.yml" up -d
-
+ok=1
 echo
 echo "== $id up: https://${FQDN}/   (origin 127.0.0.1:${port}, container ws-${id})"
 echo "   gate single-sign-on behind Access: ${sso}"

@@ -12,20 +12,32 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # scripts live under deploy/, so the project root is two levels up, not one.
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-CONTAINER="dev-workspace"
+# shellcheck source=lib/env.sh
+source "$SCRIPT_DIR/lib/env.sh"
+# The container this watcher guards is the one docker-compose.yml names (WORKSPACE_CONTAINER_NAME).
+CONTAINER="$(env_value WORKSPACE_CONTAINER_NAME dev-workspace)"
 PLIST_NAME="com.dev-workspace.host-watcher"
 PLIST_PATH="$HOME/Library/LaunchAgents/${PLIST_NAME}.plist"
 
 command -v docker &>/dev/null || { echo "docker not found"; exit 1; }
 
+# The destruct-state volume of THIS workspace: the one mounted by the container this watcher guards.
+# (Matching any volume called destruct-state would also pick up another instance's, or another
+# project's, and run the destructive cleanup because THAT one self-destructed.)
+destruct_volume() {
+  docker inspect -f '{{range .Mounts}}{{if eq .Destination "/var/run/self-destruct"}}{{.Name}}{{end}}{{end}}' \
+    "$CONTAINER" 2>/dev/null
+}
+
 check_destruct() {
-  # Find the destruct-state volume (handles any docker compose project name)
   local vol
-  vol=$(docker volume ls --filter "name=destruct-state" --format '{{.Name}}' | head -1)
-  if [ -z "$vol" ]; then
-    return 1
-  fi
-  docker run --rm -v "${vol}:/s" alpine test -f /s/completed 2>/dev/null
+  vol="$(destruct_volume)"
+  [ -n "$vol" ] || return 1
+  # Read the marker with the workspace image itself (no other image to pull): docker run on a
+  # stopped container's volume. The image is the container's own.
+  local image
+  image="$(docker inspect -f '{{.Config.Image}}' "$CONTAINER" 2>/dev/null)" || return 1
+  docker run --rm --entrypoint test -v "${vol}:/s:ro" "$image" -f /s/completed 2>/dev/null
 }
 
 # destroy.sh --paranoid removes the host services, this watcher's included (launchctl unload,
@@ -50,7 +62,8 @@ run_outside_service() {
 
 do_cleanup() {
   echo "[$(date -Iseconds)] Self-destruct confirmed. Running host cleanup..."
-  run_outside_service bash "${PROJECT_DIR}/destroy.sh" --force --paranoid
+  # A self-destruct means no traces: the host cleanup also removes this checkout.
+  run_outside_service bash "${PROJECT_DIR}/destroy.sh" --force --paranoid --delete-project
 }
 
 daemon_mode() {
@@ -87,6 +100,10 @@ install_agent() {
     exit 1
   fi
   mkdir -p "$HOME/Library/LaunchAgents"
+  # launchd starts the job with a bare PATH (/usr/bin:/bin:/usr/sbin:/sbin), which has neither
+  # docker (Docker Desktop, Homebrew, Colima) nor cloudflared. Give it the PATH, and the Docker
+  # context, this was installed from.
+  local docker_context="${DOCKER_CONTEXT:-}"
   cat > "$PLIST_PATH" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -100,6 +117,13 @@ install_agent() {
   </array>
   <key>WorkingDirectory</key>
   <string>${PROJECT_DIR}</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>${PATH}</string>
+    <key>DOCKER_CONTEXT</key>
+    <string>${docker_context}</string>
+  </dict>
   <key>KeepAlive</key>
   <true/>
   <key>RunAtLoad</key>

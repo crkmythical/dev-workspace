@@ -7,16 +7,15 @@
 
 use crate::commands::system_env;
 use crate::prompt::prompt_line;
-use sdw_core::egress::domain::{
-    describe_egress, render_clash_config, EgressStatus, DEFAULT_EGRESS_TIMING,
-};
-use sdw_core::egress::layout::{CLASH_CONFIG_PATH, CLASH_PROVIDERS_DIR, CLASH_TEMPLATE_PATH};
+use sdw_core::egress::domain::{describe_egress, EgressStatus, DEFAULT_EGRESS_TIMING};
 use sdw_core::egress::usecases::bring_up_egress;
 use sdw_core::vault::domain::{VAULT_GITATTRIBUTES, VAULT_GITIGNORE};
 use sdw_core::vault::layout::VAULT_CIPHER_DIR;
 use sdw_core::workspace::config::load_config;
+use sdw_infra::clash::{write_config, ConfigOptions, SecretPolicy};
 use sdw_infra::cmd;
-use sdw_infra::egress::clash_egress_ports;
+use sdw_infra::egress::{clash_egress_ports, prepare_clash_dir};
+use sdw_infra::gocryptfs::init_vault;
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
@@ -68,27 +67,34 @@ pub fn run(args: &[String]) -> i32 {
     }
     if clash_url.is_empty() {
         println!("  跳过 — 设置 CLASH_SUBSCRIPTION_URL，或使用 --clash-url");
-    } else if !Path::new(CLASH_TEMPLATE_PATH).exists() {
-        println!("  ✗ 找不到 Clash 模板 {CLASH_TEMPLATE_PATH}");
     } else {
-        let _ = fs::create_dir_all(CLASH_PROVIDERS_DIR);
-        let template = fs::read_to_string(CLASH_TEMPLATE_PATH).unwrap_or_default();
         let (dns, _source) = crate::commands::clash_dns::resolve_dns();
-        let _ = fs::write(
-            CLASH_CONFIG_PATH,
-            render_clash_config(&template, &clash_url, &dns),
-        );
-        println!("  ✓ 订阅配置已更新");
-        cmd::ok("pkill", &["-x", "clash"]);
-        std::thread::sleep(Duration::from_millis(1000));
-        let report = bring_up_egress(
-            &clash_egress_ports(|_: &str| {}, None),
-            DEFAULT_EGRESS_TIMING,
-        );
-        if report.status == EgressStatus::Confirmed {
-            println!("  ✓ 代理连接正常");
-        } else {
-            println!("  ⚠ 代理已启动，出口未确认: {}", describe_egress(&report));
+        match write_config(&ConfigOptions {
+            subscription_url: &clash_url,
+            dns_nameservers: &dns,
+            allow_lan: false,
+            // Clash is restarted just below, but keeping the secret costs nothing and leaves the
+            // controller and the file agreeing if that restart fails.
+            secret: SecretPolicy::Keep,
+        }) {
+            Err(e) => println!("  ✗ {e}"),
+            Ok(()) => {
+                println!("  ✓ 订阅配置已更新");
+                cmd::ok("pkill", &["-x", "clash"]);
+                std::thread::sleep(Duration::from_millis(1000));
+                // Clash runs as its own user (as at boot): restarting it as root here would leave
+                // root-owned files in its directory that the unprivileged watcher could not replace.
+                let clash_uid = prepare_clash_dir();
+                let report = bring_up_egress(
+                    &clash_egress_ports(|_: &str| {}, clash_uid),
+                    DEFAULT_EGRESS_TIMING,
+                );
+                if report.status == EgressStatus::Confirmed {
+                    println!("  ✓ 代理连接正常");
+                } else {
+                    println!("  ⚠ 代理已启动，出口未确认: {}", describe_egress(&report));
+                }
+            }
         }
     }
 
@@ -108,12 +114,7 @@ pub fn run(args: &[String]) -> i32 {
             // prompts otherwise.
             match (is_auto, config.password.as_deref()) {
                 (true, Some(pw)) => {
-                    let ok = cmd::run_stdin(
-                        "gocryptfs",
-                        &["-init", "-q", VAULT_CIPHER_DIR],
-                        &format!("{pw}\n{pw}\n"),
-                    )
-                    .0;
+                    let ok = init_vault(VAULT_CIPHER_DIR, Some(pw));
                     println!(
                         "{}",
                         if ok {
@@ -124,7 +125,7 @@ pub fn run(args: &[String]) -> i32 {
                     );
                 }
                 _ => {
-                    if cmd::inherit("gocryptfs", &["-init", VAULT_CIPHER_DIR]) == 0 {
+                    if init_vault(VAULT_CIPHER_DIR, None) {
                         println!("  ✓ Vault 初始化完成");
                     }
                 }

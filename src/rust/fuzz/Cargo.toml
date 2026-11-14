@@ -1,8 +1,9 @@
 # Coverage-guided fuzz targets (cargo-fuzz / libFuzzer). Detached from the main workspace via the
 # empty [workspace] table below, because libfuzzer-sys needs a NIGHTLY toolchain the project does
-# not otherwise use — so `cargo test --workspace` never tries to build this crate. The same two
-# parsers are fuzzed continuously by proptest in the stable gate (core::sync::wire,
-# core::sync::path_safety); these targets are for a deeper, coverage-guided campaign. See README.
+# not otherwise use — so `cargo test --workspace` never tries to build this crate. The same parsers
+# are fuzzed continuously by proptest in the stable gate (core::sync::wire, core::sync::path_safety,
+# core::auth, core::egress::allowlist); these targets are for a deeper, coverage-guided campaign,
+# which .github/workflows/fuzz.yml runs on a schedule. See README.
 [package]
 name = "sdw-fuzz"
 version = "0.0.0"
@@ -26,6 +27,34 @@ bench = false
 [[bin]]
 name = "check_relative_path"
 path = "fuzz_targets/check_relative_path.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "verify_session"
+path = "fuzz_targets/verify_session.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "verify_access_jwt"
+path = "fuzz_targets/verify_access_jwt.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "origin_matches_host"
+path = "fuzz_targets/origin_matches_host.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_allow_list"
+path = "fuzz_targets/parse_allow_list.rs"
 test = false
 doc = false
 bench = false

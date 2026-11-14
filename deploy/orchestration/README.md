@@ -49,6 +49,14 @@ container yourself on `127.0.0.1:<port>`) and `teardown.sh <id>` (edge only).
   it a short TTL, delete it when done.
 - `secrets.env` and `instances/` (per-instance state, incl. the tunnel token and service-token
   secret, `chmod 600`) are gitignored; the scripts never echo secrets.
+- Secrets stay off command lines, where any local process can read them: `lib.sh` reads
+  `secrets.env` line by line (it is not sourced, so nothing in it runs, and nothing is exported to
+  child processes); the API token reaches `curl` through a mode-0600 config file that is removed on
+  exit, and the tunnel token reaches `cloudflared` through its `TUNNEL_TOKEN` environment variable,
+  not `--token`. `src/tests/scripts/orchestration-lib.test.sh` checks the parsing, including values
+  with `$`, quotes and spaces.
+- `up.sh` tears the edge down again if starting the container fails, so a failed `up` leaves no
+  tunnel, DNS record or Access application behind.
 
 ## Verified (live, against a real account)
 

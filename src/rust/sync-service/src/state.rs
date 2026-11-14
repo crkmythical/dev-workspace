@@ -5,6 +5,7 @@
 //! TS server). Paths and the destruct trigger are injected through `AppConfig` so
 //! the whole surface runs against a temp dir with a fake trigger in tests.
 
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use sdw_core::sync::crypto::derive_key;
@@ -16,9 +17,14 @@ use sdw_core::vault::destruct::{
     DESTRUCT_RATE_LIMIT_WINDOW_MS,
 };
 
+use sdw_core::audit::{AuditSink, AUDIT_LOG_PATH};
 use sdw_core::auth::access_jwt::Jwks;
-use sdw_core::auth::session::{derive_session_key_from_password, DEFAULT_SESSION_TTL_SECS};
+use sdw_core::auth::session::{
+    DEFAULT_SESSION_TTL_SECS, LOGIN_RATE_LIMIT_GLOBAL, LOGIN_RATE_LIMIT_PER_KEY,
+    LOGIN_RATE_LIMIT_WINDOW_MS, SESSION_KEY_PATH,
+};
 
+use crate::audit::{Auditor, Metrics};
 use crate::destruct::{DestructTrigger, SpawnSelfDestruct};
 use crate::features::Features;
 use crate::store::Dirs;
@@ -28,7 +34,7 @@ use crate::store::Dirs;
 #[derive(Clone)]
 pub struct AuthState {
     /// HMAC key for session cookies: 32 random bytes per boot by default (sessions end on
-    /// restart), or derived from the master password when AUTH_SESSION_PERSIST is set.
+    /// restart), or a random key kept in SESSION_KEY_PATH when AUTH_SESSION_PERSIST is set.
     pub session_key: Arc<[u8; 32]>,
     /// bcrypt hash of the master password (Caddy's DESKTOP_BCRYPT_HASH). None → no password can
     /// authenticate and every login is rejected (fail-closed).
@@ -48,23 +54,43 @@ pub struct AccessState {
     pub issuer: Arc<str>,
     pub certs_url: Arc<str>,
     pub jwks: Arc<RwLock<Jwks>>,
+    /// When the keys were last fetched because an assertion named a key we do not have (ms since
+    /// the epoch; 0 = never). See [`AccessState::claim_refetch`].
+    pub last_forced_refetch_ms: Arc<AtomicI64>,
+}
+
+/// An assertion signed by a key the cached JWKS lacks is the normal sign of Cloudflare rotating its
+/// signing keys. It earns one fetch, at most this often, so a stream of forged key ids cannot make
+/// the gate fetch without limit.
+pub const FORCED_REFETCH_MIN_INTERVAL_MS: i64 = 60_000;
+
+impl AccessState {
+    /// Whether the caller may fetch the keys now because of an unknown key id. True for at most one
+    /// caller per [`FORCED_REFETCH_MIN_INTERVAL_MS`]; the others go on with the keys they have.
+    pub fn claim_refetch(&self, now_ms: i64) -> bool {
+        let last = self.last_forced_refetch_ms.load(Ordering::Relaxed);
+        now_ms.saturating_sub(last) >= FORCED_REFETCH_MIN_INTERVAL_MS
+            && self
+                .last_forced_refetch_ms
+                .compare_exchange(last, now_ms, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+    }
 }
 
 impl AuthState {
     /// Production wiring from the environment (inherited through supervisord from the entrypoint).
     pub fn from_env() -> Self {
         let persist = is_on(std::env::var("AUTH_SESSION_PERSIST").ok().as_deref());
-        let password = std::env::var("PASSWORD").ok().filter(|s| !s.is_empty());
-        let session_key = match (persist, password.as_deref()) {
-            (true, Some(p)) => derive_session_key_from_password(p),
-            (true, None) => {
-                eprintln!(
-                    "auth: AUTH_SESSION_PERSIST is set but PASSWORD is empty; using a random \
-                     per-boot key (a generated password changes each boot anyway)"
-                );
-                random_key()
-            }
-            _ => random_key(),
+        // Sessions survive a restart only when asked, and then through a random key on disk: a key
+        // derived from the password would let a seen cookie be used to guess the password offline.
+        let session_key = if persist {
+            sdw_infra::secrets::persistent_key(std::path::Path::new(SESSION_KEY_PATH))
+                .unwrap_or_else(|e| {
+                    eprintln!("auth: cannot keep a session key ({e}); using a random per-boot key");
+                    random_key()
+                })
+        } else {
+            random_key()
         };
         let password_hash = std::env::var("DESKTOP_BCRYPT_HASH")
             .ok()
@@ -99,6 +125,7 @@ fn access_from_env() -> Option<AccessState> {
         issuer: Arc::from(format!("https://{domain}")),
         certs_url: Arc::from(format!("https://{domain}/cdn-cgi/access/certs")),
         jwks: Arc::new(RwLock::new(Jwks::default())),
+        last_forced_refetch_ms: Arc::new(AtomicI64::new(0)),
     })
 }
 
@@ -126,6 +153,12 @@ pub struct AppState {
     pub key_hash_path: Arc<str>,
     pub destruct: Arc<dyn DestructTrigger>,
     pub auth: AuthState,
+    /// Throttle for `POST /auth/login` (separate from the self-destruct limiter).
+    pub login_limiter: Arc<Mutex<RateLimiter>>,
+    pub auditor: Arc<Auditor>,
+    pub metrics: Arc<Metrics>,
+    /// `GET /sync/api/metrics` answers only when METRICS_ENABLED is on (else 404).
+    pub metrics_enabled: bool,
     key: Arc<Mutex<Option<[u8; 32]>>>,
 }
 
@@ -137,6 +170,9 @@ pub struct AppConfig {
     pub key_hash_path: String,
     pub destruct: Arc<dyn DestructTrigger>,
     pub auth: AuthState,
+    /// Where audit events go (the file under /var/log/sdw in production, memory in tests).
+    pub audit: Arc<dyn AuditSink>,
+    pub metrics_enabled: bool,
 }
 
 impl AppConfig {
@@ -153,6 +189,9 @@ impl AppConfig {
             key_hash_path: DESTRUCT_KEY_HASH_PATH.into(),
             destruct: Arc::new(SpawnSelfDestruct),
             auth: AuthState::from_env(),
+            // Also on stdout, so `docker logs` holds a copy outside the container's file system.
+            audit: Arc::new(sdw_infra::audit::FileAuditSink::new(AUDIT_LOG_PATH).echo_stdout(true)),
+            metrics_enabled: is_on(std::env::var("METRICS_ENABLED").ok().as_deref()),
         }
     }
 }
@@ -172,6 +211,14 @@ impl AppState {
             key_hash_path: cfg.key_hash_path.into(),
             destruct: cfg.destruct,
             auth: cfg.auth,
+            login_limiter: Arc::new(Mutex::new(RateLimiter::new(RateLimitConfig {
+                window_ms: LOGIN_RATE_LIMIT_WINDOW_MS,
+                per_key_max: LOGIN_RATE_LIMIT_PER_KEY,
+                global_max: LOGIN_RATE_LIMIT_GLOBAL,
+            }))),
+            auditor: Arc::new(Auditor::new(cfg.audit)),
+            metrics: Arc::new(Metrics::default()),
+            metrics_enabled: cfg.metrics_enabled,
             key: Arc::new(Mutex::new(None)),
         }
     }

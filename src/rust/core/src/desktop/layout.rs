@@ -16,8 +16,10 @@ pub const DESKTOP_APPLICATIONS_DIR: &str = "/usr/share/applications";
 pub const SELKIES_DISPLAY: &str = ":1";
 /// `{WORKSPACE_MOUNT}/.desktop`.
 pub const SELKIES_HOME: &str = "/workspace/.desktop";
-/// Static Selkies web client, served by Caddy.
-pub const SELKIES_WEB_ROOT: &str = "/usr/share/selkies/web";
+/// Selkies serves its own client, API and WebSocket from one HTTP server under the prefix it is
+/// started with (`--subfolder`, etc/desktop/start-selkies.sh); Caddy proxies the prefix as it is.
+/// Its liveness endpoint answers without credentials.
+pub const SELKIES_HEALTH_PATH: &str = "/desktop/api/health";
 
 // KasmVNC stack: integrated X + VNC server, served at /vnc/.
 pub const VNC_DISPLAY: &str = ":2";

@@ -2,29 +2,25 @@
 # /etc/caddy/desktop.d/ and glob-imported by the main Caddyfile when
 # DESKTOP_STACK includes selkies. Owns /desktop/ (runs parallel to /vnc/).
 #
-# Selkies is WS-ONLY on :6080 (does NOT serve the web client). Caddy serves the
-# static client from /usr/share/selkies/web and reverse-proxies only the WebSocket.
-# The client opens <path>/websockets (plural).
+# Selkies 2.x serves its web client AND its WebSocket (/desktop/api/websockets) and a small API
+# from one HTTP server on 127.0.0.1:6080, under the path prefix it is started with
+# (--subfolder=/desktop, see etc/desktop/start-selkies.sh). So the whole /desktop/ tree is one
+# reverse proxy with no path rewriting: the client builds its WebSocket address from the URL it was
+# loaded from. (Selkies 1.x was WebSocket-only and Caddy served its static client; both are gone.)
 #
-# AUTH: both the static client AND the WebSocket are now behind the UNIFIED AUTH GATEWAY
-# (the forward_auth session gate in the main Caddyfile runs before this snippet). Selkies itself
-# has no auth of its own and none is needed here: the session cookie is required to reach either
-# /desktop/ or /desktop/websockets, and the cookie rides the WS upgrade. This closes the former
-# hole (unauthenticated WS = free desktop stream + input) as a property of the perimeter rather
-# than a per-snippet patch. Do NOT re-add a basic_auth here — it cannot gate the JS WebSocket and
-# would only add a redundant prompt on the static page.
+# AUTH: everything under /desktop/ is behind the UNIFIED AUTH GATEWAY (the forward_auth session
+# gate in the main Caddyfile runs before this snippet), the client, the API and the WebSocket
+# alike; the session cookie rides the WS upgrade. Selkies has no login of its own and needs none:
+# its Basic auth is switched off and it listens on loopback only. Do NOT re-add a basic_auth here:
+# it cannot gate the JS WebSocket and would only add a redundant prompt.
+#
+# Caddy's reverse_proxy keeps the Host header, which is what Selkies compares a WebSocket's Origin
+# with (a cross-site page is refused with 403), and upgrades WebSockets by itself.
 
-# (1) WebSocket — must come BEFORE the static handler (longer path = higher priority).
-@desktop_ws path /desktop/websockets
-handle @desktop_ws {
-	uri strip_prefix /desktop
-	reverse_proxy 127.0.0.1:6080
-}
-
-# (2) Static client — Caddy file_server serves the dashboard (gated upstream by the session gate).
-handle_path /desktop/* {
-	root * /usr/share/selkies/web
-	file_server
+handle /desktop/* {
+	reverse_proxy 127.0.0.1:6080 {
+		flush_interval -1
+	}
 }
 handle /desktop {
 	redir /desktop/ permanent

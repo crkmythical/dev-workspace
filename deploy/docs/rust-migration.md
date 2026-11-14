@@ -222,8 +222,9 @@ Follow-up decisions (2026-10-31), after an operator review of the open items:
 
 - **Master password out of the logs.** The boot banner no longer prints it; it is echoed only
   when it was generated (PASSWORD unset — the only way to learn it). A `.env` password never
-  reaches the logs. code-server's config.yaml still holds it (code-server needs it to
-  authenticate; that file is inside the container, not in `docker logs`).
+  reaches the logs. (At the time code-server's config.yaml still held it; since then
+  code-server runs with `--auth none` behind the gate, and a generated password is kept only in
+  root's `/var/lib/sdw/master-password`.)
 - **Socket holders of the mount.** The unmount escalation now also reads `/proc/net/unix` and
   kills the owners of bound sockets under the mount (core `socket_inodes_under_mount`), so a
   clean unmount succeeds where it used to fall back to lazy.
@@ -236,9 +237,9 @@ Follow-up decisions (2026-10-31), after an operator review of the open items:
   need the repo credentials — treat that repo as part of the vault; `.credentials/` is already
   excluded from it).
 
-Still open (behaviour-neutral): none — the cleanup backlog is clear. The Selkies web client is
-now copied only when DESKTOP_STACK includes it (a selector stage; a KasmVNC-only image carries an
-empty /usr/share/selkies/web), closing the last item.
+Still open (behaviour-neutral): none — the cleanup backlog is clear. (The Selkies web client was
+once copied only when DESKTOP_STACK included it, through a selector stage. Selkies 2.x brings its
+own client, so the vendored copy and that stage are gone, 2026-11-04.)
 
 ## croc — the CLI file-transfer path
 

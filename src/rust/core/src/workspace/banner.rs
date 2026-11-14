@@ -17,6 +17,9 @@ pub struct BannerInput {
     pub stacks: Vec<DesktopTarget>,
     pub vault_mounted: bool,
     pub egress: Option<EgressReport>,
+    /// The egress firewall was loaded (EGRESS_ENFORCE is on). When it is not, the banner says so:
+    /// processes that ignore the proxy variables then connect directly.
+    pub egress_enforced: bool,
     /// Boot steps that failed under the "degrade" policy.
     pub degraded: Vec<String>,
 }
@@ -71,7 +74,7 @@ pub fn render_banner(input: &BannerInput) -> Vec<String> {
     if input.stacks.contains(&DesktopTarget::Vnc) {
         rows.push(format!("  VNC:       {origin}/vnc/"));
     }
-    rows.push(format!("  Auth:      user / {shown}"));
+
     rows.push(format!(
         "  Vault:     {}",
         if input.vault_mounted {
@@ -84,10 +87,25 @@ pub fn render_banner(input: &BannerInput) -> Vec<String> {
         "  Egress:    {}",
         egress_word(input.egress.as_ref())
     ));
+    rows.push(format!(
+        "  Firewall:  {}",
+        if input.egress_enforced {
+            "on (direct egress blocked)"
+        } else {
+            "OFF (EGRESS_ENFORCE=0)"
+        }
+    ));
 
     let mut attention: Vec<String> = Vec::new();
     if !input.vault_mounted {
         attention.push("Vault is locked: run `unlock-vault` to open /workspace.".to_string());
+    }
+    if !input.egress_enforced {
+        attention.push(
+            "The egress firewall is off: a process that ignores the proxy variables connects \
+             directly and shows this machine's real address."
+                .to_string(),
+        );
     }
     match &input.egress {
         None => attention
@@ -135,6 +153,7 @@ mod tests {
             stacks: vec![DesktopTarget::Selkies, DesktopTarget::Vnc],
             vault_mounted: true,
             egress: Some(confirmed()),
+            egress_enforced: true,
             degraded: vec![],
         }
     }
@@ -163,7 +182,6 @@ mod tests {
             "a non-generated password is never logged"
         );
         assert!(out.contains("Password:  <set via PASSWORD in .env>"));
-        assert!(out.contains("user / <set via PASSWORD in .env>"));
         assert!(out.contains("http://localhost:18080/desktop/"));
         assert!(out.contains("http://localhost:18080/vnc/"));
     }
@@ -176,7 +194,6 @@ mod tests {
             ..base()
         });
         assert!(out.contains("Password:  gen3rated"));
-        assert!(out.contains("user / gen3rated"));
     }
 
     #[test]
@@ -210,6 +227,20 @@ mod tests {
         assert!(out.contains("Vault:     unlocked"));
         assert!(out.contains("Egress:    confirmed"));
         assert!(!out.contains('⚠'));
+    }
+
+    #[test]
+    fn the_firewall_state_is_on_screen_and_off_is_a_warning() {
+        let out = text(&base());
+        assert!(out.contains("Firewall:  on (direct egress blocked)"));
+        assert!(!out.contains('⚠'));
+
+        let out = text(&BannerInput {
+            egress_enforced: false,
+            ..base()
+        });
+        assert!(out.contains("Firewall:  OFF (EGRESS_ENFORCE=0)"));
+        assert!(out.contains("⚠ The egress firewall is off"));
     }
 
     #[test]

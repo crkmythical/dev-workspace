@@ -1,0 +1,62 @@
+name: Fuzz
+
+# Coverage-guided fuzzing (cargo-fuzz / libFuzzer, nightly) of the parsers that read bytes an
+# attacker can send or set: the upload body and path, the session cookie, the Cloudflare Access
+# assertion, the WebSocket Origin check, and the egress allowlist. The stable gate runs the same
+# functions under proptest on every push (ci.yml); this is the deeper campaign, once a week, which
+# is why it is not part of ci.yml (it needs nightly and takes minutes per target).
+# A crash fails the run and uploads the reproducer.
+on:
+  schedule:
+    - cron: '41 3 * * 0'
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: Seconds to fuzz each target
+        default: '300'
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - parse_upload_body
+          - check_relative_path
+          - verify_session
+          - verify_access_jwt
+          - origin_matches_host
+          - parse_allow_list
+    defaults:
+      run:
+        working-directory: src/rust/fuzz
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Rust (nightly)
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: nightly
+
+      - name: Cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: src/rust/fuzz
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Fuzz ${{ matrix.target }}
+        run: cargo +nightly fuzz run ${{ matrix.target }} -- -max_total_time=${{ inputs.seconds || '300' }}
+
+      - name: Reproducer
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fuzz-crash-${{ matrix.target }}
+          path: src/rust/fuzz/fuzz/artifacts/${{ matrix.target }}/
+          if-no-files-found: ignore

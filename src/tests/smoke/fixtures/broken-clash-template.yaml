@@ -1,0 +1,4 @@
+# A Clash template the renderer must refuse: it has none of the placeholders. Bind-mounted over the
+# image's own by fixtures/broken-clash.compose.yml (checks/70-egress-variants.sh).
+mixed-port: [broken
+  - : yaml {

@@ -31,6 +31,9 @@ pub struct WorkspaceConfig {
     pub git: GitConfig,
     pub backup: BackupGateEnv,
     pub features: FeatureFlags,
+    /// EGRESS_ALLOW_CIDRS as the user set it (None when unset or empty). Parsed, and rejected if
+    /// malformed, by the boot step that loads the egress firewall (core::egress::allowlist).
+    pub egress_allow_cidrs: Option<String>,
 }
 
 /// What docker-compose publishes when TUNNEL_HOST_PORT is unset.
@@ -74,6 +77,7 @@ pub fn load_config(get: impl Fn(&str) -> Option<String>) -> WorkspaceConfig {
             aws_secret_access_key: v("AWS_SECRET_ACCESS_KEY"),
         },
         features: parse_feature_flags(&get),
+        egress_allow_cidrs: v("EGRESS_ALLOW_CIDRS"),
     }
 }
 
@@ -132,11 +136,13 @@ mod tests {
                     vault_repo: None
                 },
                 backup: BackupGateEnv::default(),
+                // The opt-in features are off; the egress firewall is on unless turned off.
                 features: FeatureFlags {
                     sync: false,
                     remote_destruct: false,
-                    egress_enforce: false
+                    egress_enforce: true
                 },
+                egress_allow_cidrs: None,
             }
         );
     }
@@ -173,6 +179,7 @@ mod tests {
             ("SYNC_ENABLED", "1"),
             ("REMOTE_DESTRUCT_ENABLED", "true"),
             ("EGRESS_ENFORCE", "1"),
+            ("EGRESS_ALLOW_CIDRS", "10.0.0.0/8,192.168.1.5"),
         ]));
         assert_eq!(cfg.clash_subscription_url, "https://example.test/sub");
         assert_eq!(cfg.clash_dns.as_deref(), Some("223.5.5.5,119.29.29.29"));
@@ -197,6 +204,31 @@ mod tests {
                 remote_destruct: true,
                 egress_enforce: true
             }
+        );
+        assert_eq!(
+            cfg.egress_allow_cidrs.as_deref(),
+            Some("10.0.0.0/8,192.168.1.5")
+        );
+    }
+
+    #[test]
+    fn the_egress_firewall_is_on_unless_switched_off() {
+        let flag = |value: Option<&str>| {
+            let pairs: Vec<(&str, &str)> =
+                value.map(|v| ("EGRESS_ENFORCE", v)).into_iter().collect();
+            load_config(env(&pairs)).features.egress_enforce
+        };
+        assert!(flag(None));
+        assert!(flag(Some("")));
+        assert!(flag(Some("1")));
+        assert!(!flag(Some("0")));
+        assert!(!flag(Some("false")));
+        // Unreadable is not "off": a typo must not drop the protection.
+        assert!(flag(Some("disabled")));
+        // An empty allowlist is no allowlist.
+        assert_eq!(
+            load_config(env(&[("EGRESS_ALLOW_CIDRS", "")])).egress_allow_cidrs,
+            None
         );
     }
 

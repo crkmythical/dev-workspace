@@ -82,3 +82,88 @@ pub fn ok_cwd(cwd: &str, program: &str, args: &[&str]) -> bool {
         .map(|s| s.success())
         .unwrap_or(false)
 }
+
+/// Run to completion, but give up after `limit`: the child is killed and `None` returned. For tools
+/// that retry an unreachable backend for minutes on their own (restic keeps trying for up to 15), so
+/// that a start-up step asking "is it there?" gets an answer in bounded time. stdout and stderr are
+/// captured; stdin is closed.
+pub fn output_within(
+    command: &mut Command,
+    limit: std::time::Duration,
+) -> std::io::Result<Option<std::process::Output>> {
+    use std::io::Read;
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let mut out = child.stdout.take().expect("stdout is piped");
+    let mut err = child.stderr.take().expect("stderr is piped");
+    // Drain both pipes on threads, or a chatty child fills a pipe and never exits.
+    let out_thread = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = out.read_to_end(&mut bytes);
+        bytes
+    });
+    let err_thread = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = err.read_to_end(&mut bytes);
+        bytes
+    });
+    let deadline = std::time::Instant::now() + limit;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(Some(std::process::Output {
+                status,
+                stdout: out_thread.join().unwrap_or_default(),
+                stderr: err_thread.join().unwrap_or_default(),
+            }));
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(None);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn a_quick_command_returns_its_output() {
+        let out = output_within(
+            Command::new("sh").args(["-c", "echo out; echo err >&2; exit 3"]),
+            Duration::from_secs(10),
+        )
+        .unwrap()
+        .expect("finished in time");
+        assert_eq!(out.status.code(), Some(3));
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "out\n");
+        assert_eq!(String::from_utf8_lossy(&out.stderr), "err\n");
+    }
+
+    #[test]
+    fn a_command_that_runs_too_long_is_killed_and_reported_as_none() {
+        let started = std::time::Instant::now();
+        let out =
+            output_within(Command::new("sleep").arg("30"), Duration::from_millis(200)).unwrap();
+        assert!(out.is_none());
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "it did not wait for the child"
+        );
+    }
+
+    #[test]
+    fn a_program_that_is_not_there_is_an_error() {
+        assert!(output_within(
+            &mut Command::new("no-such-program-sdw"),
+            Duration::from_secs(1)
+        )
+        .is_err());
+    }
+}

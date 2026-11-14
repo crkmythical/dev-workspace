@@ -5,9 +5,12 @@
 //! master password is the whole identity model, so the token only carries issue/expiry seconds.
 //!
 //! The signing key is chosen by the sync-service: a fresh random 32 bytes per boot by default
-//! (sessions end on restart), or `derive_session_key_from_password` when AUTH_SESSION_PERSIST is
-//! set (sessions survive a restart). Cookies ride the WebSocket upgrade handshake, which is the
-//! whole point: one gate covers code-server, KasmVNC and Selkies WebSockets uniformly.
+//! (sessions end on restart), or, when AUTH_SESSION_PERSIST is set, a random key kept in
+//! SESSION_KEY_PATH (sessions survive a restart). It is never derived from the master password: a
+//! cookie is a MAC of known text under the key, so a key derived from the password would let anyone
+//! who has seen one cookie test password guesses offline, and the password is the vault passphrase.
+//! Cookies ride the WebSocket upgrade handshake, which is the whole point: one gate covers
+//! code-server, KasmVNC and Selkies WebSockets uniformly.
 
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
@@ -18,6 +21,19 @@ type HmacSha256 = Hmac<Sha256>;
 pub const SESSION_COOKIE: &str = "sdw_session";
 /// Default session lifetime in seconds (12h).
 pub const DEFAULT_SESSION_TTL_SECS: u64 = 12 * 60 * 60;
+/// Where the persistent session key lives (AUTH_SESSION_PERSIST): 64 hex characters, mode 0600, in
+/// the container's own file system (not the vault, not a volume), so it outlives a restart and
+/// goes away with the container.
+pub const SESSION_KEY_PATH: &str = "/var/lib/sdw/session.key";
+
+/// Login throttle (every attempt, right or wrong, counts). The master password is also the vault
+/// passphrase, so the login must not be an unlimited online guessing oracle: per claimed client
+/// address, and across all addresses (the address comes from a header a direct caller can forge).
+/// A flood of forged addresses can therefore lock new logins out for the rest of a window; existing
+/// sessions and Cloudflare Access sign-ins are unaffected.
+pub const LOGIN_RATE_LIMIT_WINDOW_MS: i64 = 60_000;
+pub const LOGIN_RATE_LIMIT_PER_KEY: u64 = 10;
+pub const LOGIN_RATE_LIMIT_GLOBAL: u64 = 60;
 
 /// Auth routes — served by the sync-service, allowlisted (un-gated) in Caddy.
 pub const AUTH_LOGIN_PATH: &str = "/auth/login";
@@ -76,20 +92,6 @@ pub fn verify_session(key: &[u8], token: &str, now: u64) -> SessionVerdict {
     }
 }
 
-/// Derive a stable 32-byte key from the master password (AUTH_SESSION_PERSIST mode) so sessions
-/// survive a restart. HMAC-SHA256 keyed by the password over a fixed, auth-specific label — a
-/// PRF whose output is domain-separated from the vault and sync keys by that label. The default
-/// (random per boot) does not call this.
-pub fn derive_session_key_from_password(password: &str) -> [u8; 32] {
-    let mut m =
-        HmacSha256::new_from_slice(password.as_bytes()).expect("HMAC accepts any key length");
-    m.update(b"sdw-session-key-v1");
-    let out = m.finalize().into_bytes();
-    let mut key = [0u8; 32];
-    key.copy_from_slice(&out[..32]); // SHA-256 is exactly 32 bytes
-    key
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,17 +147,5 @@ mod tests {
         ] {
             assert_eq!(verify_session(KEY, t, 1), SessionVerdict::Invalid, "{t:?}");
         }
-    }
-
-    #[test]
-    fn derive_is_deterministic_and_password_specific() {
-        let a = derive_session_key_from_password("hunter2");
-        let b = derive_session_key_from_password("hunter2");
-        let c = derive_session_key_from_password("hunter3");
-        assert_eq!(a, b);
-        assert_ne!(a, c);
-        // A token signed with a derived key verifies with the same derivation (restart survival).
-        let t = sign_session(&a, 10, 20);
-        assert_eq!(verify_session(&b, &t, 15), SessionVerdict::Valid);
     }
 }

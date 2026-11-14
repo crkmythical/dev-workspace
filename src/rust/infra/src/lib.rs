@@ -5,8 +5,12 @@
 //! key derivation) are unit-tested here; the process-spawning shells are validated by tests/smoke
 //! on the real image at the single stage-3 cutover.
 
+pub mod audit;
 pub mod caddy;
+pub mod capabilities;
+pub mod clash;
 pub mod cmd;
+pub mod container_env;
 pub mod desktop;
 pub mod destroy;
 pub mod destruct_key;
@@ -17,8 +21,10 @@ pub mod holders;
 pub mod notifications;
 pub mod replication;
 pub mod restic;
+pub mod secrets;
 pub mod shred;
 pub mod state;
 pub mod supervisor;
 pub mod time;
 pub mod unlock_hooks;
+pub mod workload;

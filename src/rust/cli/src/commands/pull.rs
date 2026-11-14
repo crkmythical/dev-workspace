@@ -69,6 +69,7 @@ pub fn run(args: &[String]) -> i32 {
 
     let mut cmd = Command::new("croc");
     cmd.args(&argv);
+    sdw_infra::secrets::pass_secrets(&mut cmd, &["CROC_PASS"]);
     cmd.env("CROC_SECRET", code);
     match cmd.status() {
         Ok(status) => status.code().unwrap_or(1),

@@ -1,5 +1,8 @@
+# The runtimes baked into the image, at the EXACT versions the Dockerfile installs (a range such as
+# node = "20" or pnpm = "latest" would make two builds a month apart differ). Change them together
+# with the `mise install` lines in the Dockerfile.
 [tools]
-python = "3.12"
-java = "zulu-17"
-node = "20"
-pnpm = "latest"
+python = "3.12.16"
+java = "zulu-17.70.113.0"
+node = "20.20.2"
+pnpm = "12.16.1"

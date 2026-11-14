@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
+use sdw_core::audit::{parse_line, MemorySink, ParsedEvent};
 use sdw_core::sync::aad::build_aad;
 use sdw_core::sync::crypto::{derive_key, encrypt};
 use sdw_core::sync::protocol::PNG_HEADER;
@@ -36,13 +37,30 @@ impl DestructTrigger for Flag {
 struct Harness {
     state: AppState,
     fired: Arc<AtomicBool>,
+    /// Every audit line the service wrote.
+    sink: Arc<MemorySink>,
     _dir: tempfile::TempDir,
 }
 
+impl Harness {
+    fn audit(&self) -> Vec<ParsedEvent> {
+        self.sink
+            .lines()
+            .iter()
+            .map(|l| parse_line(l).expect("an audit line parses"))
+            .collect()
+    }
+}
+
 fn harness(features: Features) -> Harness {
+    harness_with(features, false)
+}
+
+fn harness_with(features: Features, metrics_enabled: bool) -> Harness {
     let dir = tempfile::tempdir().unwrap();
     let p = dir.path();
     let fired = Arc::new(AtomicBool::new(false));
+    let sink = Arc::new(MemorySink::new());
     let cfg = AppConfig {
         features,
         dirs: Dirs {
@@ -58,10 +76,13 @@ fn harness(features: Features) -> Harness {
             ttl_secs: 3600,
             access: None,
         },
+        audit: sink.clone(),
+        metrics_enabled,
     };
     Harness {
         state: AppState::from_config(cfg),
         fired,
+        sink,
         _dir: dir,
     }
 }
@@ -243,6 +264,8 @@ async fn destruct_reports_an_error_when_the_trigger_cannot_launch() {
             ttl_secs: 3600,
             access: None,
         },
+        audit: Arc::new(MemorySink::new()),
+        metrics_enabled: false,
     };
     let state = AppState::from_config(cfg);
     write(&state.key_hash_path, PASSPHRASE_HASH);
@@ -572,4 +595,371 @@ async fn logout_clears_cookie() {
     let c = resp.headers().get(SET_COOKIE).unwrap().to_str().unwrap();
     assert!(c.contains("sdw_session=;"), "{c}");
     assert!(c.contains("Max-Age=0"), "{c}");
+}
+
+/// A session cookie value for the harness's key, as a browser would replay it.
+fn session_cookie() -> String {
+    use sdw_core::auth::session::sign_session;
+    let now = now_ms().max(0) as u64 / 1000;
+    format!("sdw_session={}", sign_session(&[7u8; 32], now, now + 3600))
+}
+
+#[tokio::test]
+async fn the_session_cookie_is_secure_only_behind_https() {
+    use axum::http::header::SET_COOKIE;
+    let h = harness(both_on());
+    let cookie_of = |resp: &axum::http::Response<Body>| {
+        resp.headers()
+            .get(SET_COOKIE)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string()
+    };
+    // Plain HTTP on localhost: no `Secure`, or Safari would not keep it.
+    let plain = app(h.state.clone())
+        .oneshot(login_req(PASSPHRASE, "/", "198.51.100.1"))
+        .await
+        .unwrap();
+    assert!(
+        !cookie_of(&plain).contains("Secure"),
+        "{}",
+        cookie_of(&plain)
+    );
+    // Through the HTTPS edge (the tunnel reports the client's scheme): `Secure`.
+    let mut req = login_req(PASSPHRASE, "/", "198.51.100.2");
+    req.headers_mut()
+        .insert("x-forwarded-proto", "https".parse().unwrap());
+    let secure = app(h.state.clone()).oneshot(req).await.unwrap();
+    let c = cookie_of(&secure);
+    assert!(
+        c.contains("; Secure;") && c.contains("HttpOnly") && c.contains("SameSite=Lax"),
+        "{c}"
+    );
+    // And logging out clears it with the same attributes.
+    let out = app(h.state.clone())
+        .oneshot(
+            Request::post("/auth/logout")
+                .header("x-forwarded-proto", "https")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(cookie_of(&out).contains("; Secure;"), "{}", cookie_of(&out));
+}
+
+#[tokio::test]
+async fn a_websocket_handshake_from_another_origin_is_refused_whatever_credential_it_carries() {
+    use axum::http::header::COOKIE;
+    let h = harness(both_on());
+    let verify = |origin: Option<&'static str>, upgrade: bool| {
+        let mut r = Request::get("/auth/verify")
+            .header(COOKIE, session_cookie())
+            .header("host", "ws.example.com");
+        if let Some(o) = origin {
+            r = r.header("origin", o);
+        }
+        if upgrade {
+            r = r
+                .header("upgrade", "websocket")
+                .header("connection", "Upgrade");
+        }
+        r.body(Body::empty()).unwrap()
+    };
+    let status = |req: Request<Body>| {
+        let state = h.state.clone();
+        async move { app(state).oneshot(req).await.unwrap().status() }
+    };
+    // The page that owns the host: allowed.
+    assert_eq!(
+        status(verify(Some("https://ws.example.com"), true)).await,
+        StatusCode::OK
+    );
+    // A sibling subdomain shares the cookie's SITE but is not the same origin.
+    assert_eq!(
+        status(verify(Some("https://other.example.com"), true)).await,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        status(verify(Some("null"), true)).await,
+        StatusCode::FORBIDDEN
+    );
+    // Not a browser (no Origin), or not a WebSocket: the cookie decides as before.
+    assert_eq!(status(verify(None, true)).await, StatusCode::OK);
+    assert_eq!(
+        status(verify(Some("https://other.example.com"), false)).await,
+        StatusCode::OK
+    );
+    // The refusal is counted and audited (with the origin that tried).
+    let events = h.audit();
+    let refused: Vec<_> = events.iter().filter(|e| e.event == "gate.origin").collect();
+    assert_eq!(refused.len(), 2, "{events:?}");
+    assert_eq!(
+        refused[0].field("origin"),
+        Some("https://other.example.com")
+    );
+    assert_eq!(refused[0].field("host"), Some("ws.example.com"));
+}
+
+// --- audit trail, login throttle, metrics --------------------------------------------------------
+
+fn login_req(password: &str, next: &str, ip: &str) -> Request<Body> {
+    use axum::http::header::CONTENT_TYPE;
+    Request::post("/auth/login")
+        .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .header("cf-connecting-ip", ip)
+        .header("user-agent", "smoke-agent/1.0")
+        .body(Body::from(format!(
+            "password={}&next={next}",
+            password.replace(' ', "+")
+        )))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn logins_are_audited_with_who_when_and_result_but_never_the_password() {
+    let h = harness(both_on());
+    let wrong = app(h.state.clone())
+        .oneshot(login_req("hunter2-not-it", "/", "203.0.113.9"))
+        .await
+        .unwrap();
+    assert_eq!(wrong.status(), StatusCode::UNAUTHORIZED);
+    let right = app(h.state.clone())
+        .oneshot(login_req(PASSPHRASE, "/", "203.0.113.9"))
+        .await
+        .unwrap();
+    assert_eq!(right.status(), StatusCode::SEE_OTHER);
+
+    let events = h.audit();
+    assert_eq!(events.len(), 2, "{events:?}");
+    assert_eq!(
+        (events[0].event.as_str(), events[0].outcome.as_str()),
+        ("auth.login", "failure")
+    );
+    assert_eq!(
+        (events[1].event.as_str(), events[1].outcome.as_str()),
+        ("auth.login", "success")
+    );
+    for e in &events {
+        assert_eq!(e.field("ip"), Some("203.0.113.9"));
+        assert_eq!(e.field("ua"), Some("smoke-agent/1.0"));
+        assert!(e.ts_ms > 1_700_000_000_000);
+    }
+    // The secret itself is nowhere in what was written.
+    let raw = h.sink.lines().join("\n");
+    assert!(!raw.contains("hunter2"), "{raw}");
+    assert!(!raw.contains(&PASSPHRASE.replace(' ', "+")), "{raw}");
+    assert!(!raw.contains(PASSPHRASE), "{raw}");
+}
+
+#[tokio::test]
+async fn logins_are_throttled_per_address_and_the_throttle_is_audited() {
+    let h = harness(both_on());
+    // 10 attempts are allowed per address per minute (wrong ones: nothing is gained from a right one).
+    for n in 0..10 {
+        let r = app(h.state.clone())
+            .oneshot(login_req(&format!("guess-{n}"), "/", "198.51.100.5"))
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::UNAUTHORIZED, "attempt {n}");
+    }
+    // The 11th is refused before any bcrypt work, even with the right password.
+    let blocked = app(h.state.clone())
+        .oneshot(login_req(PASSPHRASE, "/", "198.51.100.5"))
+        .await
+        .unwrap();
+    assert_eq!(blocked.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(blocked.headers().get("retry-after").unwrap(), "60");
+    assert!(blocked.headers().get("set-cookie").is_none());
+    // Another address has its own budget.
+    let other = app(h.state.clone())
+        .oneshot(login_req(PASSPHRASE, "/", "198.51.100.6"))
+        .await
+        .unwrap();
+    assert_eq!(other.status(), StatusCode::SEE_OTHER);
+
+    let events = h.audit();
+    assert!(events
+        .iter()
+        .any(|e| e.outcome == "throttled" && e.field("ip") == Some("198.51.100.5")));
+}
+
+#[tokio::test]
+async fn the_login_page_is_not_frameable_cacheable_or_scriptable() {
+    let h = harness(both_on());
+    let resp = app(h.state.clone())
+        .oneshot(
+            Request::get("/auth/login?next=/sync/")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let hdr = |n: &str| resp.headers().get(n).unwrap().to_str().unwrap().to_string();
+    assert_eq!(hdr("x-frame-options"), "DENY");
+    assert_eq!(hdr("cache-control"), "no-store");
+    assert_eq!(hdr("x-content-type-options"), "nosniff");
+    assert_eq!(hdr("referrer-policy"), "no-referrer");
+    let csp = hdr("content-security-policy");
+    assert!(
+        csp.contains("default-src 'none'") && csp.contains("frame-ancestors 'none'"),
+        "{csp}"
+    );
+}
+
+#[tokio::test]
+async fn a_backslash_open_redirect_in_next_is_neutralized() {
+    use axum::http::header::LOCATION;
+    let h = harness(both_on());
+    for evil in ["/%5Cevil.example", "//evil.example", "/\\evil.example"] {
+        // The percent-encoded form arrives decoded by the form parser, as `/\evil.example`.
+        let resp = app(h.state.clone())
+            .oneshot(login_req(PASSPHRASE, evil, "192.0.2.1"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER, "{evil}");
+        assert_eq!(resp.headers().get(LOCATION).unwrap(), "/", "{evil}");
+    }
+}
+
+#[tokio::test]
+async fn logout_is_audited() {
+    let h = harness(both_on());
+    let _ = app(h.state.clone())
+        .oneshot(
+            Request::post("/auth/logout")
+                .header("x-forwarded-for", "192.0.2.77, 10.0.0.1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let events = h.audit();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].event, "auth.logout");
+    assert_eq!(events[0].field("ip"), Some("192.0.2.77"));
+}
+
+#[tokio::test]
+async fn destruct_attempts_are_audited_by_reason_and_a_fired_one_is_always_written() {
+    let h = harness(both_on());
+    write(&h.state.key_hash_path, PASSPHRASE_HASH);
+    let req = |pass: &str| {
+        Request::builder()
+            .method("POST")
+            .uri("/sync/api/destruct")
+            .header("content-type", "application/json")
+            .header("cf-connecting-ip", "203.0.113.50")
+            .body(Body::from(format!(r#"{{"passphrase":"{pass}"}}"#)))
+            .unwrap()
+    };
+    let (s, _) = send(&h.state, req("nope")).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (s, _) = send(&h.state, req(PASSPHRASE)).await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(h.fired.load(Ordering::SeqCst));
+
+    let events = h.audit();
+    assert_eq!(events.len(), 2, "{events:?}");
+    assert_eq!(
+        (events[0].event.as_str(), events[0].outcome.as_str()),
+        ("destruct.attempt", "rejected")
+    );
+    assert_eq!(events[0].field("reason"), Some("wrong_passphrase"));
+    assert_eq!(
+        (events[1].event.as_str(), events[1].outcome.as_str()),
+        ("destruct.attempt", "triggered")
+    );
+    assert_eq!(events[1].field("ip"), Some("203.0.113.50"));
+    let raw = h.sink.lines().join("\n");
+    assert!(!raw.contains(PASSPHRASE) && !raw.contains("nope"), "{raw}");
+}
+
+#[tokio::test]
+async fn a_disabled_destruct_endpoint_leaves_no_trace_in_the_log() {
+    let h = harness(Features {
+        sync: true,
+        remote_destruct: false,
+    });
+    let (s, _) = send(
+        &h.state,
+        post_json("/sync/api/destruct", r#"{"passphrase":"x"}"#),
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    assert!(h.audit().is_empty());
+}
+
+#[tokio::test]
+async fn metrics_are_a_404_unless_enabled_and_then_count_the_gate_and_logins() {
+    let off = harness(both_on());
+    let resp = app(off.state.clone())
+        .oneshot(get("/sync/api/metrics"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+
+    let on = harness_with(both_on(), true);
+    // One gate denial, one wrong login, one right login, one cookie pass.
+    let _ = app(on.state.clone())
+        .oneshot(get("/auth/verify"))
+        .await
+        .unwrap();
+    let _ = app(on.state.clone())
+        .oneshot(login_req("wrong", "/", "192.0.2.9"))
+        .await
+        .unwrap();
+    let ok = app(on.state.clone())
+        .oneshot(login_req(PASSPHRASE, "/", "192.0.2.9"))
+        .await
+        .unwrap();
+    let cookie = ok.headers().get("set-cookie").unwrap().to_str().unwrap();
+    let token = cookie.split(';').next().unwrap().to_string();
+    let _ = app(on.state.clone())
+        .oneshot(
+            Request::get("/auth/verify")
+                .header("cookie", token)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let resp = app(on.state.clone())
+        .oneshot(get("/sync/api/metrics"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .starts_with("text/plain"));
+    let text = String::from_utf8(
+        to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(
+        text.contains("sdw_login_total{outcome=\"failure\"} 1"),
+        "{text}"
+    );
+    assert!(
+        text.contains("sdw_login_total{outcome=\"success\"} 1"),
+        "{text}"
+    );
+    assert!(
+        text.contains("sdw_gate_requests_total{result=\"deny\"} 1"),
+        "{text}"
+    );
+    assert!(
+        text.contains("sdw_gate_requests_total{result=\"allow_cookie\"} 1"),
+        "{text}"
+    );
 }

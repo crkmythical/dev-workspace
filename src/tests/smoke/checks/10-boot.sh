@@ -30,6 +30,11 @@ fi
 expect_match "traffic really went through Clash to the node" 'CONNECT ' "$(docker logs "$UP" 2>&1)"
 
 step "services"
+# A program only counts as RUNNING after its startsecs (backup-watcher: 5 s), yet the container
+# turns healthy the moment Caddy answers, so on a fast VM this check used to race the slow starters.
+# Wait for STARTING ones to settle instead of asserting at once.
+not_starting() { ! dx supervisorctl status 2>&1 | grep -q ' STARTING '; }
+wait_until 30 not_starting
 SUP="$(dx supervisorctl status 2>&1)"
 for program in caddy code-server sync-service vault-sync-cron clash-watcher backup-watcher; do
   expect_match "$program is running" "^${program} +RUNNING" "$SUP"
@@ -48,5 +53,12 @@ step "doctor"
 DOCTOR="$(dx doctor 2>&1)"
 expect_no_match "doctor reports no failed check" '✗' "$DOCTOR"
 expect_match "doctor sees the vault mounted" 'Vault mount — /workspace mounted' "$DOCTOR"
+case "$STACK" in
+  selkies | both)
+    # An open port only shows that something listens; this asks Selkies itself.
+    expect_match "doctor asks the Selkies server, not just its port" \
+      'Desktop client \(HTTP\) — answers at /desktop/api/health' "$DOCTOR"
+    ;;
+esac
 
 finish

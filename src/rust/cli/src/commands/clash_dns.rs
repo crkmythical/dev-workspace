@@ -10,14 +10,12 @@
 //! `resolve_dns` is shared with the boot render (entrypoint render-clash-config) and `setup`.
 
 use crate::commands::system_env;
-use sdw_core::egress::domain::{choose_clash_dns, render_clash_config};
-use sdw_core::egress::layout::{
-    CLASH_CONFIG_PATH, CLASH_DNS_OVERRIDE_PATH, CLASH_PROVIDERS_DIR, CLASH_TEMPLATE_PATH,
-};
+use sdw_core::egress::domain::choose_clash_dns;
+use sdw_core::egress::layout::CLASH_DNS_OVERRIDE_PATH;
 use sdw_core::workspace::config::load_config;
+use sdw_infra::clash::{write_config, ConfigOptions, SecretPolicy};
 use sdw_infra::egress::{foreign_dns_reachable, reload_clash};
 use std::fs;
-use std::path::Path;
 
 /// The nameservers Clash should use right now and a short label for where the choice came from.
 /// The boot probe (`foreign_dns_reachable`) runs ONLY when neither an override file nor CLASH_DNS
@@ -94,24 +92,16 @@ fn apply(msg: &str) -> i32 {
         eprintln!("set-clash-dns: CLASH_SUBSCRIPTION_URL is not set; nothing to render.");
         return 1;
     }
-    if !Path::new(CLASH_TEMPLATE_PATH).exists() {
-        eprintln!("set-clash-dns: template not found at {CLASH_TEMPLATE_PATH}.");
-        return 1;
-    }
     let (dns, source) = resolve_dns();
-    let template = match fs::read_to_string(CLASH_TEMPLATE_PATH) {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("set-clash-dns: cannot read template: {e}");
-            return 1;
-        }
-    };
-    let _ = fs::create_dir_all(CLASH_PROVIDERS_DIR);
-    if let Err(e) = fs::write(
-        CLASH_CONFIG_PATH,
-        render_clash_config(&template, &config.clash_subscription_url, &dns),
-    ) {
-        eprintln!("set-clash-dns: cannot write {CLASH_CONFIG_PATH}: {e}");
+    if let Err(e) = write_config(&ConfigOptions {
+        subscription_url: &config.clash_subscription_url,
+        dns_nameservers: &dns,
+        allow_lan: false,
+        // Clash is running and holds the current secret; a new one in the file would leave the
+        // controller and the file disagreeing until the next restart.
+        secret: SecretPolicy::Keep,
+    }) {
+        eprintln!("set-clash-dns: {e}");
         return 1;
     }
     println!("{msg}");

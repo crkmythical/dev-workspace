@@ -17,7 +17,7 @@ tests/smoke/run.sh --image dev-workspace:latest --reuse --only '^50'   # 只重�
 
 ## 它不会碰什么
 
-每个实例是独立的 compose 项目（容器、网络、卷、端口都带 `sdw-smoke` 前缀），**不读仓库的 `.env`**，用 `smoke.env` 里的占位值。所以可以放心在已经有真实工作区的机器上跑：端口 18090–18096、网络 `172.30.77.0/24`–`172.30.83.0/24` 被占用时用 `--port`、`--net`、`--project` 改。退出时按项目名清理全部容器、卷、网络（`--keep` / `--reuse` 除外）。
+每个实例是独立的 compose 项目（容器、网络、卷、端口都带 `sdw-smoke` 前缀），**不读仓库的 `.env`**，用 `smoke.env` 里的占位值。所以可以放心在已经有真实工作区的机器上跑：端口 18090–18101、网络 `172.30.77.0/24`–`172.30.88.0/24` 被占用时用 `--port`、`--net`、`--project` 改。退出时按项目名清理全部容器、卷、网络（`--keep` / `--reuse` 除外）。
 
 ## 结构
 
@@ -25,10 +25,11 @@ tests/smoke/run.sh --image dev-workspace:latest --reuse --only '^50'   # 只重�
 |------|--------|
 | `run.sh` | 入口：预检、（可选）构建、起主实例、依次跑 `checks/*.sh`，`--services` 再跑 `services/*.sh`，汇总 |
 | `lib.sh`, `stack.sh` | 断言、`docker exec` 包装、起停实例；`instance` 临时切到另一个实例（另一个项目、端口、网络） |
-| `docker-compose.smoke.yml` | 叠在仓库的 `docker-compose.yml` 上：换镜像、换 `env_file`、独立名字和端口、加假上游 |
+| `docker-compose.smoke.yml` | 叠在仓库的 `docker-compose.yml` 上：换镜像、换 `env_file`、独立名字和端口、加假上游；补上 pentest 插件要的 `SYS_CHROOT` / `MKNOD` / `NET_RAW`（默认 compose 已不带它们） |
+| `smoke.env`, `*.env` | 实例的环境。`smoke.env` 里 **`EGRESS_ENFORCE=0`**：出口防火墙默认是开的，而除 `72` 外的检查都要直连辅助容器（sshd、MinIO、git 服务、假上游）；`72` 用 `enforce.env`（该变量留空 = 默认 = 开启，外加 `EGRESS_ALLOW_CIDRS`）另起实例 |
 | `fixtures/fake_upstream.py` | 假的 Clash 订阅 + 假的 HTTP 代理节点（把 CONNECT 转给真实互联网并记录），可选再列一个 Shadowsocks 节点 |
 | `fixtures/sync_e2e.ts` | 真实的同步协议客户端（core）对真实服务，在容器里跑 |
-| `fixtures/stubs/` | `debootstrap`、`apt-get`、`curl` 的替身（两个几百 MB 的下载和 2 GB 的 rootfs），`45-plugins.sh` 用 |
+| `fixtures/stubs/` | `debootstrap`、`apt-get`、`curl` 的替身（两个几百 MB 的下载和 2 GB 的 rootfs），`45-plugins.sh` 用；`desktop-install` 的测试还通过 `SDW_TOOLS_DIR` 指向假的版本固定文件，真实的校验和校验照常运行 |
 | `fixtures/git_http_server.py` | 像 GitHub 那样要 token 的 git smart-HTTP 服务 |
 | `browser/` | Playwright + 系统 Chrome：同步页、紧急页、`/vnc/` 和 `/desktop/` 的画面与输入 |
 | `manual/` | 手动跑的验证脚本（Cloudflare 快速隧道、另一种 CPU 架构），见下 |
@@ -36,18 +37,25 @@ tests/smoke/run.sh --image dev-workspace:latest --reuse --only '^50'   # 只重�
 | 检查 | 内容 |
 |------|------|
 | `10-boot` | 启动日志、healthy、横幅、出口、各服务在跑、`doctor` |
-| `20-auth` | code-server 登录、`/vnc/`（`-full` 还有 `/desktop/`）的认证与 WebSocket 升级、同步页、自毁端点对错误口令一律 404 |
+| `15-clash` | 渲染出的 Clash 配置（0600、属主、模板属于镜像不在卷里）、控制器要求 secret、改 DNS 热加载且不轮换 secret、watcher 把被杀的 Clash 重新拉起 |
+| `20-auth` | 登录网关（无会话一律去登录页、cookie 属性、`next` 不能跳出本站）、响应头（CSP、HSTS、`Secure`）、WebSocket 的 Origin 校验、code-server / `/vnc/` **不再有第二个密码**、同步页、自毁端点对错误口令一律 404 |
+| `25-audit` | 审计日志（登录、限速、自毁调用；没有口令；0600）、Caddy / Clash 的运行用户与环境、`audit-log`、`doctor` 的审计行 |
 | `30-sync` | 同步协议全流程（分块、finalize、带认证的列表、重放 / 伪造 / 过期 / 路径穿越） |
 | `40-vault` | 磁盘上没有明文、被占用时 `lock-vault` 的行为（拒绝后恢复被停掉的服务）、干净锁定、错口令、强制锁定、重建容器后数据还在 |
 | `45-plugins` | `desktop-install`、pentest 插件（init / unlock / bootstrap 含 Kali 失败回退 / `pentest` 进入 / lock） |
 | `50-backup` | restic 监视器：基线、防抖、被排除的路径、恢复、仓库消失 3 次后写通知、恢复后清通知 |
 | `55-browser` | 真实 Chrome：同步页上传、紧急页、桌面画面和输入 |
 | `60-replication` | `vault-sync` 按 cron 的方式跑（无容器环境变量）：推送、无变化不提交、远端不可用 3 次后写通知、恢复后补推 |
-| `70-egress-variants` | 出口 degraded（订阅无节点）、down（Clash 起不来）、缺必填变量时拒绝启动 |
+| `65-secrets` | 文件型密钥：环境里没有口令和订阅 URL、用文件里的口令建 vault 并登录、读不了的文件让容器拒绝启动 |
+| `70-egress-variants` | 出口 degraded（订阅无节点，且**不退回直连**）、down（Clash 起不来 / 模板被破坏）、缺必填变量时拒绝启动 |
+| `72-egress-enforce` | 出口防火墙：默认（该变量留空）就是开；它挡什么（root 和 `dev` 都不能直连，名字由 Clash 解析）、还放行什么（Clash、`EGRESS_ALLOW_CIDRS`、经 Clash 的 ssh）、`EGRESS_ENFORCE=0` 真的关掉并明说、过宽的白名单让启动停下；默认 compose 不再带 pentest 的 capability |
+| `75-privilege` | 谁以谁运行（`dev` / root / `caddy` / `clash`）、`dev` 够不到的东西（密文、运行时目录、审计日志、Clash 配置、PID 1 的环境）、工作区进程环境里没有密钥、`doas` 桥接只放行名单里的命令、运营者命令被拒绝并提示 `docker exec` |
 | `80-destruct` | 自毁两条路（HTTP 端点含限流和伪造头、CLI 从 vault 内运行），之后容器 inert、密钥和密文都没了 |
 | `services/10-s3-backup` | restic 对 S3 端点（`rclone serve s3`）：启动建库、监视器写快照、恢复、IP / 主机名两种写法的代理路径 |
-| `services/20-git-remotes` | 无人值守的 `vault-sync` 对真实 sshd（首次信任并固定主机密钥，之后变了就拒绝）和 token-in-URL 的 HTTP git |
+| `services/20-git-remotes` | 无人值守的 `vault-sync` 对真实 sshd（首次信任并固定主机密钥，之后变了就拒绝）和 token-in-URL 的 HTTP git；**跑两遍**：主实例（无防火墙）直连，和另一个防火墙默认开启的实例——那里只能经 Clash（ssh 走启动时写的 ProxyCommand，git 走 `http.proxy`），假节点的日志里能看到两条 CONNECT |
 | `services/30-shadowsocks` | 订阅里列一个真实的 Shadowsocks 节点：Clash 加载、url-test 选中、请求真的经它上网 |
+| `services/40-croc` | croc 的 `push` / `pull` 经自建中继 |
+| `services/50-clash-client` | `deploy/client` 的独立 Clash（`sdw proxy-only`，由 `clash-client` 阶段从工作树构建）：用同一个渲染器和探测，控制器要 secret |
 
 ## 手动做的验证（不在默认运行里）
 

@@ -22,7 +22,8 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: latest
+          # The version the image's spa-builder stage and the smoke tests use (oven/bun:1.4.3).
+          bun-version: 1.4.3
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -47,6 +48,9 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
+          # Required when the action is pinned by SHA: it otherwise takes the toolchain from the ref
+          # name (@stable), and a commit hash is not a toolchain.
+          toolchain: stable
           components: rustfmt, clippy
 
       - name: Cache
@@ -62,3 +66,53 @@ jobs:
 
       - name: Test
         run: cargo test --workspace --locked
+
+  # Known vulnerabilities in the dependencies that end up in the image: the Rust crates (the policy,
+  # with a reason for every ignored advisory, is src/rust/.cargo/audit.toml) and the Bun packages
+  # (the SPA and its build tools). An advisory that appears after a merge fails the next run.
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked --version 0.22.2
+
+      - name: cargo audit
+        working-directory: src/rust
+        run: cargo audit
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.3
+
+      - name: Install dependencies
+        working-directory: src
+        run: bun install --frozen-lockfile
+
+      - name: bun audit
+        working-directory: src
+        run: bun audit --audit-level=high
+
+  # Shell scripts (shellcheck is preinstalled on the runner) and the rule that no secrets file is
+  # ever tracked: .env holds the master password, which is also the vault passphrase.
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: No secrets file is tracked
+        run: deploy/scripts/check-tracked-secrets.sh
+      - name: shellcheck
+        run: make lint-sh
+      # The host scripts that handle secrets or delete things, against fakes (no Docker needed).
+      - name: Script tests
+        run: |
+          bash src/tests/scripts/orchestration-lib.test.sh
+          bash src/tests/scripts/destroy.test.sh
+          bash src/tests/scripts/secrets-guard.test.sh

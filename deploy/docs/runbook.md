@@ -31,10 +31,10 @@ docker exec -it dev-workspace doctor         # Health check
 
 ## Password Rotation
 
-The vault, code-server, the desktops and the sync key share one password, so rotating it means
-changing the vault passphrase and `PASSWORD` together. There is no `change-password` command
-(older versions had one). Needs an explicit `PASSWORD` in `.env`: a generated one stays in
-code-server's config and would still be the old one at the next start.
+The login gate, the vault and the sync key share one password, so rotating it means changing the
+vault passphrase and `PASSWORD` together. There is no `change-password` command (older versions
+had one). Needs an explicit `PASSWORD` in `.env`: a generated one is kept in the container's
+`/var/lib/sdw/master-password` and would still be the old one at the next start.
 
 ```bash
 docker exec -it dev-workspace lock-vault
@@ -45,9 +45,26 @@ docker exec -it dev-workspace destruct-passphrase                # the remote se
 # Then: Sync Page → Clear key → Set passphrase (new password)
 ```
 
-Checked in a container: after these steps the vault opens with the new password and keeps its
-data, `/vnc/` accepts the new password and rejects the old one, code-server's config and the sync
-key file carry the new one. The Sync Page step (browser side) was not exercised.
+After these steps the vault opens with the new password and keeps its data; the login page accepts
+the new password and rejects the old one (the gate takes a bcrypt hash of `PASSWORD` at every
+start); `/run/sdw/sync-passphrase` is rewritten at the next unlock. Every browser session ends with
+the recreate. The Sync Page step (browser side) is not exercised by the smoke suite.
+
+### Raise the scrypt cost of an existing vault
+
+A new vault wraps its master key with scrypt N=2^18; a vault made before that has gocryptfs's
+default N=2^16. `gocryptfs.conf` is replicated with the ciphertext, so the cost is what stands
+between a weak passphrase and an offline guess. The same command raises it, keeping the master key
+and the data (enter the SAME passphrase for the old and the new one):
+
+```bash
+docker exec -it dev-workspace lock-vault
+docker exec -it dev-workspace gocryptfs -passwd -scryptn 18 /vault/cipher
+docker exec -it dev-workspace unlock-vault
+```
+
+The old `gocryptfs.conf` stays in the git history of the ciphertext remote (`VAULT_GIT_REPO`), so a
+vault whose passphrase was weak should get a strong one (rotate it, above), not just a higher cost.
 
 ## Disaster Recovery (restore from the off-host backup)
 
@@ -77,11 +94,73 @@ container AND every volume, recreates a fresh stack, restores the pre-loss snaps
 checks the canary returns byte-for-byte. Run it against any image:
 `SMOKE_IMAGE=dev-workspace:<img> SMOKE_PASSWORD=<pw> bash src/tests/smoke/dr-drill.sh`.
 
+## Who did what (audit trail)
+
+Logins, logouts, Cloudflare Access sign-ins, WebSocket handshakes refused for their `Origin`
+(`gate.origin`), every call to the self-destruct endpoint and every
+change of the egress status are written, one JSON object per line, to `/var/log/sdw/audit.jsonl`
+(root only; rotated at 5 MiB, three files; on the `audit-data` volume, so it survives a container
+re-creation but not `docker compose down -v`) and to the container's stdout.
+
+```bash
+docker exec dev-workspace audit-log            # the last 20 events, one line each
+docker exec dev-workspace audit-log 200        # more
+docker exec dev-workspace audit-log --json 50  # the raw lines, for jq
+docker exec dev-workspace doctor               # the "Audit trail" row summarises the last 24 hours
+docker logs dev-workspace | grep '"event":"auth.login"'   # the stdout copy
+```
+
+Reading it: the address is what the proxies in front *claim* (`CF-Connecting-IP`, else the first
+`X-Forwarded-For` hop), so it is evidence, not proof. There is one master password, hence no user
+name; behind Cloudflare Access the `who` field of `auth.access` is the Access e-mail or subject.
+A `throttled` login means more than 10 attempts a minute from one address (or 60 in all): the
+right password is refused too until the minute is over. `audit.suppressed` lines stand for events a
+flood of wrong passwords or refused destruct calls would otherwise have written (at most 30 a
+minute are kept). Optional Prometheus counters: `METRICS_ENABLED=1`, then `GET /sync/api/metrics`
+(behind the login gate).
+
+## Egress firewall
+
+Everything the workspace sends out goes through Clash, and an nftables filter drops the rest. It is
+on by default, loaded at every start before Clash comes up, and `doctor` has a row for it
+(`Egress firewall`: failed if it is wanted and missing, a warning if you turned it off).
+
+What it changes for the people using the workspace:
+
+* A tool that ignores `http_proxy` / `all_proxy` (a raw socket, UDP, QUIC, a program that does its
+  own DNS) cannot connect: it hangs until its own timeout. Most tools honour the proxy; `ssh` does
+  not, so the start-up writes `/etc/ssh/ssh_config.d/10-sdw-egress.conf`, which sends it through
+  Clash (loopback hosts excepted). `noproxy <cmd>` is dropped as well.
+* A host on your LAN or in another Docker network is unreachable, unless you list it:
+  `EGRESS_ALLOW_CIDRS=192.168.1.0/24,10.0.0.5` in `.env` (addresses or CIDR blocks; names are not
+  accepted, use `extra_hosts:` in the compose file for a name). Traffic to those networks leaves
+  with this machine's real address and bypasses Clash; tools are told through `no_proxy`, and for
+  `ssh` you put `ProxyCommand none` for that host in `~/.ssh/config`. A block wider than /8 (IPv6:
+  /16), a name, or a typo stops the boot with the entry named, rather than being skipped.
+* Names inside a compose network (`db`, a sibling container) do not resolve: the resolver is Clash.
+* `EGRESS_ENFORCE=0` turns it off. The banner, the boot log and `doctor` then say so on every
+  start. Docker without `NET_ADMIN`, or a host without nftables, makes the boot stop with
+  `nft load failed` and this variable named; that is deliberate (it will not boot believing its
+  egress is closed).
+* `pentest-bootstrap` and `pentest` need `SYS_CHROOT` and `MKNOD`, which the default container does
+  not have: add `docker-compose.pentest.yml` to `COMPOSE_FILE` (they refuse to start, and say so,
+  otherwise). Tor is set up to reach the network through Clash, so it should work behind the
+  firewall (that combination has not been run); a raw `nmap -sS` or `ping` does not, so put the
+  lab network in `EGRESS_ALLOW_CIDRS`.
+
 ## Troubleshooting
 
 | Issue | Fix |
 |-------|-----|
-| Clash not connecting | Check subscription URL; verify provider loaded: `curl -s http://127.0.0.1:9090/providers/proxies/subscription \| jq '.proxies \| length'`; restart container if needed |
+| Boot stops with `EGRESS_ALLOW_CIDRS: '…': …` | The value has an entry that is not an IPv4/IPv6 address or CIDR block, or is wider than /8 (IPv6: /16). Fix it in `.env` and `docker compose up -d` |
+| Boot stops with `nft load failed` | The container has no `NET_ADMIN`, or nftables does not work on this host (gVisor, some rootless setups). Add the capability, or set `EGRESS_ENFORCE=0` and accept the consequences above |
+| A command hangs when it connects to an address in the LAN | The egress firewall dropped it. List the network in `EGRESS_ALLOW_CIDRS`. A command that ignores the proxy variables for an Internet address is dropped too, by design |
+| Start-up warns `fs.inotify.max_user_watches is …` | The host's limit is low and a container cannot raise it. On the Docker host (inside the VM on Docker Desktop / Colima): `sudo sysctl -w fs.inotify.max_user_watches=524288`, and put it in `/etc/sysctl.d/` to keep it |
+| `pentest-bootstrap` says the pentest plugin needs capabilities | `COMPOSE_FILE=docker-compose.yml:docker-compose.pentest.yml` in `.env` (add `:docker-compose.apparmor.yml` on a Linux or Colima host), then `docker compose up -d` |
+| A desktop does not start or its screen stays black | The desktop programs write to `/var/log/desktop/<program>.log` (2 MB, one backup): `docker exec dev-workspace tail -n 50 /var/log/desktop/*.log` |
+| The container keeps restarting right after start | `docker logs dev-workspace` ends with the step that stopped the boot (`boot aborted at "…"`). A secret given as `<NAME>_FILE` that cannot be read, a bad `EGRESS_ALLOW_CIDRS` and a missing capability all stop it there |
+| The workspace seems hung (`docker ps` says unhealthy) | Docker reports it but does not restart on it. `docker restart dev-workspace`; the vault is locked on stop and unlocked again at start |
+| Clash not connecting | Check the subscription URL. `docker exec dev-workspace doctor` shows how many nodes loaded. The controller (127.0.0.1:9090) wants the secret that is in Clash's rendered config, which only root can read: `docker exec dev-workspace sh -c 'curl -s -H "Authorization: Bearer $(sed -n "s/^secret: \"\(.*\)\"$/\1/p" /etc/clash/config.yaml)" http://127.0.0.1:9090/providers/proxies/subscription' \| jq '.proxies \| length'`. The config is rendered again at every start from the image's template, so edit the subscription in `.env`, not in the file; restart the container if needed |
 | Start-up banner says `Egress: DEGRADED` or `DOWN` | The workspace started anyway. `doctor` shows the live state; `cat /var/run/egress-status` shows what the start-up probe saw; with the vault open, `/workspace/.notifications/egress-degraded.md` explains. DOWN: nothing listens on :7890 (check the Clash config and subscription URL). DEGRADED: proxy up but the probe failed, usually nodes still loading; retry `doctor` in a minute |
 | Vault unlock fails, `Password incorrect` | Wrong passphrase. If `PASSWORD` is empty and the container was recreated, the start-up generated a new password and the vault still wants the old one: run `docker exec -it dev-workspace unlock-vault` with the old one, then put it in `PASSWORD` in `.env` (the start-up prints this hint) |
 | Vault unlock fails, `fusermount3: mount failed: Permission denied` | The host's AppArmor profile forbids the FUSE mount (Ubuntu, Debian). Uncomment `COMPOSE_FILE=docker-compose.yml:docker-compose.apparmor.yml` in `.env` and `docker compose up -d`; see the AppArmor note in `deploy/docs/threat-model.md` before doing so |
@@ -93,9 +172,33 @@ checks the canary returns byte-for-byte. Run it against any image:
 ## Destroy
 
 ```bash
-./destroy.sh --force              # Standard
+./destroy.sh --force              # Standard: this project's containers, volumes and images, the tunnel
 ./destroy.sh --force --paranoid   # Deep clean (history, DNS, creds)
+./destroy.sh --force --delete-project   # ... and this checkout itself (nothing deletes it unless you say so)
 ```
+
+The volumes removed are the ones of THIS compose project (matched by label, not by name), so a
+second workspace on the same machine keeps its vault.
+
+## Move to a new machine
+
+```bash
+./bootstrap.sh --vault-repo <VAULT_GIT_REPO url>   # clones the ciphertext, builds, restores
+```
+
+The clone is copied into the vault volume BEFORE the container first starts (a start with an empty
+volume would create a NEW vault, not open the old one); the script refuses to do it when a vault
+already exists there. Set the same `PASSWORD` in `.env`: it is the vault passphrase. A fresh
+workspace instead: `./bootstrap.sh --init`.
+
+## Keep the pinned tools current
+
+Every program the image downloads (Caddy, restic, croc, Clash/mihomo, code-server, KasmVNC, mise,
+IDEA, Burp Suite) is pinned to a version and a checksum in `src/image/tools/<name>.env`, and the
+build fails if a download does not match. `make check-tools` lists the ones behind their project's
+latest release (CI runs it weekly, `.github/workflows/tools.yml`); `make update-tools` writes the
+new pins, and the diff is reviewed like any dependency bump. `make audit` checks the Rust and Bun
+dependencies against the advisory databases.
 
 ## Emergency Self-Destruct
 
@@ -131,7 +234,7 @@ curl -X POST https://<hostname>/sync/api/destruct \
 ### 销毁后行为
 
 1. 容器进入 inert 模式 (`sleep infinity`)
-2. 宿主机 host-watcher 检测到 marker → 自动执行 `destroy.sh --force --paranoid`（在监视器的服务之外运行：`--paranoid` 会卸载监视器自己的服务，作为子进程运行会被一起杀掉，清理在这一步被截断；已修复，升级后需要重启监视器）
+2. 宿主机 host-watcher 检测到 marker → 自动执行 `destroy.sh --force --paranoid --delete-project`（在监视器的服务之外运行：`--paranoid` 会卸载监视器自己的服务，作为子进程运行会被一起杀掉，清理在这一步被截断；已修复，升级后需要重启监视器）。watcher 只盯**它自己那个容器**的 destruct-state 卷（容器名取自 `WORKSPACE_CONTAINER_NAME`），同一台机器上别的工作区实例的自毁不会触发它
 3. 清理: `docker compose down -v` 即可移除 inert 容器
 
 ### 安装 host-watcher

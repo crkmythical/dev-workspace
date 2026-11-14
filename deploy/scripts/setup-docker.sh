@@ -29,7 +29,11 @@ fi
 # Check disk space
 DOCKER_ROOT=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo "/var/lib/docker")
 if command -v df &>/dev/null; then
-  DISK_AVAIL=$(df -BG "$DOCKER_ROOT" 2>/dev/null | awk 'NR==2{print $4}' | tr -d 'G')
+  # On macOS (Docker Desktop, Colima) Docker's data directory is inside the VM, not on this host, so
+  # look at the host disk the VM image lives on. `df -P -k` is POSIX: GNU `df -BG` does not exist on
+  # macOS and, under `set -e -o pipefail`, used to end the whole script here.
+  if [[ "$(uname)" == "Darwin" ]]; then DISK_PATH="$HOME"; else DISK_PATH="$DOCKER_ROOT"; fi
+  DISK_AVAIL=$(df -P -k "$DISK_PATH" 2>/dev/null | awk 'NR==2 {printf "%d", $4/1048576}' || true)
   if [[ -n "$DISK_AVAIL" ]] && [[ "$DISK_AVAIL" -lt 100 ]]; then
     echo "⚠ Available disk: ${DISK_AVAIL}GB — recommend ≥100GB"
     echo "  → Docker Desktop → Settings → Resources → Disk image size"

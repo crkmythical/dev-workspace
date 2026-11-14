@@ -7,6 +7,47 @@
 }
 
 :8080 {
+	# RESPONSE HEADERS for everything this site serves, the backends' answers included (`defer`
+	# applies them after the proxied response, and `?` leaves a header alone when the backend sets
+	# its own, so code-server's and KasmVNC's own policies win). What they cannot be given a policy
+	# for (code-server's workbench needs inline scripts and eval) stays without a CSP; the pages we
+	# own get one below.
+	#
+	# One block PER header, on purpose: Caddy turns the `?` of a block into a requirement on the
+	# whole block ("apply only if none of these headers is already set"), so in a single block one
+	# header the backend sets (the /sync/ page sets X-Frame-Options itself) silently cancelled all
+	# the others (measured). Separate blocks are independent.
+	header {
+		?X-Content-Type-Options nosniff
+		defer
+	}
+	header {
+		?X-Frame-Options SAMEORIGIN
+		defer
+	}
+	header {
+		?Referrer-Policy same-origin
+		defer
+	}
+	header {
+		# Browser features nothing here uses. The desktop streams NEED the others (fullscreen,
+		# pointer lock, clipboard, microphone, keyboard lock), so they are not listed.
+		?Permissions-Policy "geolocation=(), payment=(), usb=(), serial=(), bluetooth=(), camera=()"
+		defer
+	}
+	header {
+		-Server
+		defer
+	}
+	# HSTS only for a request that came in over HTTPS: the edge says so in X-Forwarded-Proto and, for
+	# Cloudflare, CF-Visitor. Browsers ignore it on plain HTTP, but there is no point sending a
+	# promise we cannot keep. (Caddy overwrites X-Forwarded-Proto for the services BEHIND it, since
+	# the client in front is not a trusted proxy, so the gate reads CF-Visitor for the cookie.)
+	@https_xfp header X-Forwarded-Proto https
+	header @https_xfp Strict-Transport-Security "max-age=31536000"
+	@https_cf header_regexp scheme CF-Visitor `"scheme"\s*:\s*"https"`
+	header @https_cf Strict-Transport-Security "max-age=31536000"
+
 	# UNIFIED AUTH GATEWAY (see deploy/docs/design-unified-auth-gateway.md).
 	# Deny-by-default: ONE session-cookie check sits in front of every route, HTTP and WebSocket
 	# alike. A same-origin cookie rides the WS upgrade handshake (Basic Auth cannot), so the single
@@ -39,9 +80,8 @@
 
 		# --- Protected backends (reached only after the gate passes) ---
 		# Remote desktop(s): per-stack snippets provisioned at build time into /etc/caddy/desktop.d/
-		#   selkies → /desktop/ (+ WS /desktop/websockets)   kasmvnc → /vnc/ (+ WS /websockify)
-		# They keep any native backend auth as defense-in-depth (KasmVNC does); it is no longer the
-		# perimeter.
+		#   selkies → /desktop/ (+ WS /desktop/api/websockets)   kasmvnc → /vnc/ (+ WS /websockify)
+		# The backends have no login of their own; this gate is the only one.
 		import /etc/caddy/desktop.d/*.caddy
 
 		# Sync: API proxied to the daemon, SPA served from dist. doctor is no longer specially
@@ -50,11 +90,15 @@
 			reverse_proxy 127.0.0.1:8081
 		}
 		handle_path /sync/* {
+			# The sync page is ours: scripts only from itself, requests only to itself, and it
+			# cannot be framed (it holds the break-glass self-destruct form).
+			header Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+			header X-Frame-Options DENY
 			root * /opt/workspace/packages/spa/dist
 			file_server
 		}
 
-		# code-server (default). Keeps its own password as defense-in-depth behind the gate.
+		# code-server (default), run with --auth none: this gate is the only login.
 		handle {
 			reverse_proxy 127.0.0.1:8082
 		}

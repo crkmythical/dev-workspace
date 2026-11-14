@@ -17,8 +17,6 @@ pub trait EgressPorts {
     /// Fetch the subscription again now. Clash fetches it once at start-up and, if that fails
     /// (network not up yet after a reboot), tries again only after an hour.
     fn refresh_provider(&self) -> Result<(), String>;
-    /// GLOBAL defaults to DIRECT, which bypasses the proxy: point it at the auto-select group.
-    fn select_auto_node(&self) -> Result<(), String>;
     /// One request to the probe target THROUGH the proxy.
     fn probe(&self) -> Result<bool, String>;
     fn sleep(&self, ms: u64);

@@ -72,9 +72,39 @@ expect_code() { # name expected-code curl-args...
   expect_eq "$name" "$want" "$(http_code "$@")"
 }
 
+# gate_login [password]: log in at the ingress auth gateway (POST /auth/login) and print the session
+# cookie as "sdw_session=<token>", ready for `curl -H "Cookie: $(gate_login)"`. Prints nothing when
+# the login is refused. Every route except /auth/* and /sync/api/destruct sits behind this gate.
+gate_login() {
+  curl -s --noproxy '*' --max-time 30 -i -X POST --data-urlencode "password=${1:-$SMOKE_PASSWORD}" \
+    --data-urlencode "next=/" "${2:-$BASE}/auth/login" |
+    tr -d '\r' | sed -n 's/^[Ss]et-[Cc]ookie: \(sdw_session=[^;]*\).*/\1/p' | head -1
+}
+# docker_build_retry <tag>: build a helper image from the Dockerfile on stdin, up to three times.
+# The small test servers (sshd, git over HTTP, a Shadowsocks node) are built from an Alpine base, and
+# the Alpine mirrors drop connections from some networks; `docker build -q` also hides why a build
+# failed, so the last attempt is repeated verbosely when all three fail.
+docker_build_retry() {
+  local tag="$1" dockerfile i
+  dockerfile="$(cat)"
+  for i in 1 2 3; do
+    if printf '%s\n' "$dockerfile" | docker build -q -t "$tag" - >/dev/null 2>&1; then return 0; fi
+    sleep 5
+  done
+  printf '%s\n' "$dockerfile" | docker build -t "$tag" - 2>&1 | tail -20
+  return 1
+}
 # docker exec into the main workspace (dxi: with stdin).
 dx() { docker exec "$WS" "$@"; }
 dxi() { docker exec -i "$WS" "$@"; }
+# clash_api <path> [curl args...]: a request to the Clash controller inside the workspace, with the
+# bearer secret read from the rendered config in there (it never appears on a host command line).
+clash_api() {
+  local path="$1"
+  shift
+  # shellcheck disable=SC2016 # the script is meant to expand in the container, not here
+  dx sh -c 'secret=$(sed -n "s/^secret: \"\(.*\)\"$/\1/p" /etc/clash/config.yaml); curl -s -H "Authorization: Bearer $secret" "$@"' _ "http://127.0.0.1:9090${path}" "$@"
+}
 
 # wait_until <seconds> <command...>: poll every 2 s until the command succeeds.
 wait_until() {

@@ -4,6 +4,7 @@
 //! first (they hold fds on the mount), then the vault is unmounted; a busy unmount can be forced.
 
 use crate::prompt::prompt_line;
+use sdw_core::sync::layout::SYNC_PASSPHRASE_PATH;
 use sdw_core::vault::ports::UnmountMode;
 use sdw_core::vault::specs::workspace_vault;
 use sdw_core::vault::usecases::{cancel_lock, lock_vault, LockDeps, LockResult};
@@ -67,6 +68,8 @@ pub fn run(_args: &[String]) -> i32 {
         }
     }
 
+    // The sync key source is only valid while the vault is open.
+    let _ = std::fs::remove_file(SYNC_PASSPHRASE_PATH);
     broadcast_state("locked");
     if forced {
         // A lazy unmount detaches at once, but whoever already had a file open keeps it.

@@ -15,3 +15,8 @@ sha2 = "0.10"
 base64 = "0.22.1"
 serde_json = "1"
 bcrypt = "0.15"
+# Who am I (is_root): the commands behave differently for root and for the unprivileged workload.
+rustix = { version = "1", default-features = false, features = ["process", "std"] }
+
+[dev-dependencies]
+tempfile = "3"

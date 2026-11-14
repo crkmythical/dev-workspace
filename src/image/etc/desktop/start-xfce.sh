@@ -25,7 +25,9 @@ export XDG_CACHE_HOME="${XDG_CACHE_HOME:-/tmp/.desktop-cache}"
 export http_proxy=http://127.0.0.1:7890
 export https_proxy=http://127.0.0.1:7890
 export all_proxy=socks5h://127.0.0.1:7890
-export no_proxy=localhost,127.0.0.0/8,172.16.0.0/12,10.0.0.0/8
+# The launcher (`sdw workload`) hands over a no_proxy that already lists the networks of
+# EGRESS_ALLOW_CIDRS; the default is the image's own (Dockerfile ENV).
+export no_proxy="${no_proxy:-localhost,127.0.0.0/8,172.16.0.0/12,10.0.0.0/8,169.254.0.0/16}"
 export HTTP_PROXY=$http_proxy
 export HTTPS_PROXY=$https_proxy
 export ALL_PROXY=$all_proxy

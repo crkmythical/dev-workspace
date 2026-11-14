@@ -10,7 +10,8 @@ pub const SHARED_DIR: &str = "/workspace/shared";
 /// In-flight chunked uploads (stale ones cleaned by image/etc/cron.d/cleanup). `{SHARED_DIR}/.uploads`.
 pub const UPLOAD_TRACKING_DIR: &str = "/workspace/shared/.uploads";
 
-/// The AEAD sync key is derived from this file. It lives inside the vault, so it is only readable
-/// while the vault is mounted: its disappearance is the authoritative "vault locked" signal.
-/// `{CREDENTIALS_DIR}/sync-passphrase`.
-pub const SYNC_PASSPHRASE_PATH: &str = "/workspace/.credentials/sync-passphrase";
+/// The AEAD sync key is derived from this file, written at unlock and removed at lock, so its
+/// presence is the authoritative "vault unlocked" signal. It holds the vault passphrase, so it is
+/// NOT in the vault (where the unprivileged workload owns every file) but in the root-only runtime
+/// directory. `{PRIVATE_RUN_DIR}/sync-passphrase`.
+pub const SYNC_PASSPHRASE_PATH: &str = "/run/sdw/sync-passphrase";

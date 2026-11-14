@@ -9,20 +9,19 @@ x-workspace: &workspace-base
   # user plus a microVM (Firecracker/Kata) is the real isolation fix (see deploy/docs/threat-model.md).
   cap_drop:
     - ALL
+  # SYS_CHROOT, MKNOD and NET_RAW (the pentest plugin's rootfs and raw-socket tools) are NOT here:
+  # docker-compose.pentest.yml adds them, together with the direct network access they need.
   cap_add:
     - SYS_ADMIN        # gocryptfs / FUSE mount
-    - NET_ADMIN        # nftables egress firewall (EGRESS_ENFORCE) + Clash
+    - NET_ADMIN        # the nftables egress firewall (EGRESS_ENFORCE, on by default) + Clash
     - CHOWN            # entrypoint chowns /etc/clash to the clash uid; apt/dpkg; desktop-install
     - DAC_OVERRIDE     # root reads/writes across file modes (apt, tooling)
     - FOWNER           # dpkg/apt operate on files they do not own
     - FSETID           # dpkg preserves setuid/setgid bits on install
-    - SETUID           # run Clash as the clash uid (setpriv); debootstrap/apt drop to _apt
+    - SETUID           # run Clash and the workload as their uids (setpriv); apt drops to _apt
     - SETGID           # same
     - KILL             # lock-vault / unmount kill mount holders (incl. the non-root clash uid)
     - NET_BIND_SERVICE # Clash's DNS listener on :53
-    - SYS_CHROOT       # pentest enters its rootfs (chroot)
-    - MKNOD            # debootstrap / pentest rootfs device nodes
-    - NET_RAW          # pentest tools (nmap, ping)
   security_opt:
     # Required for XFCE desktop (glycin/bwrap sandbox needs pivot_root)
     - seccomp:unconfined
@@ -33,6 +32,9 @@ x-workspace: &workspace-base
     - cache-data:/pentest/cipher
     - clash-config:/etc/clash
     - destruct-state:/var/run/self-destruct
+    # The audit trail (who logged in or tried to, self-destruct calls, egress changes): kept across
+    # a container re-creation; `docker compose down -v` (destroy.sh) removes it with the rest.
+    - audit-data:/var/log/sdw
   ports:
     - "127.0.0.1:${TUNNEL_HOST_PORT:-18080}:8080"
   restart: unless-stopped
@@ -76,6 +78,16 @@ services:
         DESKTOP_STACK: ${DESKTOP_STACK:-kasmvnc}
         APT_MIRROR: ${APT_MIRROR:-mirrors.aliyun.com}
         KALI_MIRROR: ${KALI_MIRROR:-http.kali.org}
+        # Optional GitHub download mirror for the pinned tools, build-time only (empty = GitHub
+        # direct). fetch-tool still verifies the pinned sha256, so the mirror cannot swap in other
+        # bytes. See SDW_GH_MIRROR in .env.example.
+        SDW_GH_MIRROR: ${SDW_GH_MIRROR:-}
+        # Outbound proxy for the BUILD only (empty = none). BuildKit treats these three as
+        # predefined build args: they reach every RUN step but are not recorded in the image or
+        # its history, and they do not invalidate the layer cache.
+        HTTP_PROXY: ${BUILD_PROXY:-}
+        HTTPS_PROXY: ${BUILD_PROXY:-}
+        NO_PROXY: ${BUILD_NO_PROXY:-localhost,127.0.0.0/8}
     # Parameterised so several ephemeral instances can run on one host (up.sh sets ws-<id>);
     # defaults to dev-workspace for a plain single `docker compose up`.
     container_name: ${WORKSPACE_CONTAINER_NAME:-dev-workspace}
@@ -85,3 +97,4 @@ volumes:
   cache-data:
   clash-config:
   destruct-state:
+  audit-data:

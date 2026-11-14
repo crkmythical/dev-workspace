@@ -69,9 +69,11 @@ the steps, what a failure of each one means, and which steps need the vault are 
 | Step | If it fails | Needs vault |
 |------|-------------|-------------|
 | preflight | abort | |
+| prepare-run-dirs (root-only state, the ciphertext made 0700) | abort | |
 | cleanup-stale-mounts | continue | |
 | render-clash-config | continue | |
 | git-globals, tune-inotify | continue | |
+| enforce-egress (the nftables filter, on by default) | abort | |
 | bring-up-egress | continue (reported) | |
 | resolve-auth | abort | |
 | init-vault, unlock-vault | continue (banner says LOCKED) | |
@@ -81,7 +83,10 @@ the steps, what a failure of each one means, and which steps need the vault are 
 | supervisord | abort | |
 
 "Continue" means the failure is recorded, shown in the banner, and the workspace starts
-without that piece. Only a missing password or a missing supervisord stops the boot.
+without that piece. What stops the boot is what would leave it in a state that is not what it
+claims: a missing password or supervisord, root-only directories that cannot be made so, and an
+egress firewall that is wanted (the default) but cannot be loaded, or an allowlist that does not
+parse. `tune-inotify` only tries, then says what limit is in force (a container cannot raise it).
 
 ### Shutdown
 
@@ -93,10 +98,41 @@ whatever was still running; forwarding it was a fix carried into the Rust port.)
 
 ## Egress
 
-Routing through Clash is **best effort, not enforced** (see `deploy/docs/threat-model.md`).
-`src/rust/core/src/egress` models what was observed: `confirmed`, `degraded` (proxy up, probe through
-it failed) or `down` (proxy not listening). It is reported in the start-up banner,
-`/var/run/egress-status`, `doctor` (live) and `.notifications/egress-degraded.md`.
+Two layers, and they do different jobs (see `deploy/docs/threat-model.md`).
+
+**The route.** Processes are pointed at Clash: `http_proxy`, `https_proxy`, `all_proxy`
+(`socks5h`, so names are resolved by the proxy), `git`'s `http.proxy`, and an `ssh` client
+configuration written at boot. Clash runs in rule mode with one rule to a group that starts with
+`REJECT`, so a subscription without a usable node makes requests fail; it never makes them go
+direct. The configuration is rendered at every start from a template that belongs to the image
+(`/usr/share/sdw/clash/config.yaml.template`, outside the `clash-config` volume, which would
+otherwise freeze the first version), with a controller secret that only root and the `clash` user
+can read.
+
+**The filter.** An nftables default-DROP OUTPUT chain (`core/src/egress/firewall.rs`) lets out
+loopback, replies on established connections, the `clash` uid, and the networks of
+`EGRESS_ALLOW_CIDRS`. It is on unless `EGRESS_ENFORCE` is a clear "no", it is loaded BEFORE Clash
+starts, and the boot stops if it cannot be loaded. So the route is no longer a courtesy: a process
+that ignores it is blocked, not leaked. `resolv.conf` points at Clash's DNS.
+
+`src/rust/core/src/egress` also models what was observed: `confirmed`, `degraded` (proxy up, probe
+through it failed) or `down` (proxy not listening). It is reported in the start-up banner,
+`/var/run/egress-status`, `doctor` (live, with a row for the filter) and
+`.notifications/egress-degraded.md`. `sdw clash-watcher` starts Clash again if it dies (only from a
+config the renderer wrote) and `sdw egress-monitor` records changes in the audit trail.
+
+The standalone client (`deploy/client`) is the same renderer and probe under `sdw proxy-only`,
+built from the `clash-client` stage of `src/image/Dockerfile`.
+
+## Privilege separation
+
+Everything a user runs is the unprivileged user `dev`; the gate, the backup and sync jobs and
+supervisord are root; Caddy and Clash have their own users. `sdw workload` is the launcher that
+drops privileges and builds the allowlisted environment (`core/src/workspace/workload.rs`,
+`infra/src/workload.rs`), and a `doas` bridge runs a generated list of `sdw` commands as root for
+the few things that need it. The layout, what `dev` can and cannot reach, and the residual risks
+are in `deploy/docs/threat-model.md`, "Privilege Separation"; `src/tests/smoke/checks/75-privilege.sh`
+checks them against the running image.
 
 ## Runtime Stack
 
@@ -118,17 +154,19 @@ L6: E2E encryption (WebCrypto AES-256-GCM)       ← Sync file transfer
 L5: gocryptfs (AES-256)                           ← Disk encryption at rest
 L4: Unified auth gateway — deny-by-default        ← Perimeter: ONE session-cookie / Cloudflare
     (Caddy forward_auth -> sync-service)             Access-JWT check in front of every route, HTTP + WS
-L3: Backend auth (code-server / KasmVNC native)   ← Defense-in-depth behind the gate
+L3: Privilege separation (dev user, doas bridge)   ← Code in the workspace holds no secret and no capability
 L2: Cloudflare Tunnel (TLS) [+ Access at edge]    ← Network encryption + optional edge zero-trust
-L1: Clash proxy (VLESS+WS+TLS)                    ← Traffic obfuscation (egress; best-effort)
+L1: Clash proxy + nftables default-DROP            ← Traffic obfuscation; nothing leaves except through it
 ```
 
 The gate (`deploy/docs/design-unified-auth-gateway.md`) terminates authentication once at the
 ingress: a signed session cookie (login with the master password) OR, when behind Access, the
 `Cf-Access-Jwt-Assertion` the edge injects (RS256-verified against the team JWKS). The cookie
-rides the WebSocket upgrade, so code-server, KasmVNC `/websockify` and Selkies `/desktop/websockets`
+rides the WebSocket upgrade, so code-server, KasmVNC `/websockify` and Selkies `/desktop/api/websockets`
 are all covered by the same check; only `/auth/*` and the break-glass `/sync/api/destruct` are
-un-gated. Backends keep their own auth as defense-in-depth.
+un-gated. The backends have no password of their own (code-server `--auth none`, KasmVNC
+`-DisableBasicAuth`, Selkies' own Basic auth switched off): one login, and no copy of the master
+password where the workload could read it. A WebSocket handshake from another site's `Origin` is refused even with a valid cookie.
 
 ## Data Flow
 
@@ -136,7 +174,7 @@ un-gated. Backends keep their own auth as defense-in-depth.
 Browser → Cloudflare Tunnel [+ Access] → Caddy(:8080)
         → auth gate (forward_auth → sync-service /auth/verify; deny-by-default)
         → code-server(:8082) / sync-service(:8081) / desktops
-Proxy-aware egress → Clash(:7890) → Proxy nodes → Internet   (not enforced: see Egress)
+Workspace egress → Clash(:7890) → Proxy nodes → Internet   (nothing else leaves: see Egress)
 Vault sync → git push (via Clash) → GitHub (encrypted ciphertext)
 Realtime backup → restic (via Clash) → S3 (restic-encrypted, deduplicated snapshots)
 ```
@@ -144,7 +182,7 @@ Realtime backup → restic (via Clash) → S3 (restic-encrypted, deduplicated sn
 ## Key Design Decisions
 
 1. Single container (FUSE mount shared across all services)
-2. Best-effort egress through Clash (proxy environment variables); observed and reported, not enforced
+2. Egress through Clash only: proxy variables for the route, an nftables default-DROP filter for the guarantee (on by default; `EGRESS_ENFORCE=0` to lift it); the result is observed and reported
 3. No plaintext on disk (gocryptfs FUSE only in memory)
 4. PNG camouflage on sync wire (DLP evasion)
 5. Replay protection (ring buffer nonce tracking)
@@ -185,7 +223,7 @@ from a terminal inside the container:
 
 The host side (Cloudflare Tunnel, `host-watcher`) runs as a LaunchAgent on macOS and as
 systemd user units on Linux (`deploy/linux-systemd/`). When the container reports a completed
-self-destruct, the watcher runs `destroy.sh --force --paranoid`, which removes those very
+self-destruct, the watcher runs `destroy.sh --force --paranoid --delete-project`, which removes those very
 services. The service manager kills everything a removed service started, so the cleanup runs
 outside the watcher's service (`run_outside_service` in `deploy/scripts/host-watcher.sh`: a new
 session on macOS, a transient `systemd-run --user` unit on Linux). Run as its child it was cut
@@ -205,16 +243,15 @@ display, WS port, and HOME, behind one Caddy port:
 
 ```mermaid
 flowchart LR
-  subgraph selkies["Selkies (/desktop/) — decoupled"]
-    B1[Browser] -->|"GET /desktop/ (Caddy basic_auth)"| C1[Caddy]
-    C1 -->|file_server| W1["/usr/share/selkies/web<br/>static client"]
-    B1 -->|"WS /desktop/websockets"| C1
-    C1 -->|"strip_prefix + reverse_proxy"| S1["selkies python<br/>:6080 WS-only"]
+  subgraph selkies["Selkies 2.x (/desktop/) — serves its own client"]
+    B1[Browser] -->|"GET /desktop/ (session cookie, forward_auth)"| C1[Caddy]
+    B1 -->|"WS /desktop/api/websockets"| C1
+    C1 -->|"reverse_proxy, no path rewriting"| S1["selkies python<br/>127.0.0.1:6080<br/>client + API + WS"]
     S1 --- X1["Xvfb :1 + XFCE"]
-    S1 -->|"H.264 (x264enc)"| B1
+    S1 -->|"H.264 (h264enc)"| B1
   end
   subgraph kasmvnc["KasmVNC (/vnc/) — integrated"]
-    B2[Browser] -->|"GET /vnc/ (KasmVNC native auth)"| C2[Caddy]
+    B2[Browser] -->|"GET /vnc/ (session cookie, forward_auth)"| C2[Caddy]
     C2 -->|reverse_proxy| K2["Xkasmvnc :2<br/>X + httpd + WS, :6081"]
     K2 -->|"built-in noVNC client"| B2
     B2 -->|"WS /websockify (root path)"| C2 --> K2
@@ -223,28 +260,39 @@ flowchart LR
   end
 ```
 
-Architectural difference: Selkies decouples X server / encoder / static client
-(Xvfb + python + Caddy `file_server`); KasmVNC bundles all three in one
-`Xkasmvnc` binary. This drives the auth-model difference below.
+Architectural difference: Selkies separates the X server from the streamer (Xvfb + a
+Python server that also serves the web client and a small API on one port, under the
+path prefix `/desktop`); KasmVNC bundles X server, encoder and client in one `Xkasmvnc`
+binary. Both are plain reverse-proxied routes behind the one session gate.
 
-### Measured facts (this image, Kali arm64 / Docker Desktop, 2026-06-01)
+Selkies 2.x is installed from its release wheel (`src/image/tools/selkies.env`, sha256
+checked by `fetch-tool`) and a hash-locked dependency file (`selkies-requirements.txt`,
+installed with `pip --require-hashes --only-binary`). The 1.x line this image used to
+pin was deleted from PyPI and GitHub by its authors in November 2026, which stopped the
+`-full` image from building at all until it moved. `deploy/scripts/update-tools.sh`
+edits the pin and the lock together. What is switched off, and why, is in
+`src/image/etc/desktop/start-selkies.sh` (Selkies' own Basic auth, the WebRTC transport,
+sharing links, printing, the applications panel).
 
-All numbers below were measured directly in the running container. Both desktops
-were **idle** (no client connected) when RSS was sampled.
+### Measured facts (this image, Kali arm64 / Colima, Selkies 2.2.0, 2026-11-04)
+
+All numbers below were measured directly in the same running container. Both desktops
+were **idle** (no client connected, right after the browser check had connected and left)
+when RSS was sampled. (The earlier version of this table was measured with Selkies 1.x
+and is replaced, not extended.)
 
 | Metric | Selkies | KasmVNC | How measured |
 |--------|---------|---------|--------------|
-| Idle RSS (stream server) | selkies(python) ~67 MB + Xvfb ~110 MB | Xkasmvnc ~122 MB | `ps -o rss` |
-| X-server binary | Xvfb 2.1 MB | Xkasmvnc 4.0 MB | `ls -lh` |
-| Install footprint | venv 420 MB | .deb files 7.8 MB | `du -sh` / `dpkg -L` |
-| Static web client | 5.9 MB | 3.4 MB | `du -sh` |
+| Idle RSS (stream server) | selkies(python) ~140 MB + Xvfb ~135 MB | Xkasmvnc ~145 MB | `ps -o rss` |
+| Install footprint | Python environment 162 MB | .deb files 7.8 MB | `du -sh` / `dpkg -L` |
+| Web client | 10 MB (inside the wheel) | 3.4 MB | `du -sh` |
 | Browser decode API | `VideoDecoder` (WebCodecs) | WebAssembly + Canvas2D (`drawImage`/`putImageData`) | grep shipped JS |
-| Encoder (configured) | x264enc, 30 fps | WebP/JPEG rects, 30 fps | supervisor conf |
-| Auth realm | Caddy `restricted` (shared with code-server) | KasmVNC native `Websockify` | `WWW-Authenticate` header |
+| Encoder (configured) | h264enc (x264), 30 fps | WebP/JPEG rects, 30 fps | start-selkies.sh, desktop-vnc.conf |
+| Auth | the ingress session cookie only (its own Basic auth is switched off) | the ingress session cookie only (`-DisableBasicAuth`) | start-selkies.sh, `20-auth.sh` |
 
-Build-layer cost observed during this session's Kali build: the selkies pip/venv
-layer dominates (~12 min on the throttled mirror); the KasmVNC `.deb` layer is
-comparatively small. Selkies' venv (420 MB) is the single largest desktop cost.
+Build-layer cost: the Selkies layer (apt libraries, the wheel, 30 hash-checked
+dependencies) took 231 s on the Aliyun mirror; the KasmVNC `.deb` layer is
+comparatively small. Selkies' Python environment (162 MB) is still the largest desktop cost.
 
 ### NOT measured (do not treat as fact)
 
@@ -267,20 +315,23 @@ These are structural facts (verifiable from config/code), not performance claims
 - **Browser compatibility**: Selkies requires the WebCodecs `VideoDecoder` API
   (Chromium 94+, Safari 16.4+); KasmVNC decodes via WebAssembly + Canvas2D, so it
   works on older browsers lacking WebCodecs.
-- **Auth UX**: Selkies shares Caddy's `restricted` realm with code-server (one
-  credential cache, no extra prompt). KasmVNC owns its own `Websockify` realm
-  (browsers won't replay Caddy creds to the VNC WebSocket), so it prompts once
-  more with the same username/password.
-- **Features**: KasmVNC's client ships multi-monitor, file upload/download, DLP,
-  and a settings panel; Selkies' client is a minimal full-screen stream and adds
-  desktop **audio** (pcmflux) which KasmVNC does not.
-- **Dependency fragility**: Selkies needs libva ≥2.20 (hence the trixie/Kali
-  base requirement); KasmVNC's `.deb` is comparatively self-contained.
+- **Auth UX**: both sit behind the one ingress login (session cookie, which also rides
+  the WebSocket handshake) and neither asks for anything more.
+- **Features**: KasmVNC's client ships multi-monitor, DLP and a settings panel;
+  Selkies' client has a side panel (video, screen and audio settings, clipboard, a
+  file manager for uploads and downloads) and desktop **audio** (pcmflux, with
+  `DESKTOP_AUDIO=1`), which KasmVNC does not.
+- **Dependency fragility**: Selkies is a Python server with native libraries
+  (pixelflux, pcmflux) that need a recent libva (hence the trixie/Kali base). Its
+  maintainers removed the whole 1.x line from PyPI and GitHub in November 2026, so a
+  pin that was reproducible one week stopped building the next; the pin is now the
+  release wheel plus a hash-locked dependency file, kept by `update-tools.sh`.
+  KasmVNC's `.deb` is comparatively self-contained.
 
 ### Recommendation
 
-The default is `kasmvnc`: a 7.8 MB package against Selkies' 420 MB venv and ~12 minute
-build layer, and it works on browsers without WebCodecs. Selkies stays fully supported
-for its audio and H.264 stream: build with `DESKTOP_STACK=selkies` or `both`, or pull
-the `-full` image. CI builds `both` on every release so the Selkies path cannot rot.
+The default is `kasmvnc`: a 7.8 MB package against Selkies' 162 MB Python environment,
+and it works on browsers without WebCodecs. Selkies stays fully supported for its
+audio and H.264 stream: build with `DESKTOP_STACK=selkies` or `both`, or pull the
+`-full` image. CI builds `both` on every release so the Selkies path cannot rot.
 An image that predates the stack marker is treated as Selkies-only.

@@ -1,30 +1,25 @@
 #!/bin/bash
-# Smoke-test shim in front of curl: answers the two download URLs that desktop-install uses for
-# IntelliJ IDEA and Burp Suite from local data (they are hundreds of megabytes), and hands every
-# other call, such as doctor's and the health checks', to the real curl untouched.
+# Smoke-test shim in front of curl. desktop-install downloads IntelliJ IDEA and Burp Suite (hundreds
+# of megabytes) through fetch-tool, which checks the bytes against a pinned sha256. The test points
+# fetch-tool at fake pins whose URLs are http://smoke.invalid/<file>; this shim serves those from
+# /var/lib/fake-downloads, so the real downloader and the real checksum comparison both run. Every
+# other call, such as doctor's and the health checks', goes to the real curl untouched.
 #   /etc/fake-curl-fail   if present, the download fails (curl exit 22, like an HTTP error)
 case "$*" in
-  *portswigger-cdn.net*)
-    echo "curl-shim burp $*" >>/var/log/fake-curl.log
+  *smoke.invalid*)
+    echo "curl-shim $*" >>/var/log/fake-curl.log
     [ -e /etc/fake-curl-fail ] && exit 22
     out=""
+    url=""
     prev=""
     for arg in "$@"; do
       [ "$prev" = "-o" ] && out="$arg"
+      case "$arg" in
+        http://smoke.invalid/*) url="$arg" ;;
+      esac
       prev="$arg"
     done
-    printf 'PK fake burp jar\n' >"$out"
-    exit 0
-    ;;
-  *download.jetbrains.com*)
-    echo "curl-shim idea $*" >>/var/log/fake-curl.log
-    [ -e /etc/fake-curl-fail ] && exit 22
-    tmp="$(mktemp -d)"
-    mkdir -p "$tmp/idea-fake/bin"
-    printf '#!/bin/sh\necho fake idea\n' >"$tmp/idea-fake/bin/idea.sh"
-    chmod +x "$tmp/idea-fake/bin/idea.sh"
-    tar czf - -C "$tmp" idea-fake
-    rm -rf "$tmp"
+    cat "/var/lib/fake-downloads/$(basename "$url")" >"$out"
     exit 0
     ;;
 esac

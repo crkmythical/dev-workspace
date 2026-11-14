@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Refuse a commit that adds a secrets file, or that contains a value taken from this checkout's own
+# .env (the master password is also the vault passphrase). Install with `make install-hooks`.
+# Written for the bash 3.2 and BSD tools macOS ships.
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel)"
+
+# 1. Files that must never be tracked.
+"$root/deploy/scripts/check-tracked-secrets.sh" --staged || { echo "pre-commit: refusing." >&2; exit 1; }
+# 2. Values: a secret from .env must not appear anywhere in the staged changes.
+if [ -f "$root/.env" ]; then
+  staged="$(git diff --cached -U0)"
+  while IFS='=' read -r key value; do
+    case "$key" in
+      PASSWORD | CLASH_SUBSCRIPTION_URL | VAULT_GIT_REPO | RESTIC_PASSWORD | AWS_ACCESS_KEY_ID | \
+        AWS_SECRET_ACCESS_KEY | PENTEST_VAULT_PASSWORD | CROC_PASS) ;;
+      *) continue ;;
+    esac
+    value="${value%\"}"
+    value="${value#\"}"
+    [ "${#value}" -ge 8 ] || continue # an empty or trivial value proves nothing
+    if printf '%s\n' "$staged" | grep -a -F -q -- "$value"; then
+      echo "pre-commit: the staged changes contain the value of $key from .env; refusing." >&2
+      exit 1
+    fi
+  done <"$root/.env"
+fi

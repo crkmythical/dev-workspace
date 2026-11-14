@@ -39,6 +39,13 @@ pub const BOOT_PLAN: &[BootStepSpec] = &[
         on_fail: OnFail::Abort,
         when: None,
     },
+    // Root-only runtime state, and the ciphertext kept from the unprivileged workload. Abort: a
+    // workspace that cannot make that so must not start as if it had.
+    BootStepSpec {
+        id: "prepare-run-dirs",
+        on_fail: OnFail::Abort,
+        when: None,
+    },
     BootStepSpec {
         id: "cleanup-stale-mounts",
         on_fail: OnFail::Degrade,
@@ -59,9 +66,9 @@ pub const BOOT_PLAN: &[BootStepSpec] = &[
         on_fail: OnFail::Degrade,
         when: None,
     },
-    // Fail-closed egress firewall. BEFORE bring-up-egress so Clash starts under the filter, and
-    // Abort: if enforcement was asked for but cannot be applied, do not boot into a leaky state.
-    // (A no-op returning Ok when EGRESS_ENFORCE is off, so Abort never triggers for the default.)
+    // Fail-closed egress firewall, ON by default. BEFORE bring-up-egress so Clash starts under the
+    // filter, and Abort: if it is wanted (it is, unless EGRESS_ENFORCE=0) but cannot be applied,
+    // do not boot into a leaky state. With EGRESS_ENFORCE=0 the step only says so and returns Ok.
     BootStepSpec {
         id: "enforce-egress",
         on_fail: OnFail::Abort,
@@ -258,7 +265,13 @@ mod tests {
             .collect();
         assert_eq!(
             abort,
-            ["preflight", "enforce-egress", "resolve-auth", "supervisord"]
+            [
+                "preflight",
+                "prepare-run-dirs",
+                "enforce-egress",
+                "resolve-auth",
+                "supervisord"
+            ]
         );
 
         let egress = BOOT_PLAN
@@ -271,6 +284,9 @@ mod tests {
     #[test]
     fn ordering_rules() {
         let must_precede = [
+            // The ciphertext is closed to the workload, and the stale key source gone, before
+            // anything is unlocked.
+            ("prepare-run-dirs", "unlock-vault"),
             ("cleanup-stale-mounts", "unlock-vault"),
             ("render-clash-config", "bring-up-egress"),
             ("enforce-egress", "bring-up-egress"),

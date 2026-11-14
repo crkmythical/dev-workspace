@@ -1,0 +1,25 @@
+[Unit]
+Description=Secure Dev Workspace (native, inside an AVF/Linux VM)
+Documentation=https://github.com/ (see deploy/android-avf/README.md)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# PASSWORD, CLASH_SUBSCRIPTION_URL and any other workspace env live here (root-only, 0600).
+EnvironmentFile=/etc/sdw/sdw.env
+# Mounts the rootfs binds and execs `sdw entrypoint` (BOOT_PLAN + supervisord) under chroot.
+ExecStart=/opt/sdw/run-workspace.sh start
+# Tears the rootfs binds down after the stack has stopped.
+ExecStop=/opt/sdw/run-workspace.sh stop
+Restart=on-failure
+RestartSec=5
+# The boot unlocks the vault and bootstraps Clash before services come up; give it room.
+TimeoutStartSec=300
+# SIGTERM to sdw entrypoint (it forwards to supervisord so every program stops in order), then
+# SIGKILL the leftovers. Processes live in the VM's single namespace — the VM is the boundary.
+KillMode=mixed
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

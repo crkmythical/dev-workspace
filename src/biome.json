@@ -23,7 +23,6 @@
       "**/out",
       "*.tar",
       "bun.lock",
-      "image/selkies-web",
       "rust",
       "**/*.min.js"
     ]

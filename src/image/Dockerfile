@@ -1,9 +1,6 @@
 # BASE_IMAGE is a global ARG: it must be declared before the first FROM so the final
 # `FROM ${BASE_IMAGE}` (after the rust-builder stage) can still see it.
 ARG BASE_IMAGE=kalilinux/kali-rolling
-# Also global: the selkies-web stage selector below resolves `FROM selkies-web-${DESKTOP_STACK}`.
-# The final stage re-declares it for its RUN blocks.
-ARG DESKTOP_STACK=kasmvnc
 
 # --- Rust build stage: the sdw binary (CLI + entrypoint + daemons + sync API) -------------------
 # Compiled to a static musl binary so it drops into any base (glibc or not) with no runtime deps.
@@ -31,35 +28,66 @@ COPY packages/ ./packages/
 RUN bun install --frozen-lockfile
 RUN cd packages/spa && bunx vite build
 
-# --- Selkies web client (conditional) -----------------------------------------------------------
-# The static H.264 web client (~6 MB) is only served by the Selkies stack. Select a source stage by
-# DESKTOP_STACK so a KasmVNC-only image does not carry it at all (a copy-then-delete would still
-# bake it into a layer): `present` holds the files, the kasmvnc stage is an empty /web, and the
-# final stage COPYs /web from whichever one DESKTOP_STACK selects.
-FROM ${BASE_IMAGE} AS selkies-web-present
-RUN mkdir -p /web
-COPY image/selkies-web/ /web/
-FROM ${BASE_IMAGE} AS selkies-web-kasmvnc
-RUN mkdir -p /web
-FROM selkies-web-present AS selkies-web-both
-FROM selkies-web-present AS selkies-web-selkies
-FROM selkies-web-${DESKTOP_STACK} AS selkies-web
+# --- Clash (mihomo): ONE pinned, verified download, shared by the workspace and the client -------
+# A static Go binary, so it runs on any base. image/tools/mihomo.env holds the version, URLs and
+# sha256; fetch-tool refuses any other bytes. It reuses the rust-builder's digest-pinned image
+# (already pulled for that stage) instead of introducing another base to pin.
+FROM rust:1-alpine@sha256:7e9e2d068a107a2adafd19930011178d14a78326053cd4c3a9f7ad3fd049557d AS clash-bin
+# Optional GitHub download mirror for fetch-tool (documented on the final stage's ARG of the same
+# name and in tools/fetch.sh). Build-time only; empty = GitHub direct.
+ARG SDW_GH_MIRROR=
+RUN apk add --no-cache curl
+COPY --chmod=0755 image/tools/fetch.sh /usr/local/lib/sdw/fetch-tool
+COPY image/tools/mihomo.env /usr/local/lib/sdw/tools/mihomo.env
+RUN set -eux; \
+    /usr/local/lib/sdw/fetch-tool mihomo /tmp/clash.gz; \
+    gunzip < /tmp/clash.gz > /clash; \
+    chmod 0755 /clash; \
+    rm -f /tmp/clash.gz; \
+    /clash -v
+
+# --- Standalone Clash client (deploy/client): `docker build --target clash-client` ----------------
+# The workspace's Clash and the workspace's `sdw` binary and nothing else. `sdw proxy-only` renders
+# the same template through the same code and then runs Clash, so there is no second hand-written
+# config to drift. Not part of the workspace image: the last stage of this file is.
+FROM debian:trixie-slim AS clash-client
+ARG APT_MIRROR=mirrors.aliyun.com
+ENV DEBIAN_FRONTEND=noninteractive
+RUN rm -f /etc/apt/sources.list.d/* && \
+    { echo "deb http://${APT_MIRROR}/debian trixie main"; \
+      echo "deb http://${APT_MIRROR}/debian trixie-updates main"; \
+      echo "deb http://${APT_MIRROR}/debian-security trixie-security main"; \
+    } > /etc/apt/sources.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates curl libcap2-bin && \
+    rm -rf /var/lib/apt/lists/*
+COPY --from=clash-bin /clash /usr/bin/clash
+RUN useradd --system --no-create-home --shell /usr/sbin/nologin clash \
+    && setcap 'cap_net_bind_service=+ep' /usr/bin/clash \
+    && install -d -o clash -g clash /etc/clash
+COPY image/share/clash/config.yaml.template /usr/share/sdw/clash/config.yaml.template
+COPY --from=rust-builder /sdw /usr/local/bin/sdw
+EXPOSE 7890 7891
+# Healthy = Clash accepts connections AND the subscription loaded nodes. Run as the clash user: the
+# rendered config (which holds the controller secret) is readable by nobody else.
+HEALTHCHECK --interval=30s --timeout=15s --start-period=90s --retries=3 \
+  CMD ["setpriv", "--reuid=clash", "--regid=clash", "--clear-groups", "/usr/local/bin/sdw", "proxy-only", "--check"]
+ENTRYPOINT ["/usr/local/bin/sdw", "proxy-only"]
 
 # Base image toggle.
 #   Default: kalilinux/kali-rolling — the production base, full pentest toolchain
-#   via apt. Kali tracks Debian testing, so it satisfies the Selkies desktop's
-#   libva >=2.20 requirement (pixelflux's prebuilt screen_capture_module.so links
-#   a libavutil needing symbol vaMapBuffer2; bookworm's libva 2.17 is too old and
-#   the .so fails to load → "Waiting for stream...").
+#   via apt. Kali tracks Debian testing, which is what the Selkies and KasmVNC builds this image
+#   installs target (a recent libva in particular: with an older one, bookworm's 2.17, Selkies' capture
+#   library fails to load and the desktop shows "Waiting for stream...").
 #   Alternative: build with `--build-arg BASE_IMAGE=debian:trixie-slim` for a
-#   leaner non-pentest base (also ships libva 2.22, matches the LSIO debiantrixie
-#   reference). Do NOT use bookworm without vendoring a newer libva.
+#   leaner non-pentest base. Do NOT use bookworm without vendoring a newer libva.
 FROM ${BASE_IMAGE}
 
 # Desktop streaming stack selector (build-time):
 #   kasmvnc (default) — KasmVNC only (/vnc/): an ~8 MB .deb, builds in seconds
-#   selkies           — Selkies only (/desktop/): H.264/WebCodecs, ~420 MB venv, ~12 min layer
+#   selkies           — Selkies only (/desktop/): H.264/WebCodecs, a ~160 MB Python venv
 #   both              — Selkies + KasmVNC in parallel (published as the `-full` image)
+#   none              — headless: no desktop at all (code-server only; the lean phone/AVF profile)
 # Recorded in /etc/sdw-desktop-stack; read by desktop.ts SSOT at runtime.
 ARG DESKTOP_STACK=kasmvnc
 
@@ -87,6 +115,27 @@ RUN . /etc/os-release && \
       } > /etc/apt/sources.list; \
     fi
 
+# apt hygiene (size only, no package/feature removed): a dpkg path-exclude config so NO apt layer
+# below writes package docs, man/info pages, or other languages' UI translations (kept: en + zh_CN
+# message catalogs, and each package's copyright for license compliance). Set BEFORE any install so
+# every layer is smaller — a later `rm` cannot shrink bytes already committed to earlier layers.
+# The rm/find then clears what the base image already shipped.
+RUN printf '%s\n' \
+      'path-exclude /usr/share/doc/*' \
+      'path-include /usr/share/doc/*/copyright' \
+      'path-exclude /usr/share/man/*' \
+      'path-exclude /usr/share/groff/*' \
+      'path-exclude /usr/share/info/*' \
+      'path-exclude /usr/share/lintian/*' \
+      'path-exclude /usr/share/linda/*' \
+      'path-exclude /usr/share/locale/*' \
+      'path-include /usr/share/locale/en*' \
+      'path-include /usr/share/locale/zh_CN*' \
+      'path-include /usr/share/locale/locale.alias' \
+      > /etc/dpkg/dpkg.cfg.d/01-sdw-slim \
+    && rm -rf /usr/share/man /usr/share/groff /usr/share/info /usr/share/doc /usr/share/lintian /usr/share/linda \
+    && find /usr/share/locale -mindepth 1 -maxdepth 1 ! -name 'en*' ! -name 'zh_CN*' ! -name 'locale.alias' -exec rm -rf {} +
+
 # Core layer: system packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tini \
@@ -113,9 +162,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     vim \
     firefox-esr \
     nftables \
+    iptables \
     libcap2-bin \
     && sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen \
     && locale-gen \
+    && apt-get autoremove -y \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 # Bun is gone from the runtime image: the CLI, entrypoint and daemons are the Rust `sdw` binary
@@ -126,77 +178,91 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # XFCE is the session for BOTH stacks (selkies and kasmvnc). This eliminates the
 # openbox+tint2 dependency (tint2 is not in Kali repos) and gives a consistent
 # desktop experience regardless of the streaming backend.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    xvfb \
-    xfce4 xfce4-terminal xfce4-whiskermenu-plugin thunar \
-    dbus-x11 \
-    libgl1-mesa-dri \
-    mesa-utils \
-    libglib2.0-0 \
-    librsvg2-common \
-    at-spi2-core \
-    fonts-noto-cjk \
-    fonts-dejavu-core \
-    xdg-utils \
-    x11-utils \
-    x11-xserver-utils \
-    && rm -rf /var/lib/apt/lists/*
+# DESKTOP_STACK=none (the headless / phone-AVF profile) skips this whole layer: no X server, no
+# XFCE, no CJK fonts — the ~500 MB a phone VM does not want and that a stock-AVF guest kernel cannot
+# render well anyway (software GL, no SysV IPC). Only code-server and the services run.
+ARG DESKTOP_STACK
+RUN if [ "$DESKTOP_STACK" = "none" ]; then \
+      echo "Skipping desktop-common install (DESKTOP_STACK=none)"; \
+    else \
+      apt-get update && apt-get install -y --no-install-recommends \
+        xvfb \
+        xfce4 xfce4-terminal xfce4-whiskermenu-plugin thunar \
+        dbus-x11 \
+        libgl1-mesa-dri \
+        mesa-utils \
+        libglib2.0-0 \
+        librsvg2-common \
+        at-spi2-core \
+        fonts-noto-cjk \
+        fonts-dejavu-core \
+        xdg-utils \
+        x11-utils \
+        x11-xserver-utils \
+        && apt-get autoremove -y \
+        && apt-get clean \
+        && rm -rf /var/lib/apt/lists/*; \
+    fi
+
+# Optional GitHub download mirror for the pinned third-party tools below (selkies, kasmvnc, caddy,
+# restic, croc, mise, code-server). Build-time only: an unreferenced ARG, so it is injected into
+# each RUN's environment for fetch-tool to read but is NOT written to the image or its history, and
+# it sits AFTER the apt layers so adding it never invalidates their cache. When set, fetch-tool
+# tries ${SDW_GH_MIRROR}<github-url> before GitHub; the pinned sha256 is still verified, so a mirror
+# can only serve the exact pinned bytes. Pass it when GitHub is throttled or blocked, e.g. a caching
+# reverse proxy: docker compose build --build-arg SDW_GH_MIRROR=https://ghfast.top/  (compose wires
+# it from .env). Empty (default) keeps the unchanged GitHub-direct download path.
+ARG SDW_GH_MIRROR=
+
+# fetch-tool: the one way a third-party download enters this image. It reads the pin (version, URL,
+# sha256) from /usr/local/lib/sdw/tools/<name>.env and refuses any other bytes.
+COPY --chmod=0755 image/tools/fetch.sh /usr/local/lib/sdw/fetch-tool
 
 # --- Selkies desktop streaming (H.264/WebCodecs) — installed for both|selkies ---
-# Install from pinned GitHub ref. pixelflux pins nvidia-cuda-nvrtc with a stale
-# hash, so install with --no-deps and list the full dependency tree.
-ARG SELKIES_GIT_REF=0d134b6e1ffe42a579bc66363b0e7159ab22aacc
-# pixelflux / pcmflux are Selkies' native capture libraries and must match the pinned ref:
-# that commit imports StripeCallback (pixelflux 1.x only, gone in 2.0) and AudioChunkCallback
-# (pcmflux 1.0.x only, gone in 2.0). Unpinned, pip took 2.1.0 of both and Selkies died on
-# start-up with an ImportError, in an image that built fine. Bump all three together.
-ARG PIXELFLUX_VERSION=1.6.4
-ARG PCMFLUX_VERSION=1.0.8
+# Selkies 2.x is a Python server that serves its own web client and its WebSocket on one port
+# (behind the Caddy gate, under /desktop/). It is installed like every other third-party piece:
+#   * the release wheel, from image/tools/selkies.env (fetch-tool checks its sha256), and
+#   * its Python dependencies from image/tools/selkies-requirements.txt, which holds the sha256 of
+#     every file allowed for each pinned version. pip --require-hashes refuses anything else, and
+#     --only-binary refuses a source build, so no compiler is in the image.
+# pixelflux and pcmflux (the native screen and audio capture libraries) are among those: the wheel
+# names the exact versions it works with and the lock follows it. Nothing here moves by itself:
+# deploy/scripts/update-tools.sh edits the pin and regenerates the lock together.
+# (Selkies 1.x, the version this image used to pin, was deleted from PyPI and GitHub by its
+# authors; it cannot be built any more.) The libraries below are the runtime dependencies the
+# project lists for its own Debian package; the wheels bundle their codecs.
+COPY image/tools/selkies.env image/tools/selkies-requirements.txt /usr/local/lib/sdw/tools/
 ARG DESKTOP_STACK
 RUN if [ "$DESKTOP_STACK" = "both" ] || [ "$DESKTOP_STACK" = "selkies" ]; then \
       set -e; \
       apt-get update && apt-get install -y --no-install-recommends \
         libpulse0 pulseaudio xclip xdotool xcvt \
-        libva2 libva-drm2 libva-x11-2 libgbm1 libdrm2 libjpeg62-turbo \
-        python3-dev python3-venv gcc pkg-config libxkbcommon-dev git libsrtp2-dev \
-      && python3 -m venv /opt/selkies-venv \
-      && /opt/selkies-venv/bin/pip install --no-cache-dir setuptools wheel \
-      && /opt/selkies-venv/bin/pip install --no-cache-dir --no-deps \
-         "git+https://github.com/selkies-project/selkies.git@${SELKIES_GIT_REF}" \
-      && /opt/selkies-venv/bin/pip install --no-cache-dir --no-deps \
-         "pixelflux==${PIXELFLUX_VERSION}" "pcmflux==${PCMFLUX_VERSION}" \
-      && /opt/selkies-venv/bin/pip install --no-cache-dir \
-         nvidia-cuda-nvrtc numpy \
-         "python-xlib @ https://github.com/selkies-project/python-xlib/archive/master.zip" \
-         aiofiles aiohttp aioice av cffi cryptography distro google-crc32c \
-         msgpack pasimple Pillow prometheus_client psutil pulsectl \
-         pyee pylibsrtp pyopenssl pynput watchdog websockets xkbcommon \
-         GPUtil typing_extensions \
-      && /opt/selkies-venv/bin/python -c "from selkies.__main__ import main" \
-      && /opt/selkies-venv/bin/python -c "import pixelflux, pcmflux" \
-      && /opt/selkies-venv/bin/python -c "import selkies.selkies" \
-      && apt-get purge -y python3-dev gcc pkg-config libxkbcommon-dev libsrtp2-dev \
-      && apt-get autoremove -y \
+        libxcb1 libxkbcommon0 libx11-xcb1 libva2 libva-drm2 libva-x11-2 libdrm2 libgbm1 libegl1 \
+        libwayland-server0 libglib2.0-0 libpixman-1-0 libxcb-render0 libxcb-shm0 libxcb-dri3-0 \
+        libxfixes3 libxext6 libice6 libsm6 python3-venv \
+      && . /usr/local/lib/sdw/tools/selkies.env \
+      && /usr/local/lib/sdw/fetch-tool selkies "/tmp/selkies-${VERSION}-py3-none-any.whl" \
+      && /usr/bin/python3 -m venv /opt/selkies-venv \
+      && /opt/selkies-venv/bin/pip install --no-cache-dir --require-hashes --only-binary=:all: \
+           -r /usr/local/lib/sdw/tools/selkies-requirements.txt \
+      && /opt/selkies-venv/bin/pip install --no-cache-dir --no-deps "/tmp/selkies-${VERSION}-py3-none-any.whl" \
+      && rm -f /tmp/selkies-*.whl \
+      && /opt/selkies-venv/bin/python -c "import selkies.__main__, pixelflux, pcmflux" \
+      && /opt/selkies-venv/bin/python -m selkies --version \
       && rm -rf /var/lib/apt/lists/*; \
     else \
       echo "Skipping selkies install (DESKTOP_STACK=$DESKTOP_STACK)"; \
     fi
 
-ENV SELKIES_VENV=/opt/selkies-venv
-ENV PATH="/opt/selkies-venv/bin:${PATH}"
-
 # --- KasmVNC desktop streaming (integrated X + WebSocket VNC) — both|kasmvnc ---
-# Native trixie .deb (KasmVNC 1.4.0 has a trixie build; Kali is trixie-based and
-# installs it fine). Auth handled by Caddy (we run with -DisableBasicAuth), so no
-# kasmvncpasswd / /root/.kasmpasswd needed. Perl deps are KasmVNC's runtime reqs.
-ARG KASMVNC_VERSION=1.4.0
+# Native trixie .deb. Version, URL and sha256 are pinned in image/tools/kasmvnc.env and checked by
+# fetch-tool; deploy/scripts/update-tools.sh is the only thing that edits them. Auth is handled by
+# the ingress gate (the Perl packages are KasmVNC's runtime requirements).
+COPY image/tools/kasmvnc.env /usr/local/lib/sdw/tools/kasmvnc.env
 RUN if [ "$DESKTOP_STACK" = "both" ] || [ "$DESKTOP_STACK" = "kasmvnc" ]; then \
       set -e; \
-      KASM_DISTRO="trixie"; \
-      ARCH=$(dpkg --print-architecture); \
       apt-get update; \
-      curl -fsSL "https://github.com/kasmtech/KasmVNC/releases/download/v${KASMVNC_VERSION}/kasmvncserver_${KASM_DISTRO}_${KASMVNC_VERSION}_${ARCH}.deb" \
-        -o /tmp/kasmvnc.deb; \
+      /usr/local/lib/sdw/fetch-tool kasmvnc /tmp/kasmvnc.deb; \
       apt-get install -y --no-install-recommends /tmp/kasmvnc.deb \
         libdatetime-perl libhash-merge-simple-perl libscalar-list-utils-perl \
         libyaml-tiny-perl libtry-tiny-perl libswitch-perl; \
@@ -205,116 +271,110 @@ RUN if [ "$DESKTOP_STACK" = "both" ] || [ "$DESKTOP_STACK" = "kasmvnc" ]; then \
       echo "Skipping kasmvnc install (DESKTOP_STACK=$DESKTOP_STACK)"; \
     fi
 
-# Install Caddy — pinned version + sha512 verification (caddy's checksums.txt
-# uses SHA-512). The standard GitHub release build ships the same default
-# modules the download API returns (reverse_proxy, file_server, basic_auth).
-ARG CADDY_VERSION=2.11.7
-ARG CADDY_SHA512_AMD64=a7a433a1b133efc3c8d10eb0b99d52a24b5ef5c322dc77f5282182b1c0402139ab83f3a99f0c52409df77d20123fb0b523edad8a66d8f5e49136197bf61ef0e7
-ARG CADDY_SHA512_ARM64=3db36ba90c7a6e8dda40ee3dd71fa08844c76b5fb08f61b31e5e78d2ed38e71c51dc7baed875e50d1ca1279196e84302967237386ae87c91ae9f2aaceada682e
+# Install Caddy (image/tools/caddy.env: sha256 from GitHub's release metadata AND the sha512 from
+# Caddy's own checksums file, which must both match). The standard release build ships the default
+# modules (reverse_proxy, file_server, forward_auth).
+COPY image/tools/caddy.env /usr/local/lib/sdw/tools/caddy.env
 RUN set -eux; \
-    arch="$(dpkg --print-architecture)"; \
-    case "$arch" in \
-      amd64) caddy_sha="$CADDY_SHA512_AMD64" ;; \
-      arm64) caddy_sha="$CADDY_SHA512_ARM64" ;; \
-      *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
-    esac; \
-    curl -fsSL "https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}/caddy_${CADDY_VERSION}_linux_${arch}.tar.gz" -o /tmp/caddy.tar.gz; \
-    echo "${caddy_sha}  /tmp/caddy.tar.gz" | sha512sum -c -; \
+    /usr/local/lib/sdw/fetch-tool caddy /tmp/caddy.tar.gz; \
     tar -xzf /tmp/caddy.tar.gz -C /tmp caddy; \
     install -m 0755 /tmp/caddy /usr/bin/caddy; \
     rm -f /tmp/caddy.tar.gz /tmp/caddy; \
     caddy version
 
-# Install restic (realtime backup to S3) — single static binary, no runtime deps.
-ARG RESTIC_VERSION=0.17.3
-# sha256 cross-checked against restic's official SHA256SUMS for v0.17.3 (per-arch). Download to a
-# temp file, verify, THEN decompress — a pipe straight to an executable cannot be checked.
-ARG RESTIC_SHA256_AMD64=5097faeda6aa13167aae6e36efdba636637f8741fed89bbf015678334632d4d3
-ARG RESTIC_SHA256_ARM64=db27b803534d301cef30577468cf61cb2e242165b8cd6d8cd6efd7001be2e557
+# Install restic (realtime backup to S3): one static binary, no runtime deps. Downloaded to a file and
+# verified BEFORE it is decompressed: a pipe straight into an executable cannot be checked.
+COPY image/tools/restic.env /usr/local/lib/sdw/tools/restic.env
 RUN set -eux; \
-    arch="$(dpkg --print-architecture)"; \
-    case "$arch" in \
-      amd64) restic_sha="$RESTIC_SHA256_AMD64" ;; \
-      arm64) restic_sha="$RESTIC_SHA256_ARM64" ;; \
-      *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
-    esac; \
-    curl -fsSL "https://github.com/restic/restic/releases/download/v${RESTIC_VERSION}/restic_${RESTIC_VERSION}_linux_${arch}.bz2" -o /tmp/restic.bz2; \
-    echo "${restic_sha}  /tmp/restic.bz2" | sha256sum -c -; \
+    /usr/local/lib/sdw/fetch-tool restic /tmp/restic.bz2; \
     bunzip2 < /tmp/restic.bz2 > /usr/local/bin/restic; \
     rm -f /tmp/restic.bz2; \
-    chmod +x /usr/local/bin/restic
+    chmod +x /usr/local/bin/restic; \
+    restic version
 
-# Install croc (peer-to-peer, end-to-end encrypted file transfer for `push`/`pull`) — pinned +
-# sha256 against the release checksums.txt. Single static Go binary, like restic.
-ARG CROC_VERSION=11.5.5
-ARG CROC_SHA256_AMD64=2dee9b7ede849971532c597ef3fd29507bfc970330758cfed13657be04f34243
-ARG CROC_SHA256_ARM64=c8606c6b4450e4a50b3ef25bd486ed4f9fa4a1ac6e2ecefb2bcbdbbfce1a51a9
+# Install croc (peer-to-peer, end-to-end encrypted file transfer for `push`/`pull`): a single static
+# Go binary, pinned and verified like restic.
+COPY image/tools/croc.env /usr/local/lib/sdw/tools/croc.env
 RUN set -eux; \
-    arch="$(dpkg --print-architecture)"; \
-    case "$arch" in \
-      amd64) croc_arch="64bit"; croc_sha="$CROC_SHA256_AMD64" ;; \
-      arm64) croc_arch="ARM64"; croc_sha="$CROC_SHA256_ARM64" ;; \
-      *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
-    esac; \
-    curl -fsSL "https://github.com/schollz/croc/releases/download/v${CROC_VERSION}/croc_v${CROC_VERSION}_Linux-${croc_arch}.tar.gz" -o /tmp/croc.tar.gz; \
-    echo "${croc_sha}  /tmp/croc.tar.gz" | sha256sum -c -; \
+    /usr/local/lib/sdw/fetch-tool croc /tmp/croc.tar.gz; \
     tar -xzf /tmp/croc.tar.gz -C /usr/local/bin croc; \
     rm -f /tmp/croc.tar.gz; \
     croc --version
 
-# Install mise (runtime version manager) — pinned via MISE_VERSION; retry on
-# network failure. The installer verifies its own release checksum.
-ARG MISE_VERSION=v2026.10.12
-RUN for i in 1 2 3; do curl -fsSL https://mise.jdx.dev/install.sh | MISE_VERSION="${MISE_VERSION}" bash && break || sleep 5; done
-ENV PATH="/root/.local/bin:${PATH}"
-ENV MISE_DATA_DIR=/root/.local/share/mise
-
-# Pre-install tool versions via mise (split layers for cache efficiency)
-COPY image/.mise.toml /root/.mise.toml
-RUN mise trust /root/.mise.toml
-
-# Java layer — online download via mise
-RUN mise install java@zulu-17 && mise use --global java@zulu-17 && mise reshim
-
-# Node + Python + pnpm — online download via mise
-RUN mise install node@20 python@3.12 pnpm@latest && mise use --global node@20 python@3.12 pnpm@latest && mise reshim
-
-ENV PATH="/root/.local/share/mise/shims:/root/.local/bin:${PATH}"
-ENV JAVA_HOME="/root/.local/share/mise/installs/java/zulu-17"
-
-# Install Clash (mihomo) — pinned version
-ARG CLASH_VERSION=1.18.0
-# mihomo ships no separate checksum file, so these pin the exact published asset bytes (sha256 of
-# the release .gz, recorded here): a later asset swap or a corrupted download no longer silently
-# becomes /usr/bin/clash. Download, verify, THEN decompress.
-ARG CLASH_SHA256_AMD64=f1c8638d57e0a80705854286ec9d0a26681fc18441d7d708be6b9349029554ac
-ARG CLASH_SHA256_ARM64=980e2d74ae3724e6ce88f38ca3885bb756aee41359ee38f89799fa6fe6962e5e
+# Install mise (runtime version manager): the pinned release binary, verified. The installer script
+# (mise.jdx.dev/install.sh) is not used any more; running whatever that URL returns was the one
+# unverified step left in the image.
+COPY image/tools/mise.env /usr/local/lib/sdw/tools/mise.env
 RUN set -eux; \
-    arch="$(dpkg --print-architecture)"; \
-    case "$arch" in \
-      amd64) clash_sha="$CLASH_SHA256_AMD64" ;; \
-      arm64) clash_sha="$CLASH_SHA256_ARM64" ;; \
-      *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
-    esac; \
-    curl -fsSL "https://github.com/MetaCubeX/mihomo/releases/download/v${CLASH_VERSION}/mihomo-linux-${arch}-v${CLASH_VERSION}.gz" -o /tmp/clash.gz; \
-    echo "${clash_sha}  /tmp/clash.gz" | sha256sum -c -; \
-    gunzip < /tmp/clash.gz > /usr/bin/clash; \
-    rm -f /tmp/clash.gz; \
-    chmod +x /usr/bin/clash
+    /usr/local/lib/sdw/fetch-tool mise /tmp/mise.tar.gz; \
+    tar -xzf /tmp/mise.tar.gz -C /tmp mise/bin/mise; \
+    install -m 0755 /tmp/mise/bin/mise /usr/local/bin/mise; \
+    rm -rf /tmp/mise /tmp/mise.tar.gz; \
+    mise --version
+# The runtimes are a system install under /opt/mise: root-owned and read-only to the unprivileged
+# workload user, which installs its own tools into its home (MISE_DATA_DIR there) and sees these
+# through MISE_SYSTEM_DATA_DIR. For root (the build, the operator) the data dir is the same place.
+ENV MISE_DATA_DIR=/opt/mise
+ENV MISE_SYSTEM_DATA_DIR=/opt/mise
 
-# Fail-closed egress (opt-in via EGRESS_ENFORCE): under enforcement Clash runs as its OWN uid so
-# the nftables OUTPUT filter can let only its traffic out. It still binds the DNS port 53, which a
+# The language runtimes, at EXACT versions (image/.mise.toml holds the same pins): `node@20`, `latest`
+# and `zulu-17` float, so two builds a month apart could differ. mise checks each download itself.
+COPY image/.mise.toml /etc/mise/config.toml
+
+# Java layer — online download via mise. Trim, in-layer (so the layer actually shrinks), what a JDK
+# does not need to compile or run code: the source bundle for IDE navigation (src.zip), demos,
+# man pages, samples and license texts. jmods (needed only for `jlink` custom runtimes) is kept.
+# Then drop mise's download-archive cache — the runtime is already extracted under /opt/mise.
+RUN mise install java@zulu-17.70.113.0 && mise reshim \
+    && JH="$(mise where java)" \
+    && rm -rf "$JH/lib/src.zip" "$JH/demo" "$JH/man" "$JH/sample" "$JH/legal" \
+    && rm -rf /root/.cache/mise
+
+# Node + Python + pnpm — online download via mise. Drop mise's download cache in-layer (the runtimes
+# are already extracted under /opt/mise/installs; the cached archives are just download residue).
+RUN mise install node@20.20.2 python@3.12.16 pnpm@12.16.1 && mise reshim \
+    && rm -rf /root/.cache/mise
+
+# One stable path for the JDK whatever its version: the install directory is named after it.
+RUN ln -sfn "$(mise where java)" /opt/java
+ENV PATH="/opt/mise/shims:${PATH}"
+ENV JAVA_HOME="/opt/java"
+
+# Clash (mihomo): the pinned, verified binary from the clash-bin stage above (image/tools/mihomo.env).
+COPY --from=clash-bin /clash /usr/bin/clash
+RUN /usr/bin/clash -v
+
+# Clash always runs as its OWN uid (never root), started by `sdw entrypoint` and respawned by
+# `sdw clash-watcher`. Under the fail-closed egress firewall (on by default) that uid is also the
+# one the nftables OUTPUT filter lets out directly. Clash still binds the DNS port 53, which a
 # non-root process cannot do without a capability, so grant the binary cap_net_bind_service.
-# nftables + libcap2-bin are installed in the core apt layer; the filter is applied at boot by
-# `sdw entrypoint` (the enforce-egress step). When EGRESS_ENFORCE is off, Clash runs as root as
-# before and none of this is engaged.
+# nftables + libcap2-bin are installed in the core apt layer; the filter is loaded at boot by
+# `sdw entrypoint` (the enforce-egress step) unless EGRESS_ENFORCE=0.
 RUN useradd --system --no-create-home --shell /usr/sbin/nologin clash \
     && setcap 'cap_net_bind_service=+ep' /usr/bin/clash
 
-# Install code-server — pinned. The official installer fetches the matching
-# GitHub release; --version makes rebuilds deterministic.
-ARG CODE_SERVER_VERSION=4.141.0
-RUN curl -fsSL "https://code-server.dev/install.sh" | sh -s -- --version "${CODE_SERVER_VERSION}"
+# Caddy is the only program facing the network and needs no privilege, so supervisord runs it as
+# its own user (src/image/supervisord.conf). It keeps its state, which it must be able to write,
+# under /var/lib/caddy.
+RUN useradd --system --no-create-home --home-dir /var/lib/caddy --shell /usr/sbin/nologin caddy \
+    && install -d -o caddy -g caddy -m 0700 /var/lib/caddy
+
+# The audit trail (JSON lines: logins, self-destruct calls, egress changes) is written under
+# /var/log/sdw; docker-compose.yml mounts a named volume there so it outlives the container.
+# The desktop programs' logs (rotated by supervisord, see etc/supervisor/desktop-*.conf) go under
+# /var/log/desktop, which must exist before supervisord starts them.
+RUN install -d -m 0700 /var/log/sdw && install -d -m 0755 /var/log/desktop
+
+# Install code-server: the pinned .deb, verified (image/tools/code-server.env). The official install.sh
+# is not run: it fetches the same package, but unpinned and unchecked.
+COPY image/tools/code-server.env /usr/local/lib/sdw/tools/code-server.env
+RUN set -eux; \
+    /usr/local/lib/sdw/fetch-tool code-server /tmp/code-server.deb; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends /tmp/code-server.deb; \
+    rm -f /tmp/code-server.deb; \
+    rm -rf /var/lib/apt/lists/*; \
+    code-server --version
 
 # Filesystem prep
 RUN mkdir -p /workspace /vault/cipher /etc/supervisor/conf.d /var/run/vault-sync \
@@ -325,28 +385,29 @@ RUN mkdir -p /workspace /vault/cipher /etc/supervisor/conf.d /var/run/vault-sync
 # Desktop apps registry
 RUN echo '[]' > /opt/desktop-apps/.registry.json
 
-# Ensure proxy env is available in all shells (interactive terminals via code-server)
+# Ensure proxy env is available in all shells (interactive terminals via code-server). A no_proxy
+# the shell already has wins over the default: the launcher (`sdw workload`) adds the networks of
+# EGRESS_ALLOW_CIDRS to it, and a login shell must not undo that.
 RUN echo 'export http_proxy=http://127.0.0.1:7890' >> /etc/profile.d/proxy.sh && \
     echo 'export https_proxy=http://127.0.0.1:7890' >> /etc/profile.d/proxy.sh && \
     echo 'export all_proxy=socks5h://127.0.0.1:7890' >> /etc/profile.d/proxy.sh && \
-    echo 'export no_proxy=localhost,127.0.0.0/8,172.16.0.0/12,10.0.0.0/8,169.254.0.0/16' >> /etc/profile.d/proxy.sh && \
+    echo 'export no_proxy="${no_proxy:-localhost,127.0.0.0/8,172.16.0.0/12,10.0.0.0/8,169.254.0.0/16}"' >> /etc/profile.d/proxy.sh && \
     echo 'export HTTP_PROXY=$http_proxy' >> /etc/profile.d/proxy.sh && \
     echo 'export HTTPS_PROXY=$https_proxy' >> /etc/profile.d/proxy.sh && \
     echo 'export ALL_PROXY=$all_proxy' >> /etc/profile.d/proxy.sh && \
     echo 'export NO_PROXY=$no_proxy' >> /etc/profile.d/proxy.sh && \
-    echo 'export PATH="/root/.local/bin:/root/.local/share/mise/shims:$PATH"' >> /etc/profile.d/proxy.sh && \
     echo 'eval "$(mise activate bash)"' >> /etc/profile.d/proxy.sh && \
-    echo '# noproxy: run a command bypassing Clash proxy (direct network)' >> /etc/profile.d/proxy.sh && \
+    echo '# noproxy: run a command without the proxy variables, so it connects directly. With the egress firewall on (the default) that connection is dropped; EGRESS_ENFORCE=0 turns the firewall off.' >> /etc/profile.d/proxy.sh && \
     echo 'noproxy() { env -u http_proxy -u https_proxy -u all_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY "$@"; }' >> /etc/profile.d/proxy.sh && \
     chmod +x /etc/profile.d/proxy.sh && \
-    echo 'source /etc/profile.d/proxy.sh' >> /root/.bashrc
+    echo 'source /etc/profile.d/proxy.sh' >> /root/.bashrc && \
+    echo '[ -r /etc/profile.d/proxy.sh ] && . /etc/profile.d/proxy.sh' >> /etc/bash.bashrc
 
 # Copy baked configs
 COPY image/supervisord.conf /etc/supervisor/supervisord.conf
-COPY --chmod=0755 image/clash-watcher.sh /usr/local/bin/clash-watcher
-COPY image/etc/clash/config.yaml /etc/clash/config.yaml
-COPY image/etc/clash/config.yaml.template /etc/clash/config.yaml.template
-COPY image/etc/clash/rules.yaml /etc/clash/rules.yaml
+# The Clash template lives outside the /etc/clash volume on purpose: a named volume is filled from
+# the image only when it is created, so a template inside it would never be updated again.
+COPY image/share/clash/config.yaml.template /usr/share/sdw/clash/config.yaml.template
 COPY image/etc/caddy/Caddyfile /etc/caddy/Caddyfile
 COPY image/etc/README-UNLOCK.md /workspace/README-UNLOCK.md
 COPY image/etc/cron.d/vault-sync /etc/cron.d/vault-sync
@@ -381,14 +442,11 @@ COPY image/etc/supervisor/backup-watcher.conf /etc/supervisor/conf.d/backup-watc
 # Desktop default configs
 COPY image/etc/desktop/ /opt/workspace/image/etc/desktop/
 
-# Selkies static web client (served by Caddy). Empty in a KasmVNC-only image — the selkies-web
-# stage selector above drops it there, and only the Selkies Caddy snippet serves this path.
-COPY --from=selkies-web /web /usr/share/selkies/web
-
 # XFCE launcher (waits for X server before starting the session; both stacks)
 RUN cp /opt/workspace/image/etc/desktop/start-xfce.sh /usr/local/bin/start-xfce.sh && \
     cp /opt/workspace/image/etc/desktop/start-audio.sh /usr/local/bin/start-audio.sh && \
-    chmod +x /usr/local/bin/start-xfce.sh /usr/local/bin/start-audio.sh
+    cp /opt/workspace/image/etc/desktop/start-selkies.sh /usr/local/bin/start-selkies.sh && \
+    chmod +x /usr/local/bin/start-xfce.sh /usr/local/bin/start-audio.sh /usr/local/bin/start-selkies.sh
 
 # glycin (GTK4's image loader, via librsvg) sandboxes each loader with bwrap/user-namespaces.
 # Where unprivileged userns is unavailable (colima/Lima, locked-down Docker/CI) bwrap fails and GTK
@@ -410,13 +468,46 @@ RUN if [ -e /usr/bin/bwrap ]; then \
 # leftover agents, the unmount refused for 20 s with no process holding a file). The property goes
 # INTO the package's own file: it also holds the Failsafe session (window manager, panel, desktop).
 RUN f=/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-session.xml && \
+    { [ -f "$f" ] || exit 0; } && \
     sed -i 's#</channel>#  <property name="startup" type="empty">\n    <property name="ssh-agent" type="empty">\n      <property name="enabled" type="bool" value="false"/>\n    </property>\n    <property name="gpg-agent" type="empty">\n      <property name="enabled" type="bool" value="false"/>\n    </property>\n  </property>\n</channel>#' "$f" && \
     grep -q 'name="ssh-agent"' "$f" && grep -q 'FailsafeSessionName' "$f"
+
+# Pins for the applications `desktop-install` fetches on demand (IDEA, Burp Suite): the version, URL
+# and sha256 it must match, checked by the same fetch-tool the image build used.
+COPY image/tools/idea.env image/tools/burpsuite.env /usr/local/lib/sdw/tools/
 
 # The Rust command surface + entrypoint + daemons: one multi-call binary. `sdw install` symlinks
 # every bin command (BIN_COMMANDS in rust/cli/src/dispatch.rs) to it (argv[0] dispatch).
 COPY --from=rust-builder /sdw /usr/local/bin/sdw
 RUN /usr/local/bin/sdw install /usr/local/bin
+
+# The workload user. Everything the user runs (code-server and its terminals, the desktops and their
+# applications, build tools, whatever a package's install script does) runs as `dev`, not root; the
+# services that hold the secrets and guard the perimeter keep their own identities. HOME is inside
+# the vault (/workspace/home), created at unlock. See core/src/workspace/workload.rs.
+RUN groupadd --gid 1000 dev \
+    && useradd --uid 1000 --gid 1000 --home-dir /workspace/home --no-create-home --shell /bin/bash dev
+
+# The bridge from the workload to root: `doas` runs ONLY the entries of /usr/local/libexec/sdw-priv
+# (created by `sdw install` above, one per command that needs root), with a clean environment. The
+# rules are generated from the same list the entries are, so they cannot disagree.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends opendoas \
+    && rm -rf /var/lib/apt/lists/* \
+    && /usr/local/bin/sdw doas-rules > /etc/doas.conf \
+    && chmod 0600 /etc/doas.conf \
+    && install -d -m 0700 /var/lib/sdw /run/sdw \
+    && chmod 0700 /vault/cipher /pentest/cipher
+
+# `root`: a one-word root shell for the workload user. Works ONLY when WORKLOAD_ROOT=1 (the boot
+# then adds the matching doas rule; see entrypoint apply_workload_root). Otherwise doas denies it
+# and the dev/root confinement (the default) holds. Host-side alternative: `docker exec -u root`.
+RUN printf '#!/bin/sh\nexec doas /bin/bash "$@"\n' > /usr/local/bin/root \
+    && chmod 0755 /usr/local/bin/root
+
+# No setuid or setgid file but doas: a local-privilege-escalation bug in su, mount, passwd and the
+# rest is then not reachable from the workload (it has no capabilities either).
+RUN find / -xdev -type f \( -perm -4000 -o -perm -2000 \) ! -path /usr/bin/doas -exec chmod a-s {} +
 
 # The sync API daemon is part of the sdw binary now: supervisord runs `sdw sync-service`. It serves
 # /sync/api/* and reads SYNC_ENABLED / REMOTE_DESTRUCT_ENABLED from env.

@@ -5,14 +5,17 @@
 use crate::shared::layout::WORKSPACE_MOUNT;
 use crate::vault::domain::VaultSpec;
 use crate::vault::layout::VAULT_CIPHER_DIR;
-
-/// The main vault: id "workspace", mounted at WORKSPACE_MOUNT. `allow_other` stays false — only a
-/// plugin volume holding a root file system needs it (see the pentest plugin).
+use crate::workspace::workload::{WORKLOAD_GID, WORKLOAD_UID};
+/// The main vault: id "workspace", mounted at WORKSPACE_MOUNT by root, but its files belong to the
+/// workload user (`owner`), which `allow_other` lets in. The mount point itself is mode 0700, so
+/// any other user (Caddy, Clash, a service account) is kept out by the kernel (gocryptfs turns on
+/// default_permissions together with allow_other).
 pub fn workspace_vault() -> VaultSpec {
     VaultSpec {
         id: "workspace".to_string(),
         cipher_dir: VAULT_CIPHER_DIR.to_string(),
         mount_point: WORKSPACE_MOUNT.to_string(),
-        allow_other: false,
+        allow_other: true,
+        owner: Some((WORKLOAD_UID, WORKLOAD_GID)),
     }
 }

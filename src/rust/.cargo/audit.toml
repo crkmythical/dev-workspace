@@ -1,0 +1,11 @@
+# cargo-audit policy (https://github.com/rustsec/rustsec/tree/main/cargo-audit). CI runs `cargo audit`
+# and fails on any advisory that is not listed here WITH a reason.
+[advisories]
+ignore = [
+    # RUSTSEC-2023-0071, "Marvin Attack" in the `rsa` crate: a timing side channel in RSA operations
+    # that use a PRIVATE key (decryption, signing). The gate only VERIFIES Cloudflare Access RS256
+    # signatures with the team's public keys (core/src/auth/access_jwt.rs); no private-key operation
+    # exists in the shipped binary (tests generate throwaway keys, nothing else does). The advisory
+    # has no fixed release. Re-check when `rsa` publishes one, and drop this entry then.
+    "RUSTSEC-2023-0071",
+]

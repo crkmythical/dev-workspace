@@ -1,7 +1,16 @@
 # Design — Unified Authentication Gateway
 
-Status: PROPOSED (for review). Supersedes the per-service auth patchwork at the
-Caddy ingress. No code yet; this is the contract to agree on first.
+Status: IMPLEMENTED (the text below is the design as it was proposed, kept for the reasoning;
+"today" in section 1 means before it). Since then the backends dropped their own passwords as well:
+code-server runs with `--auth none` and KasmVNC with `-DisableBasicAuth`, so the gate is the only
+login and there is no second prompt. A WebSocket handshake whose `Origin` is another site is refused
+even with a valid cookie. The behaviour is checked by `src/tests/smoke/checks/20-auth.sh`.
+Selkies was moved to 2.x on 2026-11-04 (the 1.x line was deleted upstream): it now serves its
+client, API and WebSocket itself under `/desktop/` (the socket is `/desktop/api/websockets`, not
+`/desktop/websockets` as in the text below), with its own Basic auth switched off. The argument is
+unchanged: the gate is the only login, and it covers every path under `/desktop/`.
+
+Supersedes the per-service auth patchwork at the Caddy ingress.
 
 ## 1. Problem — the disease, not the symptom
 

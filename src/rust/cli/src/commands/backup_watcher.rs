@@ -47,6 +47,8 @@ fn run_restic(args: &[String], restic_pid: &AtomicU32) -> Result<(bool, String),
     for key in ["http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY"] {
         command.env(key, &proxy);
     }
+    // The repository password and S3 keys may live in files (RESTIC_PASSWORD_FILE, ...).
+    sdw_infra::secrets::pass_secrets(&mut command, sdw_infra::secrets::RESTIC_SECRETS);
     let child = command.spawn().map_err(|e| e.to_string())?;
     restic_pid.store(child.id(), Ordering::SeqCst);
     let result = child.wait_with_output();

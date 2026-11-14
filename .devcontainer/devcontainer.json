@@ -1,0 +1,60 @@
+// 格式说明: https://aka.ms/devcontainer.json  特性列表: https://containers.dev/features
+// 按需注释/取消注释 features 里的条目。每个条目末尾带逗号,最后一项 git 始终保留,
+// 所以随便注释任意其它条目都不会产生多余的逗号。
+{
+	"name": "Dev",
+
+	// base 镜像已带 git、curl、ca-certificates、sudo,默认非 root 用户 vscode
+	"image": "mcr.microsoft.com/devcontainers/base:trixie",
+
+	"features": {
+		// ---- 语言工具链(按需取消注释) ----
+		// "ghcr.io/devcontainers/features/java:1": { "version": "17", "installMaven": "true", "installGradle": "false" },
+		// "ghcr.io/devcontainers/features/node:1": { "version": "lts" },
+		// "ghcr.io/devcontainers/features/python:1": { "version": "3.12" },
+		// "ghcr.io/devcontainers/features/go:1": { "version": "latest" },
+		// "ghcr.io/devcontainers/features/rust:1": { "version": "latest", "profile": "minimal" },
+
+		// ---- 其它常用 ----
+		// "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {},
+		// "ghcr.io/devcontainers/features/github-cli:1": {},
+
+		// 保持最后一项,不要注释(避免逗号问题)
+		"ghcr.io/devcontainers/features/git:1": {}
+	},
+
+	// 额外系统包(只有一个文件,没有 Dockerfile,所以用 onCreateCommand 装;创建容器时执行一次)
+	// 要加包就往 install 后面追加
+	"onCreateCommand": {
+		"install-system-packages": "sudo apt-get update && sudo apt-get install -y --no-install-recommends systemd-standalone-sysusers ca-certificates curl && sudo rm -rf /var/lib/apt/lists/*"
+	},
+
+	// 依赖安装,按所用语言改写
+	// "postCreateCommand": "npm install",
+
+	// 容器内服务端口转发到本机
+	// "forwardPorts": [3000, 8080],
+
+	// 避免僵尸进程
+	"init": true,
+
+	// 同时兼容 VS Code 和 IntelliJ,两个 IDE 各读各的块,互不影响
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				// "vscjava.vscode-java-pack",
+				// "dbaeumer.vscode-eslint",
+				// "ms-python.python",
+				// "golang.go",
+				// "rust-lang.rust-analyzer",
+				"editorconfig.editorconfig"
+			]
+		},
+		"jetbrains": {
+			// IntelliJ IDEA。用 PyCharm / GoLand / WebStorm / RustRover 等时改成对应名称
+			"backend": "IntelliJ"
+		}
+	}
+
+	// 以 root 连接(不推荐): "remoteUser": "root"
+}

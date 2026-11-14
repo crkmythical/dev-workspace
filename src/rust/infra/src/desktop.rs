@@ -7,7 +7,7 @@ use sdw_core::desktop::domain::{
     desktop_anchor, desktop_group, desktop_start_order, desktop_stop_order, desktop_stream_port,
     parse_stack_marker, DesktopTarget,
 };
-use sdw_core::desktop::layout::{DESKTOP_STACK_MARKER_PATH, VNC_HOME};
+use sdw_core::desktop::layout::DESKTOP_STACK_MARKER_PATH;
 use std::thread::sleep;
 use std::time::Duration;
 
@@ -127,22 +127,6 @@ pub fn wait_for_desktop_stream(target: DesktopTarget, timeout_sec: u32) -> bool 
         sleep(Duration::from_secs(1));
     }
     false
-}
-
-/// Write KasmVNC's native HTTP Basic Auth password file ($VNC_HOME/.kasmpasswd, user "user") from
-/// the plaintext password. KasmVNC owns the /vnc/ auth end-to-end, so this must exist for the VNC
-/// desktop to authenticate. Idempotent.
-pub fn ensure_kasm_passwd(password: &str) {
-    if password.is_empty() {
-        return;
-    }
-    let kasmpasswd = format!("{VNC_HOME}/.kasmpasswd");
-    cmd::run_stdin(
-        "kasmvncpasswd",
-        &["-u", "user", "-w", "-r", &kasmpasswd],
-        &format!("{password}\n{password}\n"),
-    );
-    cmd::ok("chmod", &["0600", &kasmpasswd]);
 }
 
 #[cfg(test)]

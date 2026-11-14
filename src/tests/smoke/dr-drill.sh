@@ -46,7 +46,8 @@ drill() {
   if ! stack_up; then
     fail "the workspace became healthy" "$(docker logs --tail 15 "$WS" 2>&1)"; cleanup; return
   fi
-  local canary="CANARY-$(date +%s)-${RANDOM}"
+  local canary
+  canary="CANARY-$(date +%s)-${RANDOM}"
   dx sh -c "printf '%s\n' '$canary' > /workspace/dr-canary.txt"
   expect_true "canary written into the unlocked vault" dx test -f /workspace/dr-canary.txt
   # The watcher takes a BASELINE snapshot at boot, so snapshot_count>=1 can be true before the

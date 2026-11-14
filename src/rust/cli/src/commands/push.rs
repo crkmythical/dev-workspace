@@ -67,8 +67,10 @@ pub fn run(args: &[String]) -> i32 {
 
     let mut cmd = Command::new("croc");
     cmd.args(&argv);
-    // CROC_PASS / CROC_RELAY pass through the inherited environment; the code phrase (if chosen)
-    // goes in CROC_SECRET, never on argv.
+    // CROC_RELAY passes through the inherited environment; CROC_PASS may live in a file
+    // (CROC_PASS_FILE) and is handed over explicitly. The code phrase (if chosen) goes in
+    // CROC_SECRET, never on argv.
+    sdw_infra::secrets::pass_secrets(&mut cmd, &["CROC_PASS"]);
     if let Some(code) = parsed.code {
         cmd.env("CROC_SECRET", code);
     }

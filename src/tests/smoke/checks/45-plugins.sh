@@ -11,6 +11,7 @@ cleanup() {
   dx rm -f /usr/local/bin/debootstrap /usr/local/bin/apt-get /usr/local/bin/curl \
     /etc/fake-debootstrap-fail /etc/fake-apt-fail /etc/fake-curl-fail \
     /var/log/fake-debootstrap.log /var/log/fake-apt-get.log /var/log/fake-curl.log 2>/dev/null || true
+  dx rm -rf /var/lib/fake-downloads /tmp/fake-tools 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -46,16 +47,44 @@ dx desktop-install firefox >/dev/null 2>&1
 expect_eq "installing twice does not register it twice" 1 \
   "$(dx sh -c 'grep -o firefox /opt/desktop-apps/.registry.json | wc -l' | tr -d ' ')"
 
-OUT="$(dx desktop-install burpsuite 2>&1)"
+# The applications that are downloaded are pinned (src/image/tools/*.env) and fetched by the image's
+# own fetch-tool, which refuses bytes that do not match. The pins that ship are checked for shape;
+# the install is exercised against fake pins (SDW_TOOLS_DIR) for files the curl shim serves.
+for tool in idea burpsuite; do
+  expect_eq "the shipped $tool pin has a sha256 for both architectures" 2 \
+    "$(dx grep -Ec '^SHA256_(amd64|arm64)=[0-9a-f]{64}$' /usr/local/lib/sdw/tools/$tool.env)"
+done
+dx sh -c 'mkdir -p /var/lib/fake-downloads /tmp/fake-tools && printf "PK fake burp jar\n" >/var/lib/fake-downloads/burp.jar'
+dx sh -c 'd=$(mktemp -d) && mkdir -p "$d/idea-fake/bin" && printf "#!/bin/sh\necho fake idea\n" >"$d/idea-fake/bin/idea.sh" \
+  && chmod +x "$d/idea-fake/bin/idea.sh" \
+  && tar --mtime=@0 --owner=0 --group=0 --numeric-owner -cf - -C "$d" idea-fake | gzip -n >/var/lib/fake-downloads/idea.tar.gz \
+  && rm -rf "$d"'
+# write_pin <tool> <file> [sha256]: a pin for the file the shim serves (its real sha256 unless given).
+write_pin() {
+  local sha="${3:-$(dx sha256sum "/var/lib/fake-downloads/$2" | cut -d' ' -f1)}"
+  dx sh -c "printf '%s\n' NAME=$1 VERSION=fake \"URL_amd64='http://smoke.invalid/$2'\" SHA256_amd64=$sha \"URL_arm64='http://smoke.invalid/$2'\" SHA256_arm64=$sha >/tmp/fake-tools/$1.env"
+}
+write_pin burpsuite burp.jar
+write_pin idea idea.tar.gz
+OUT="$(dx env SDW_TOOLS_DIR=/tmp/fake-tools desktop-install burpsuite 2>&1)"
 expect_match "a downloaded application installs" 'Installed Burp Suite' "$OUT"
+expect_match "after fetch-tool checked its sha256" '/opt/desktop-apps/burpsuite/burpsuite.jar: OK' "$OUT"
 expect_true "its jar is where its launcher expects it" dx test -s /opt/desktop-apps/burpsuite/burpsuite.jar
 expect_match "and it has a menu entry" 'Exec=java -jar /opt/desktop-apps/burpsuite/burpsuite.jar' \
   "$(dx cat /usr/share/applications/burpsuite.desktop)"
-
-OUT="$(dx desktop-install idea 2>&1)"
+OUT="$(dx env SDW_TOOLS_DIR=/tmp/fake-tools desktop-install idea 2>&1)"
 expect_match "an archive is unpacked into place" 'Installed IntelliJ IDEA' "$OUT"
 expect_true "with the leading directory stripped" dx test -x /opt/desktop-apps/idea/bin/idea.sh
-
+expect_false "and the downloaded archive is not left behind" dx test -e /opt/desktop-apps/idea/.idea.download
+# A file whose hash is not the pinned one is refused, and nothing is installed from it.
+dx rm -rf /opt/desktop-apps/burpsuite /usr/share/applications/burpsuite.desktop
+write_pin burpsuite burp.jar 0000000000000000000000000000000000000000000000000000000000000000
+OUT="$(dx env SDW_TOOLS_DIR=/tmp/fake-tools desktop-install burpsuite 2>&1)"
+expect_match "a download that does not match its pin is refused" 'FAILED' "$OUT"
+expect_match "and reported" 'ERROR: Failed to download Burp Suite' "$OUT"
+expect_false "no jar is left" dx test -e /opt/desktop-apps/burpsuite/burpsuite.jar
+expect_false "and no menu entry" dx test -e /usr/share/applications/burpsuite.desktop
+write_pin burpsuite burp.jar
 dx touch /etc/fake-apt-fail
 OUT="$(dx desktop-install chromium 2>&1)"
 expect_match "a failing apt is reported" 'ERROR: Failed to install chromium' "$OUT"
@@ -64,7 +93,7 @@ expect_false "and no menu entry is left behind" dx test -e /usr/share/applicatio
 expect_no_match "nor a registry entry" 'chromium' "$(dx cat /opt/desktop-apps/.registry.json)"
 dx rm -f /etc/fake-apt-fail
 dx touch /etc/fake-curl-fail
-OUT="$(dx desktop-install burpsuite 2>&1)"
+OUT="$(dx env SDW_TOOLS_DIR=/tmp/fake-tools desktop-install burpsuite 2>&1)"
 expect_match "a failing download is reported" 'ERROR: Failed to download Burp Suite' "$OUT"
 dx rm -f /etc/fake-curl-fail
 
@@ -92,6 +121,13 @@ expect_match "the rootfs mount lets other users in" 'allow_other' "$(dx grep ' /
 expect_false "while the workspace vault stays private to its owner" \
   dx setpriv --reuid=100 --regid=101 --clear-groups ls /workspace
 expect_true "the workspace vault is still mounted beside it" dx mountpoint -q /workspace
+# The mount's root directory is the ciphertext directory itself, so ITS mode decides who can reach
+# the rootfs: others may pass through (0711) but not list it, and the key file is 0400. (0700, which
+# the workspace's ciphertext has, made `cat /pentest/rootfs/etc/hostname` fail for uid 100.)
+expect_eq "the pentest ciphertext directory can be passed through but not listed" 711 "$(dx stat -c %a /pentest/cipher)"
+expect_eq "the workspace's ciphertext directory is closed to everyone but root" 700 "$(dx stat -c %a /vault/cipher)"
+expect_false "the workspace user cannot list the pentest ciphertext" docker exec -u dev "$WS" ls /pentest/cipher
+expect_false "… nor read its key file" docker exec -u dev "$WS" cat /pentest/cipher/gocryptfs.conf
 OUT="$(dx pentest 2>&1 || true)"
 expect_match "pentest refuses while there is no rootfs yet" 'rootfs not bootstrapped' "$OUT"
 

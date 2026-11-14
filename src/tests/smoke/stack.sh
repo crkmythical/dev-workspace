@@ -18,7 +18,8 @@ apparmor_file() {
   esac
 }
 
-# compose <args...>: docker compose for the current SMOKE_* settings.
+# compose <args...>: docker compose for the current SMOKE_* settings. SMOKE_EXTRA_COMPOSE, when set,
+# is one more override file (a check that needs a mount or a variable the others do not).
 compose() {
   local extra
   extra="$(apparmor_file)"
@@ -28,7 +29,7 @@ compose() {
     SMOKE_EXTRA_ENV="${SMOKE_EXTRA_ENV:-src/tests/smoke/empty.env}" \
     docker compose --project-directory "$ROOT" -p "$SMOKE_PROJECT" \
     -f "$ROOT/docker-compose.yml" -f "$SMOKE_DIR/docker-compose.smoke.yml" \
-    ${extra:+-f "$extra"} "$@"
+    ${extra:+-f "$extra"} ${SMOKE_EXTRA_COMPOSE:+-f "$SMOKE_EXTRA_COMPOSE"} "$@"
 }
 
 # stack_up: start the current instance and wait until the workspace has booted and is healthy.

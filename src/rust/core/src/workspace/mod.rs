@@ -1,7 +1,11 @@
 pub mod auth;
 pub mod banner;
 pub mod boot;
+pub mod capabilities;
 pub mod config;
 pub mod env_schema;
 pub mod features;
+pub mod inotify;
 pub mod layout;
+pub mod secrets;
+pub mod workload;

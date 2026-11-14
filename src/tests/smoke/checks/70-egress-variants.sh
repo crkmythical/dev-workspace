@@ -28,23 +28,31 @@ empty_provider() {
 # --- 2. Clash cannot start ----------------------------------------------------------------------
 broken_clash() {
   step "egress: Clash cannot start"
-  compose up -d --no-start >/dev/null 2>&1
-  # The clash-config volume holds the template the start-up renders; break it.
-  docker run --rm -v "${SMOKE_PROJECT}_clash-config:/etc/clash" alpine \
-    sh -c 'printf "mixed-port: [broken\n  - : yaml {\n" > /etc/clash/config.yaml.template' >/dev/null 2>&1
+  # The image's template is replaced by one the renderer refuses, so no config is rendered. Clash
+  # must then NOT start: left without a config.yaml it writes a default and listens on 7890 as a
+  # plain DIRECT proxy, which would pass the probe while no subscription is in use.
+  # shellcheck disable=SC2034 # read by compose() in stack.sh
+  SMOKE_EXTRA_COMPOSE="$SMOKE_DIR/fixtures/broken-clash.compose.yml"
   if ! stack_up; then
     fail "the workspace did not become healthy" "$(docker logs --tail 15 "$WS" 2>&1)"
+    unset SMOKE_EXTRA_COMPOSE
     return
   fi
   LOG="$(docker logs "$WS" 2>&1)"
+  expect_match "the render failure is reported" 'render-clash-config.*the Clash template has no' "$LOG"
+  expect_match "Clash is not started without a rendered config" 'not starting Clash' "$LOG"
   expect_match "the banner says DOWN" 'Egress: +DOWN' "$LOG"
   expect_match "and that nothing is listening" 'nothing is listening on the proxy port' "$LOG"
+  expect_false "no Clash process is running" dx pgrep -x clash
+  expect_false "and nothing listens on the proxy port" dx nc -z 127.0.0.1 7890
+  expect_false "no default config was left behind for a later start" dx test -e /etc/clash/config.yaml
   expect_match "the vault was unlocked all the same" 'Vault: +unlocked' "$LOG"
   expect_match "the status file says down" '"status":"down"' "$(dx cat /var/run/egress-status 2>&1)"
   DOCTOR="$(dx doctor 2>&1 || true)"
   expect_match "doctor fails the egress row" '✗ Egress \(Clash proxy\) — nothing listening' "$DOCTOR"
   expect_code "code-server is up" 302 "$BASE/"
   stack_down
+  unset SMOKE_EXTRA_COMPOSE
 }
 
 # --- 3. a required variable is missing: the container refuses to start --------------------------

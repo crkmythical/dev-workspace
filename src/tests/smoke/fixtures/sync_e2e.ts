@@ -15,6 +15,25 @@ const passphrase = process.argv[3] ?? "smoke-master-pass-123";
 const key = await deriveSyncKey(passphrase);
 const wrong = await deriveSyncKey("not-the-passphrase");
 
+// Everything except /auth/* and /sync/api/destruct sits behind the ingress auth gateway (Caddy
+// forward_auth -> /auth/verify). Log in once and send the session cookie on every request, as a
+// browser would after the login page. The sync protocol's own proof (list auth) is checked on top.
+const loginReply = await fetch(`${base}/auth/login`, {
+  method: "POST",
+  redirect: "manual",
+  headers: { "content-type": "application/x-www-form-urlencoded" },
+  body: new URLSearchParams({ password: passphrase, next: "/" }),
+});
+const gateCookie = /sdw_session=[^;]+/.exec(loginReply.headers.get("set-cookie") ?? "")?.[0] ?? "";
+if (!gateCookie) {
+  console.log(`FAIL  the auth gateway accepts the master password   [status ${loginReply.status}]`);
+  process.exit(1);
+}
+const gated = (init: RequestInit = {}): RequestInit => ({
+  ...init,
+  headers: { ...((init.headers as Record<string, string> | undefined) ?? {}), cookie: gateCookie },
+});
+
 let failed = 0;
 function check(name: string, ok: boolean, detail = "") {
   if (!ok) failed++;
@@ -27,7 +46,7 @@ async function sha256(data: Uint8Array) {
   return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 const post = (p: { headers: Record<string, string>; body: Uint8Array }) =>
-  fetch(base + SYNC_API.upload, { method: "POST", headers: p.headers, body: p.body });
+  fetch(base + SYNC_API.upload, gated({ method: "POST", headers: p.headers, body: p.body }));
 
 type Reply = { status: number; body: Record<string, unknown> };
 const json = async (r: Response): Promise<Reply> => ({
@@ -35,10 +54,8 @@ const json = async (r: Response): Promise<Reply> => ({
   body: (await r.json().catch(() => ({}))) as Record<string, unknown>,
 });
 
-// /sync/api/doctor is gated behind Caddy basic-auth (it reveals sync/vault state to the network).
-// The Caddy password is the master password, which in this workspace equals the vault passphrase.
-const authHeader = { Authorization: `Basic ${btoa(`user:${passphrase}`)}` };
-const doctor = await json(await fetch(base + SYNC_API.doctor, { headers: authHeader }));
+// /sync/api/doctor reveals sync/vault state, so it is behind the gate like the rest of the API.
+const doctor = await json(await fetch(base + SYNC_API.doctor, gated()));
 check(
   "doctor reports ready, with an available sync key",
   doctor.body.state === "ready" && doctor.body.sync_key_available === true,
@@ -82,7 +99,7 @@ check(
 
 // --- listing needs proof of the key ---
 const listed = await json(
-  await fetch(base + SYNC_API.list, { headers: await buildListAuth(key, Date.now()) }),
+  await fetch(base + SYNC_API.list, gated({ headers: await buildListAuth(key, Date.now()) })),
 );
 const files = (listed.body.files ?? []) as { name: string }[];
 const names = files.map((f) => f.name);
@@ -91,13 +108,13 @@ check(
   listed.status === 200 && names.includes("smoke-hello.txt"),
   JSON.stringify(names),
 );
-const anon = await json(await fetch(base + SYNC_API.list));
+const anon = await json(await fetch(base + SYNC_API.list, gated()));
 check("listing without an authenticator is 401", anon.status === 401, JSON.stringify(anon));
 const badList = await json(
-  await fetch(base + SYNC_API.list, { headers: await buildListAuth(wrong, Date.now()) }),
+  await fetch(base + SYNC_API.list, gated({ headers: await buildListAuth(wrong, Date.now()) })),
 );
 check("listing with the wrong key is 401", badList.status === 401, JSON.stringify(badList));
-const content = await fetch(`${base}${SYNC_API.list}?path=smoke-hello.txt`);
+const content = await fetch(`${base}${SYNC_API.list}?path=smoke-hello.txt`, gated());
 check(
   "the old plaintext ?path= download is gone (404)",
   content.status === 404,

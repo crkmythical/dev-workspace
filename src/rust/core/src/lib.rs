@@ -9,6 +9,7 @@
 //! suite, not a shared unit test (see deploy/docs/rust-migration.md). The infra/cli crates provide
 //! the adapters; the sync-service crate consumes these primitives over the wire.
 
+pub mod audit;
 pub mod auth;
 pub mod backup;
 pub mod desktop;

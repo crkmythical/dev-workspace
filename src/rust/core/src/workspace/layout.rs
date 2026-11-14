@@ -5,9 +5,6 @@
 pub const CADDY_PORT: u16 = 8080;
 pub const CODE_SERVER_PORT: u16 = 8082;
 
-pub const CODE_SERVER_CONFIG_DIR: &str = "/root/.config/code-server";
-pub const CODE_SERVER_CONFIG_PATH: &str = "/root/.config/code-server/config.yaml";
-
 pub const SUPERVISORD_BIN: &str = "/usr/bin/supervisord";
 pub const SUPERVISORD_CONF: &str = "/etc/supervisor/supervisord.conf";
 /// Per-feature program definitions; the boot flips `autostart` in the ones that apply.

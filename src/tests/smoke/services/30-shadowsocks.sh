@@ -11,7 +11,7 @@
 ss_node() {
   step "Shadowsocks node behind the subscription"
   local node="${SMOKE_PROJECT}-ssnode" out
-  docker build -q -t sdw-smoke-ss - >/dev/null <<'EOF'
+  docker_build_retry sdw-smoke-ss <<'EOF'
 FROM alpine:latest
 RUN apk add --no-cache shadowsocks-rust-ssserver
 CMD ["ssserver", "-s", "0.0.0.0:8388", "-k", "smoke-ss-password", "-m", "chacha20-ietf-poly1305", "-vv"]
@@ -28,11 +28,13 @@ EOF
     return
   fi
 
-  out="$(dx curl -s http://127.0.0.1:9090/proxies/ss-node 2>&1)"
+  # The node belongs to the subscription provider, so it is asked for there (in rule mode the top-level
+  # /proxies lists only the groups).
+  out="$(clash_api /providers/proxies/subscription/ss-node 2>&1)"
   expect_match "Clash loaded the node from the subscription, as a Shadowsocks proxy" '"type":"Shadowsocks"' "$out"
-  out="$(dx curl -s http://127.0.0.1:9090/proxies/auto-select 2>&1)"
+  out="$(clash_api /proxies/auto-select 2>&1)"
   expect_match "the url-test group selected it" '"now":"ss-node"' "$out"
-  out="$(dx curl -s 'http://127.0.0.1:9090/proxies/ss-node/delay?url=http://www.gstatic.com/generate_204&timeout=10000' 2>&1)"
+  out="$(clash_api '/providers/proxies/subscription/ss-node/healthcheck?url=http://www.gstatic.com/generate_204&timeout=10000' 2>&1)"
   expect_match "Clash measured a delay through the node (the node works end to end)" '"delay":[0-9]+' "$out"
 
   expect_eq "a request through Clash reaches the internet (gstatic answers 204)" 204 \

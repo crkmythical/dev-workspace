@@ -6,19 +6,22 @@
 # Stops the connector and deletes the Access application (and its policies), the service token,
 # the DNS record, and the Tunnel. Leaves nothing at the edge. Does not touch the origin/container
 # (stop that separately, e.g. docker compose -p ws-<id> down -v).
-# shellcheck disable=SC1090,SC1091  # secrets.env and instances/<id>.env are resolved at runtime
+# shellcheck disable=SC1091  # lib.sh is resolved at runtime
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
+. "$here/lib.sh"
 id="${1:?usage: teardown.sh <id>}"
 STATE="$here/instances/$id.env"
 [ -e "$STATE" ] || { echo "no such instance: $STATE" >&2; exit 1; }
-set -a; . "$here/secrets.env"; . "$STATE"; set +a
+load_env "$here/secrets.env" || exit 1
+load_env "$STATE" || exit 1
+cf_curl_init || exit 1
+trap cf_cleanup EXIT
 API="https://api.cloudflare.com/client/v4"
-AUTH="Authorization: Bearer $CF_API_TOKEN"
 
 del() { # del "<label>" "<METHOD path>"
   local label="$1" path="$2" out
-  out="$(curl -s --retry 4 --retry-delay 2 --max-time 30 -X DELETE -H "$AUTH" "$API$path")"
+  out="$(curl -s --retry 4 --retry-delay 2 --max-time 30 -X DELETE -K "$CF_CURL_CONFIG" "$API$path")"
   if printf '%s' "$out" | python3 -c 'import sys,json; sys.exit(0 if json.load(sys.stdin).get("success") else 1)' 2>/dev/null; then
     echo "  deleted $label"
   else
@@ -41,10 +44,10 @@ fi
 # 5) tunnel (cleanup connections first, then delete)
 if [ -n "${TUNNEL_ID:-}" ]; then
   # A tunnel cannot be deleted while connections are registered; drain them, then retry.
-  curl -s --retry 4 --retry-delay 2 --max-time 30 -X DELETE -H "$AUTH" "$API/accounts/$CF_ACCOUNT_ID/cfd_tunnel/$TUNNEL_ID/connections" >/dev/null
+  curl -s --retry 4 --retry-delay 2 --max-time 30 -X DELETE -K "$CF_CURL_CONFIG" "$API/accounts/$CF_ACCOUNT_ID/cfd_tunnel/$TUNNEL_ID/connections" >/dev/null
   tdok=
   for _ in 1 2 3 4 5; do
-    out="$(curl -s --retry 3 --retry-delay 2 --max-time 30 -X DELETE -H "$AUTH" "$API/accounts/$CF_ACCOUNT_ID/cfd_tunnel/$TUNNEL_ID")"
+    out="$(curl -s --retry 3 --retry-delay 2 --max-time 30 -X DELETE -K "$CF_CURL_CONFIG" "$API/accounts/$CF_ACCOUNT_ID/cfd_tunnel/$TUNNEL_ID")"
     if printf '%s' "$out" | python3 -c 'import sys,json; sys.exit(0 if json.load(sys.stdin).get("success") else 1)' 2>/dev/null; then tdok=1; break; fi
     sleep 3
   done

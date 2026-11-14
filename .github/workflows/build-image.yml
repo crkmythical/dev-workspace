@@ -6,8 +6,24 @@ on:
 env:
   GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/dev-workspace
   DOCKERHUB_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/dev-workspace
+permissions:
+  contents: read
 jobs:
+  # Nothing is published unless the image boots and passes the smoke suite (src/tests/smoke).
+  smoke-default:
+    uses: ./.github/workflows/smoke.yml
+    with:
+      variant: default
+    permissions:
+      contents: read
+  smoke-full:
+    uses: ./.github/workflows/smoke.yml
+    with:
+      variant: full
+    permissions:
+      contents: read
   build:
+    needs: [smoke-default, smoke-full]
     strategy:
       fail-fast: false
       matrix:
@@ -60,6 +76,9 @@ jobs:
           build-args: |
             BASE_IMAGE=kalilinux/kali-rolling
             DESKTOP_STACK=${{ matrix.stack }}
+          # What went into the image and how it was built, attached to it as attestations.
+          provenance: mode=max
+          sbom: true
           cache-from: type=registry,ref=${{ env.GHCR_IMAGE }}:cache-${{ matrix.variant }}-${{ matrix.arch }}
           cache-to: type=registry,ref=${{ env.GHCR_IMAGE }}:cache-${{ matrix.variant }}-${{ matrix.arch }},mode=max
   manifest:

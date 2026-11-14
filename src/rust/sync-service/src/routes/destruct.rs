@@ -8,6 +8,10 @@
 //! reveal that the feature is enabled, though neither leaks the passphrase. On the right passphrase
 //! it launches the destroyer synchronously and answers 200 — or 500 if it could not even start, so
 //! a launch failure is never hidden behind an optimistic 200.
+//!
+//! Every attempt that gets past the feature switch is audited (claimed address, User-Agent, why it
+//! was refused). The refusals are capped per minute so they cannot flood the log; a destruct that
+//! fires is always written, before the destroyer has any chance to end the container.
 
 use axum::{
     body::Bytes,
@@ -18,26 +22,11 @@ use axum::{
 };
 use serde_json::{json, Value};
 
-use crate::util::now_ms;
-use crate::AppState;
+use sdw_core::audit::{event, outcome, AuditEvent};
 
-/// Prefer Cloudflare's edge-set CF-Connecting-IP: when the only ingress is the CF
-/// tunnel, an external client cannot overwrite it. Fall back to the first
-/// X-Forwarded-For hop, then a constant (which still shares the global cap).
-fn client_ip(headers: &HeaderMap) -> String {
-    if let Some(cf) = headers
-        .get("cf-connecting-ip")
-        .and_then(|v| v.to_str().ok())
-    {
-        return cf.trim().to_string();
-    }
-    if let Some(xff) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
-        if let Some(first) = xff.split(',').next() {
-            return first.trim().to_string();
-        }
-    }
-    "unknown".to_string()
-}
+use crate::audit::Metrics;
+use crate::util::{client_ip, now_ms, user_agent};
+use crate::AppState;
 
 pub async fn destruct(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> Response {
     // Checked before anything else, so a disabled endpoint is indistinguishable
@@ -47,13 +36,31 @@ pub async fn destruct(State(state): State<AppState>, headers: HeaderMap, body: B
     }
 
     let ip = client_ip(&headers);
-    if state.limiter.lock().unwrap().check(&ip, now_ms()) {
+    let ua = user_agent(&headers);
+    let now = now_ms();
+    let audit = |result: &'static str, reason: &'static str| {
+        AuditEvent::new(now, event::DESTRUCT, result)
+            .with("ip", &ip)
+            .with_opt("ua", ua.as_deref())
+            .with("reason", reason)
+    };
+    let refuse = |reason: &'static str| {
+        Metrics::inc(&state.metrics.destruct_rejected);
+        state.auditor.record_noisy(audit(outcome::REJECTED, reason));
+        StatusCode::NOT_FOUND.into_response()
+    };
+
+    if state.limiter.lock().unwrap().check(&ip, now) {
+        Metrics::inc(&state.metrics.destruct_rate_limited);
+        state
+            .auditor
+            .record_noisy(audit(outcome::THROTTLED, "rate_limited"));
         return StatusCode::TOO_MANY_REQUESTS.into_response();
     }
 
     // The key hash exists only when the vault was unlocked with the feature on.
     if !std::path::Path::new(&*state.key_hash_path).exists() {
-        return StatusCode::NOT_FOUND.into_response();
+        return refuse("no_key");
     }
 
     // Body is { "passphrase": "..." }. Anything else is a 404.
@@ -65,11 +72,11 @@ pub async fn destruct(State(state): State<AppState>, headers: HeaderMap, body: B
         Err(_) => None,
     };
     let Some(passphrase) = passphrase.filter(|p| !p.is_empty()) else {
-        return StatusCode::NOT_FOUND.into_response();
+        return refuse("bad_request");
     };
 
     let Ok(hash) = std::fs::read_to_string(&*state.key_hash_path) else {
-        return StatusCode::NOT_FOUND.into_response();
+        return refuse("no_key");
     };
     let hash = hash.trim().to_string();
 
@@ -80,18 +87,25 @@ pub async fn destruct(State(state): State<AppState>, headers: HeaderMap, body: B
         .and_then(Result::ok)
         .unwrap_or(false);
     if !valid {
-        return StatusCode::NOT_FOUND.into_response();
+        return refuse("wrong_passphrase");
     }
 
     // Launch the destroyer and only answer success if it actually started. A failure to even
     // spawn it must not be hidden behind a 200. The child does the slow, irreversible work
-    // (quiesce, unmount, shred, then SIGTERM pid 1) — far longer than this tiny JSON needs to
-    // flush back through Caddy, so there is no race that "answer first" was protecting against
-    // (quiesce stops only the vault-sync cron, not Caddy or this daemon).
+    // (quiesce, unmount, shred, then SIGTERM pid 1) — far longer than the audit line needs to
+    // reach the disk (quiesce stops only the vault-sync cron, not Caddy or this daemon).
     match state.destruct.trigger() {
-        Ok(()) => (StatusCode::OK, Json(json!({ "status": "destroyed" }))).into_response(),
+        Ok(()) => {
+            Metrics::inc(&state.metrics.destruct_triggered);
+            state
+                .auditor
+                .record(audit(outcome::TRIGGERED, "right_passphrase"));
+            (StatusCode::OK, Json(json!({ "status": "destroyed" }))).into_response()
+        }
         Err(e) => {
             eprintln!("remote destruct: {e}");
+            Metrics::inc(&state.metrics.destruct_error);
+            state.auditor.record(audit(outcome::ERROR, "launch_failed"));
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({ "status": "error" })),

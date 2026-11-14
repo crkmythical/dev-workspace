@@ -5,49 +5,54 @@
 //! every program in order. The pure orchestration (order, abort/degrade, vault gating) is in core.
 
 use crate::commands::system_env;
+use sdw_core::audit::{event, outcome, AuditEvent};
 use sdw_core::backup::domain::RepoProbe;
 use sdw_core::desktop::domain::DesktopTarget;
 use sdw_core::desktop::layout::{DESKTOP_CACHE_DIR, SELKIES_HOME, VNC_HOME};
-use sdw_core::egress::domain::{render_clash_config, DEFAULT_EGRESS_TIMING};
-use sdw_core::egress::layout::{
-    CLASH_CONFIG_PATH, CLASH_DIR, CLASH_HTTP_PORT, CLASH_PROVIDERS_DIR, CLASH_TEMPLATE_PATH,
-    CLASH_USER,
-};
+use sdw_core::egress::allowlist::AllowList;
+use sdw_core::egress::domain::{EgressStatus, DEFAULT_EGRESS_TIMING};
+use sdw_core::egress::layout::{CLASH_HTTP_PORT, CLASH_USER};
 use sdw_core::egress::usecases::bring_up_egress;
 use sdw_core::plugins::all_vaults;
-use sdw_core::vault::destruct::DESTRUCT_COMPLETED_PATH;
+use sdw_core::sync::layout::SYNC_PASSPHRASE_PATH;
+use sdw_core::vault::destruct::{DESTRUCT_COMPLETED_PATH, DESTRUCT_STATE_DIR};
+use sdw_core::vault::domain::cipher_dir_mode;
 use sdw_core::vault::domain::{explain_unlock_failure, VAULT_GITATTRIBUTES, VAULT_GITIGNORE};
 use sdw_core::vault::layout::VAULT_CIPHER_DIR;
 use sdw_core::vault::ports::UnlockHook;
 use sdw_core::vault::specs::workspace_vault;
 use sdw_core::vault::usecases::{unlock_vault, UnlockDeps, UnlockRejectReason, UnlockResult};
-use sdw_core::workspace::auth::{
-    render_code_server_config, resolve_master_password, PasswordSource,
-};
+use sdw_core::workspace::auth::{resolve_master_password, PasswordSource};
 use sdw_core::workspace::banner::{render_banner, BannerInput};
 use sdw_core::workspace::boot::{run_boot, BootState, BOOT_PLAN};
 use sdw_core::workspace::config::{
     env_validation_error, find_missing_required_env, load_config, WorkspaceConfig,
     REQUIRED_ENV_VARS,
 };
-use sdw_core::workspace::layout::{
-    supervisor_conf, CODE_SERVER_CONFIG_DIR, CODE_SERVER_CONFIG_PATH, CODE_SERVER_PORT,
-    SUPERVISORD_BIN, SUPERVISORD_CONF,
+use sdw_core::workspace::features::is_recognised_switch;
+use sdw_core::workspace::inotify::{inotify_advice, WATCHES_PATH, WATCHES_WANTED};
+use sdw_core::workspace::layout::{supervisor_conf, SUPERVISORD_BIN, SUPERVISORD_CONF};
+use sdw_core::workspace::workload::{
+    workload_root_rule, GENERATED_PASSWORD_PATH, PRIVATE_RUN_DIR, WORKLOAD_GID, WORKLOAD_UID,
 };
+use sdw_infra::audit::record_default;
 use sdw_infra::caddy::caddy_password_hash;
+use sdw_infra::clash::{write_config, ConfigOptions, SecretPolicy};
 use sdw_infra::cmd;
-use sdw_infra::desktop::{ensure_kasm_passwd, installed_stacks};
+use sdw_infra::desktop::installed_stacks;
 use sdw_infra::egress::{
-    apply_egress_firewall, clash_egress_ports, resolve_uid, sync_egress_notice,
-    write_egress_status, NoticeResult,
+    apply_egress_firewall, clash_egress_ports, prepare_clash_dir, read_egress_status,
+    remove_ssh_proxy_config, resolve_uid, sync_egress_notice, write_egress_status,
+    write_ssh_proxy_config, NoticeResult,
 };
 use sdw_infra::gocryptfs::{cleanup_stale_mount, init_vault, is_initialized, GocryptfsVolume};
 use sdw_infra::replication::{ensure_cipher_repo, EnsureResult};
 use sdw_infra::restic::{init_repository, probe_repository};
+use sdw_infra::secrets::random_hex;
 use sdw_infra::supervisor::enable_autostart;
+use sdw_infra::time::now_ms;
 use sdw_infra::unlock_hooks::workspace_unlock_hooks;
 use std::fs;
-use std::io::Read;
 use std::path::Path;
 use std::process::Command;
 
@@ -65,11 +70,10 @@ fn announce(message: &str) {
 /// This string becomes the gocryptfs vault passphrase, so there is NO low-entropy fallback: if
 /// /dev/urandom cannot be read we abort the boot rather than mint a guessable vault key.
 fn generate_password() -> String {
-    let mut buf = [0u8; 16];
-    match fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut buf)) {
-        Ok(()) => buf.iter().map(|b| format!("{b:02x}")).collect(),
+    match random_hex(16) {
+        Ok(password) => password,
         Err(e) => {
-            eprintln!("FATAL: cannot read /dev/urandom to generate a password: {e}");
+            eprintln!("FATAL: cannot generate a password: {e}");
             eprintln!(
                 "Refusing to create a vault with a guessable master key; set PASSWORD in .env."
             );
@@ -78,10 +82,161 @@ fn generate_password() -> String {
     }
 }
 
-fn git_config_global(key: &str, value: &str) {
-    if !cmd::ok("git", &["config", "--global", key, value]) {
+/// Root-only runtime state, and the ciphertext kept from the unprivileged workload.
+fn prepare_run_dirs() -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let private = |dir: &str| -> Result<(), String> {
+        fs::create_dir_all(dir).map_err(|e| format!("{dir}: {e}"))?;
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("{dir}: {e}"))
+    };
+    private(PRIVATE_RUN_DIR)?;
+    private("/var/lib/sdw")?;
+    // The remote-destruct key hash and the completion marker: a volume, so it outlives the
+    // container, and root's alone, so code in the workspace can neither read the hash nor forge
+    // the marker.
+    private(DESTRUCT_STATE_DIR)?;
+    // A key source an earlier run left behind means nothing until THIS start has unlocked the vault.
+    let _ = fs::remove_file(SYNC_PASSPHRASE_PATH);
+    // The ciphertext holds the passphrase-wrapped master key (gocryptfs.conf), which a guesser could
+    // work on offline, so the directory is closed to everyone but root. (A vault that other users
+    // must be able to enter, the pentest rootfs, can only be opened as far as 'traverse'.)
+    for vault in all_vaults() {
+        if Path::new(&vault.cipher_dir).is_dir() {
+            let mode = cipher_dir_mode(&vault);
+            fs::set_permissions(&vault.cipher_dir, fs::Permissions::from_mode(mode))
+                .map_err(|e| format!("{}: {e}", vault.cipher_dir))?;
+        }
+    }
+    Ok(())
+}
+
+fn git_config_system(key: &str, value: &str) {
+    if !cmd::ok("git", &["config", "--system", key, value]) {
         eprintln!("WARNING: git config {key} failed.");
     }
+}
+
+/// Opt-in via WORKLOAD_ROOT (1/true/yes/on): let the workload user become root in its own terminal
+/// (`root`, or `doas <cmd>`) with no password. OFF by default, so the dev/root confinement — a
+/// compromise of the workload cannot escalate — holds unless the operator asks for this.
+fn workload_root_enabled() -> bool {
+    match std::env::var("WORKLOAD_ROOT") {
+        Ok(v) => matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        ),
+        Err(_) => false,
+    }
+}
+
+/// When WORKLOAD_ROOT is on, append its one doas rule to /etc/doas.conf (idempotent). The `root`
+/// helper (baked into the image) then gives the workload user a root shell; without the rule, doas
+/// denies it and the confinement is the default.
+fn apply_workload_root() {
+    if !workload_root_enabled() {
+        return;
+    }
+    let rule = workload_root_rule();
+    let path = "/etc/doas.conf";
+    if fs::read_to_string(path)
+        .unwrap_or_default()
+        .contains(rule.trim())
+    {
+        return;
+    }
+    use std::io::Write;
+    let result = fs::OpenOptions::new()
+        .append(true)
+        .open(path)
+        .and_then(|mut f| f.write_all(rule.as_bytes()));
+    match result {
+        Ok(()) => println!(
+            "WORKLOAD_ROOT: 'dev' can become root in its terminal (type `root`); dev/root \
+             confinement relaxed by request."
+        ),
+        Err(e) => eprintln!("WARNING: WORKLOAD_ROOT set but could not update {path}: {e}"),
+    }
+}
+
+/// The fail-closed egress firewall: ON unless `EGRESS_ENFORCE` says no.
+///
+/// When on, a failure to load it aborts the boot (the caller's step is Abort): booting while
+/// believing egress is enforced is worse than not booting. The error says how to run without it.
+fn enforce_egress(config: &WorkspaceConfig) -> Result<(), String> {
+    if let Ok(raw) = std::env::var("EGRESS_ENFORCE") {
+        if !is_recognised_switch(&raw) {
+            eprintln!(
+                "WARNING: EGRESS_ENFORCE='{raw}' is not 1/true/yes/on or 0/false/no/off; \
+                 treating it as ON (only a clear 'no' turns the egress firewall off)."
+            );
+        }
+    }
+
+    if !config.features.egress_enforce {
+        // ssh would otherwise keep the proxy settings of an earlier, enforced start.
+        remove_ssh_proxy_config();
+        eprintln!(
+            "WARNING: the egress firewall is OFF (EGRESS_ENFORCE=0). Only the proxy variables \
+             point processes at Clash: anything that ignores them, speaks UDP/QUIC or resolves \
+             names itself connects directly and shows this machine's real address."
+        );
+        return Ok(());
+    }
+
+    // An invalid allowlist stops the boot: a typo must not silently open the wrong block.
+    let allow = AllowList::parse(config.egress_allow_cidrs.as_deref().unwrap_or(""))
+        .map_err(|e| format!("EGRESS_ALLOW_CIDRS: {e}"))?;
+
+    // Clash must run as its own uid for the firewall to single out its traffic. (It always does;
+    // bring-up-egress gives it its config dir and starts it.)
+    let uid = resolve_uid(CLASH_USER)
+        .ok_or_else(|| format!("egress enforce: user '{CLASH_USER}' not found"))?;
+
+    // Force the system resolver through Clash so no lookup leaks past it. Best-effort: the
+    // firewall is the security boundary; this only keeps hostname DNS working under it.
+    if fs::write("/etc/resolv.conf", "nameserver 127.0.0.1\n").is_err() {
+        eprintln!(
+            "WARNING: could not point /etc/resolv.conf at Clash; hostname DNS may be blocked by \
+             the egress filter until fixed."
+        );
+    }
+
+    // Load the ruleset. On failure (no NET_ADMIN / no nft) this Errs and, as an Abort step, fails
+    // the boot closed rather than booting while believing egress is enforced.
+    let backend = apply_egress_firewall(uid, &allow).map_err(|e| {
+        format!(
+            "{e}. The egress firewall is on by default and needs the NET_ADMIN capability and a \
+             working nftables or iptables-legacy; to run without it set EGRESS_ENFORCE=0 (see the \
+             README)."
+        )
+    })?;
+
+    // ssh ignores the proxy variables: send it through Clash too. A usability matter, not a leak
+    // (without it ssh is dropped), so a failure to write the file only warns.
+    if let Err(e) = write_ssh_proxy_config() {
+        eprintln!("WARNING: ssh will not reach its remote through Clash: {e}");
+    }
+
+    println!(
+        "Egress firewall enforced via {} (fail-closed; direct egress only for Clash uid {uid}{}).",
+        backend.label(),
+        if allow.is_empty() {
+            String::new()
+        } else {
+            format!(" and {} allowed network(s)", allow.len())
+        }
+    );
+    Ok(())
+}
+
+/// The desktop sessions' runtime and cache directory: the workload's, and nobody else's.
+fn prepare_desktop_cache() -> Result<(), String> {
+    use std::os::unix::fs::{chown, PermissionsExt};
+    fs::create_dir_all(DESKTOP_CACHE_DIR).map_err(|e| e.to_string())?;
+    fs::set_permissions(DESKTOP_CACHE_DIR, fs::Permissions::from_mode(0o700))
+        .map_err(|e| e.to_string())?;
+    chown(DESKTOP_CACHE_DIR, Some(WORKLOAD_UID), Some(WORKLOAD_GID)).map_err(|e| e.to_string())
 }
 
 fn run_step(
@@ -92,6 +247,15 @@ fn run_step(
 ) -> Result<(), String> {
     match id {
         "preflight" => {
+            // A secret given as <NAME>_FILE must be readable: refuse to boot rather than carry on
+            // without it (a missing PASSWORD would turn into a generated one).
+            let unreadable = sdw_infra::secrets::unreadable_secret_files();
+            if !unreadable.is_empty() {
+                for e in &unreadable {
+                    eprintln!("{e}");
+                }
+                return Err("a secret file cannot be read".to_string());
+            }
             // Defense in depth behind scripts/entrypoint.sh.
             if let Some(err) =
                 env_validation_error(&find_missing_required_env(system_env, REQUIRED_ENV_VARS))
@@ -106,6 +270,11 @@ fn run_step(
             }
             Ok(())
         }
+        "prepare-run-dirs" => {
+            prepare_run_dirs()?;
+            apply_workload_root();
+            Ok(())
+        }
         "cleanup-stale-mounts" => {
             for vault in all_vaults() {
                 cleanup_stale_mount(&vault.mount_point);
@@ -113,71 +282,63 @@ fn run_step(
             Ok(())
         }
         "render-clash-config" => {
-            if config.clash_subscription_url.is_empty() || !Path::new(CLASH_TEMPLATE_PATH).exists()
-            {
-                return Ok(());
+            // The template belongs to the image and preflight has required the subscription URL,
+            // so there is nothing legitimate to skip: a failure is reported (a degraded step)
+            // rather than quietly starting Clash on whatever config an older run left behind.
+            if config.clash_subscription_url.is_empty() {
+                return Err("CLASH_SUBSCRIPTION_URL is empty".to_string());
             }
             let (dns, source) = crate::commands::clash_dns::resolve_dns();
-            let template = fs::read_to_string(CLASH_TEMPLATE_PATH).map_err(|e| e.to_string())?;
-            let _ = fs::create_dir_all(CLASH_PROVIDERS_DIR);
-            fs::write(
-                CLASH_CONFIG_PATH,
-                render_clash_config(&template, &config.clash_subscription_url, &dns),
-            )
-            .map_err(|e| e.to_string())?;
+            write_config(&ConfigOptions {
+                subscription_url: &config.clash_subscription_url,
+                dns_nameservers: &dns,
+                allow_lan: false,
+                // A new start, so no running Clash holds the old secret.
+                secret: SecretPolicy::Rotate,
+            })?;
             println!("Clash config generated from template (DNS: {dns} [{source}]).");
             Ok(())
         }
         "git-globals" => {
+            // System-wide (/etc/gitconfig), so root's jobs and the workload's own git agree; the
+            // workload's ~/.gitconfig can still override what it wants.
             if let Some(name) = &config.git.user_name {
-                git_config_global("user.name", name);
+                git_config_system("user.name", name);
             }
             if let Some(email) = &config.git.user_email {
-                git_config_global("user.email", email);
+                git_config_system("user.email", email);
             }
             let proxy = format!("http://127.0.0.1:{CLASH_HTTP_PORT}");
-            git_config_global("http.proxy", &proxy);
-            git_config_global("https.proxy", &proxy);
+            git_config_system("http.proxy", &proxy);
+            git_config_system("https.proxy", &proxy);
             Ok(())
         }
         "tune-inotify" => {
-            cmd::ok("sysctl", &["-w", "fs.inotify.max_user_watches=524288"]);
-            Ok(())
-        }
-        "enforce-egress" => {
-            if !config.features.egress_enforce {
-                return Ok(()); // opt-in; default is the best-effort proxy env only
-            }
-            // Clash must run as its own uid for the firewall to single out its traffic.
-            let uid = resolve_uid(CLASH_USER)
-                .ok_or_else(|| format!("egress enforce: user '{CLASH_USER}' not found"))?;
-            // Clash is non-root under enforcement, so it must own its config dir (providers/cache).
+            // One try: a container rarely may write /proc/sys. Then say what is actually in force
+            // rather than pretend the limit was raised.
             cmd::ok(
-                "chown",
-                &["-R", &format!("{CLASH_USER}:{CLASH_USER}"), CLASH_DIR],
+                "sysctl",
+                &[
+                    "-w",
+                    &format!("fs.inotify.max_user_watches={WATCHES_WANTED}"),
+                ],
             );
-            // Force the system resolver through Clash so no lookup leaks past it. Best-effort: the
-            // firewall is the security boundary; this only keeps hostname DNS working under it.
-            if fs::write("/etc/resolv.conf", "nameserver 127.0.0.1\n").is_err() {
-                eprintln!(
-                    "WARNING: could not point /etc/resolv.conf at Clash; hostname DNS may be \
-                     blocked by the egress filter until fixed."
-                );
+            let current = fs::read_to_string(WATCHES_PATH)
+                .ok()
+                .and_then(|s| s.trim().parse::<u64>().ok());
+            if let Some(advice) = inotify_advice(current) {
+                eprintln!("WARNING: {advice}");
             }
-            // Load the ruleset. On failure (no NET_ADMIN / no nft) this Errs and, as an Abort step,
-            // fails the boot closed rather than booting while believing egress is enforced.
-            apply_egress_firewall(uid)?;
-            println!(
-                "Egress firewall enforced (fail-closed; direct egress only for Clash uid {uid})."
-            );
             Ok(())
         }
+        "enforce-egress" => enforce_egress(config),
         "bring-up-egress" => {
-            let clash_uid = if config.features.egress_enforce {
-                resolve_uid(CLASH_USER)
-            } else {
-                None
-            };
+            // Clash always runs as its own unprivileged user, not only under EGRESS_ENFORCE: a
+            // proxy that parses subscriptions and talks to the whole internet should not be root.
+            // (Under enforcement it is also the one uid the firewall lets out.) It needs to own its
+            // config dir to write the provider cache there.
+            let clash_uid = prepare_clash_dir();
+            let previous = read_egress_status().map(|r| r.status);
             let report = bring_up_egress(
                 &clash_egress_ports(announce, clash_uid),
                 DEFAULT_EGRESS_TIMING,
@@ -185,23 +346,33 @@ fn run_step(
             if let Err(e) = write_egress_status(&report) {
                 eprintln!("WARNING: could not record the egress status: {e}");
             }
+            // The audit trail: how this boot's egress compares with the last one seen.
+            if previous != Some(report.status) {
+                record_default(
+                    &AuditEvent::new(now_ms(), event::EGRESS, outcome::CHANGED)
+                        .with("from", previous.map_or("none", EgressStatus::as_str))
+                        .with("to", report.status.as_str())
+                        .with("source", "boot"),
+                );
+            }
             st.egress = Some(report);
             Ok(())
         }
         "resolve-auth" => {
-            let existing = fs::read_to_string(CODE_SERVER_CONFIG_PATH).ok();
+            // A password an earlier start generated, kept in a root-only file so a restart opens
+            // the same vault. There is no copy for code-server or the desktops: the gate is the
+            // only login, and nothing the workload can read holds the password.
+            let saved = fs::read_to_string(GENERATED_PASSWORD_PATH).ok();
             let password = resolve_master_password(
                 config.password.as_deref(),
-                existing.as_deref(),
+                saved.as_deref(),
                 generate_password,
             )?;
-            if password.write_config {
-                let _ = fs::create_dir_all(CODE_SERVER_CONFIG_DIR);
-                fs::write(
-                    CODE_SERVER_CONFIG_PATH,
-                    render_code_server_config(&password.value, CODE_SERVER_PORT),
-                )
-                .map_err(|e| e.to_string())?;
+            if password.save {
+                sdw_infra::secrets::write_private_file(
+                    Path::new(GENERATED_PASSWORD_PATH),
+                    &format!("{}\n", password.value),
+                )?;
             }
             if password.source == PasswordSource::Generated {
                 println!("Generated password: {}", password.value);
@@ -325,14 +496,15 @@ fn run_step(
             Ok(())
         }
         "prepare-desktops" => {
-            let _ = fs::create_dir_all(DESKTOP_CACHE_DIR);
+            // The desktops run as the workload user: the session's runtime directory is theirs
+            // alone, and their homes (inside the vault) are theirs by the mount's forced owner.
+            prepare_desktop_cache()?;
             let stacks = installed_stacks();
             if stacks.contains(&DesktopTarget::Selkies) {
                 let _ = fs::create_dir_all(format!("{SELKIES_HOME}/.local/share/applications"));
             }
             if stacks.contains(&DesktopTarget::Vnc) {
                 let _ = fs::create_dir_all(format!("{VNC_HOME}/.local/share/applications"));
-                ensure_kasm_passwd(&auth.master_password);
             }
             enable_autostart(&supervisor_conf("desktop"));
             enable_autostart(&supervisor_conf("vnc"));
@@ -369,6 +541,7 @@ fn run_step(
                 stacks: installed_stacks(),
                 vault_mounted: st.vault_mounted,
                 egress: st.egress.clone(),
+                egress_enforced: config.features.egress_enforce,
                 degraded: st.degraded.clone(),
             }) {
                 println!("{line}");

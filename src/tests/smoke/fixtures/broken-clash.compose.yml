@@ -1,0 +1,7 @@
+# Override for checks/70-egress-variants.sh: the image's Clash template is replaced by a broken one,
+# so the start-up cannot render a config. (Paths are relative to the repository root, the project
+# directory of every smoke instance.)
+services:
+  workspace:
+    volumes:
+      - ./src/tests/smoke/fixtures/broken-clash-template.yaml:/usr/share/sdw/clash/config.yaml.template:ro

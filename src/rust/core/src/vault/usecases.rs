@@ -347,6 +347,7 @@ mod tests {
             cipher_dir: "/c/ws".to_string(),
             mount_point: "/m/ws".to_string(),
             allow_other: false,
+            owner: None,
         }
     }
     /// Any further encrypted volume (a plugin's): the use cases treat every VaultSpec alike.
@@ -356,6 +357,7 @@ mod tests {
             cipher_dir: "/c/2nd".to_string(),
             mount_point: "/m/2nd".to_string(),
             allow_other: false,
+            owner: None,
         }
     }
     fn specs() -> Vec<VaultSpec> {

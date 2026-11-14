@@ -1,1 +1,3 @@
-*/30 * * * * root /usr/local/bin/sdw vault-sync >> /var/log/vault-sync.log 2>&1
+# Output goes to the container's log (PID 1's stdout), where Docker's log driver rotates it. A log
+# file of its own grew without bound and nothing read it.
+*/30 * * * * root /usr/local/bin/sdw vault-sync >> /proc/1/fd/1 2>&1

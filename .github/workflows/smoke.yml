@@ -3,7 +3,8 @@ name: Smoke test
 # Builds the image, boots it next to a fake upstream and runs tests/smoke against it (see
 # tests/smoke/README.md). It takes a while, so it is not part of CI: it runs by hand and on pull
 # requests that touch the image, the compose files, the code that ends up in the image or the
-# smoke test itself.
+# smoke test itself. build-image.yml calls it (workflow_call) for both variants, and publishes
+# nothing unless both pass.
 on:
   workflow_dispatch:
     inputs:
@@ -12,6 +13,12 @@ on:
         type: choice
         options: [default, full]
         default: default
+  workflow_call:
+    inputs:
+      variant:
+        description: Which image to build and test (default or full)
+        type: string
+        default: default
   pull_request:
     paths:
       - 'src/image/**'
@@ -19,12 +26,14 @@ on:
       - 'src/packages/**'
       - 'src/tests/smoke/**'
       - 'deploy/scripts/**'
+      - 'deploy/client/**'
       - 'docker-compose*.yml'
       - '.github/workflows/smoke.yml'
 
 concurrency:
-  group: smoke-${{ github.ref }}
-  cancel-in-progress: true
+  group: smoke-${{ github.workflow }}-${{ github.ref }}-${{ inputs.variant || 'default' }}
+  # A newer push to a pull request supersedes the older run; a release gate is never cancelled.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -37,8 +46,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # A pull request tests the default image; a manual run picks one.
-        variant: ${{ fromJSON(github.event_name == 'workflow_dispatch' && format('["{0}"]', inputs.variant) || '["default"]') }}
+        # A pull request tests the default image; a manual run or a caller picks one.
+        variant: ${{ fromJSON(format('["{0}"]', inputs.variant || 'default')) }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -65,6 +74,15 @@ jobs:
           cache-from: type=gha,scope=smoke-${{ matrix.variant }}
           cache-to: type=gha,mode=max,scope=smoke-${{ matrix.variant }}
 
+      # checks/30-sync.sh runs the TypeScript sync client with Bun ON THE HOST (the image carries no
+      # Bun), and 55-browser.sh installs Playwright with it; GitHub's runners do not ship Bun.
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.3
+      - name: Install the workspace dependencies
+        working-directory: src
+        run: bun install --frozen-lockfile
       - name: Smoke test
         env:
           SMOKE_SHOTS_DIR: ${{ github.workspace }}/smoke-shots

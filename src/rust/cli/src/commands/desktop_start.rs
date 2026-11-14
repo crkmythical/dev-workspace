@@ -6,36 +6,19 @@
 use sdw_core::desktop::domain::DesktopTarget;
 use sdw_core::desktop::layout::{DESKTOP_CACHE_DIR, SELKIES_HOME, VNC_HOME};
 use sdw_core::shared::layout::WORKSPACE_MOUNT;
-use sdw_core::workspace::layout::CODE_SERVER_CONFIG_PATH;
+use sdw_core::workspace::workload::{WORKLOAD_GID, WORKLOAD_UID};
 use sdw_infra::cmd;
 use sdw_infra::desktop::{
-    ensure_kasm_passwd, installed_stacks, is_desktop_running, parse_target, start_desktop,
-    target_name, wait_for_desktop_stream,
+    installed_stacks, is_desktop_running, parse_target, start_desktop, target_name,
+    wait_for_desktop_stream,
 };
 use std::fs;
-use std::path::Path;
+use std::os::unix::fs::{chown, PermissionsExt};
 
 fn url_for(target: DesktopTarget) -> &'static str {
     match target {
         DesktopTarget::Selkies => "/desktop/",
         DesktopTarget::Vnc => "/vnc/",
-    }
-}
-
-/// Read the master password from a code-server config (the runtime SSOT): the line `password: X`.
-fn parse_code_server_password(content: &str) -> String {
-    for line in content.lines() {
-        if let Some(rest) = line.strip_prefix("password:") {
-            return rest.trim().to_string();
-        }
-    }
-    String::new()
-}
-
-fn master_password_from_config() -> String {
-    match fs::read_to_string(CODE_SERVER_CONFIG_PATH) {
-        Ok(content) => parse_code_server_password(&content),
-        Err(_) => String::new(),
     }
 }
 
@@ -71,15 +54,15 @@ pub fn run(args: &[String]) -> i32 {
         None => installed,
     };
 
+    // The sessions run as the workload user: their runtime directory is theirs alone.
     let _ = fs::create_dir_all(DESKTOP_CACHE_DIR);
+    let _ = fs::set_permissions(DESKTOP_CACHE_DIR, fs::Permissions::from_mode(0o700));
+    let _ = chown(DESKTOP_CACHE_DIR, Some(WORKLOAD_UID), Some(WORKLOAD_GID));
     if targets.contains(&DesktopTarget::Selkies) {
         let _ = fs::create_dir_all(format!("{SELKIES_HOME}/.local/share/applications"));
     }
     if targets.contains(&DesktopTarget::Vnc) {
         let _ = fs::create_dir_all(format!("{VNC_HOME}/.local/share/applications"));
-        if !Path::new(&format!("{VNC_HOME}/.kasmpasswd")).exists() {
-            ensure_kasm_passwd(&master_password_from_config());
-        }
     }
 
     for target in targets {
@@ -107,20 +90,4 @@ pub fn run(args: &[String]) -> i32 {
         }
     }
     0
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_the_code_server_password_line() {
-        let config = "bind-addr: 127.0.0.1:8082\npassword: s3cret-pass\nauth: password\n";
-        assert_eq!(parse_code_server_password(config), "s3cret-pass");
-    }
-
-    #[test]
-    fn absent_password_is_empty() {
-        assert_eq!(parse_code_server_password("auth: none\n"), "");
-    }
 }

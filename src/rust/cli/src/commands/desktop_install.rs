@@ -6,17 +6,25 @@
 use sdw_core::desktop::layout::{
     DESKTOP_APPLICATIONS_DIR, DESKTOP_APPS_DIR, DESKTOP_APPS_REGISTRY,
 };
+use sdw_core::egress::layout::CLASH_HTTP_PORT;
 use sdw_infra::cmd;
+use sdw_infra::egress::port_accepts;
 use std::fs;
+
+/// The image's verifying downloader (src/image/tools/fetch.sh). It reads the version, URL and
+/// sha256 of `<tool>` from /usr/local/lib/sdw/tools/<tool>.env and refuses any other bytes.
+const FETCH_TOOL: &str = "/usr/local/lib/sdw/fetch-tool";
 
 enum AppKind {
     Apt {
         package: &'static str,
     },
-    Download {
-        url: &'static str,
+    /// A download pinned in image/tools/<tool>.env (deploy/scripts/update-tools.sh keeps it).
+    Pinned {
+        tool: &'static str,
         extract_to: String,
-        tarball: bool,
+        /// A tar.gz to unpack into `extract_to`; otherwise the file itself, saved as `filename`.
+        archive: bool,
         filename: &'static str,
     },
 }
@@ -52,10 +60,10 @@ fn app_def(name: &str) -> Option<AppDef> {
         }),
         "idea" => Some(AppDef {
             name: "IntelliJ IDEA",
-            kind: AppKind::Download {
-                url: "https://download.jetbrains.com/idea/ideaIC-2024.1.tar.gz",
+            kind: AppKind::Pinned {
+                tool: "idea",
                 extract_to: format!("{DESKTOP_APPS_DIR}/idea"),
-                tarball: true,
+                archive: true,
                 filename: "idea",
             },
             binary: format!("{DESKTOP_APPS_DIR}/idea/bin/idea.sh"),
@@ -63,10 +71,10 @@ fn app_def(name: &str) -> Option<AppDef> {
         }),
         "burpsuite" => Some(AppDef {
             name: "Burp Suite",
-            kind: AppKind::Download {
-                url: "https://portswigger-cdn.net/burp/releases/download?product=community&type=Jar",
+            kind: AppKind::Pinned {
+                tool: "burpsuite",
                 extract_to: format!("{DESKTOP_APPS_DIR}/burpsuite"),
-                tarball: false,
+                archive: false,
                 filename: "burpsuite.jar",
             },
             binary: format!("java -jar {DESKTOP_APPS_DIR}/burpsuite/burpsuite.jar"),
@@ -94,7 +102,7 @@ pub fn run(args: &[String]) -> i32 {
         }
     };
 
-    if !cmd::ok("nc", &["-z", "127.0.0.1", "7890"]) {
+    if !port_accepts(CLASH_HTTP_PORT) {
         eprintln!("⚠ Clash proxy not available. Downloads may fail.");
     }
 
@@ -109,24 +117,36 @@ pub fn run(args: &[String]) -> i32 {
                 return 1;
             }
         }
-        AppKind::Download {
-            url,
+        AppKind::Pinned {
+            tool,
             extract_to,
-            tarball,
+            archive,
             filename,
         } => {
             let _ = fs::create_dir_all(extract_to);
-            if *tarball {
-                let script =
-                    format!("curl -fsSL '{url}' | tar xz -C '{extract_to}' --strip-components=1");
-                if !cmd::ok("sh", &["-c", &script]) {
-                    eprintln!("ERROR: Failed to download/extract {}", app.name);
-                    return 1;
-                }
+            // fetch-tool talks to the user (what it fetches, why it refused), so it keeps our
+            // stdio. The archive is saved beside its destination and removed once unpacked.
+            let saved = if *archive {
+                format!("{extract_to}/.{tool}.download")
             } else {
-                let out = format!("{extract_to}/{filename}");
-                if !cmd::ok("curl", &["-fsSL", url, "-o", &out]) {
-                    eprintln!("ERROR: Failed to download {}", app.name);
+                format!("{extract_to}/{filename}")
+            };
+            if cmd::inherit(FETCH_TOOL, &[tool, &saved]) != 0 {
+                let _ = fs::remove_file(&saved);
+                eprintln!(
+                    "ERROR: Failed to download {} (nothing was installed)",
+                    app.name
+                );
+                return 1;
+            }
+            if *archive {
+                let unpacked = cmd::ok(
+                    "tar",
+                    &["xzf", &saved, "-C", extract_to, "--strip-components=1"],
+                );
+                let _ = fs::remove_file(&saved);
+                if !unpacked {
+                    eprintln!("ERROR: Failed to unpack {}", app.name);
                     return 1;
                 }
             }

@@ -8,12 +8,11 @@ use crate::destruct_key::{derive_destruct_key, destruct_key_to_passphrase};
 use crate::state::broadcast_state;
 use sdw_core::shared::layout::{CREDENTIALS_DIR, WORKSPACE_MOUNT};
 use sdw_core::sync::layout::SYNC_PASSPHRASE_PATH;
-use sdw_core::vault::destruct::{DESTRUCT_KEY_HASH_PATH, DESTRUCT_STATE_DIR};
+use sdw_core::vault::destruct::DESTRUCT_KEY_HASH_PATH;
 use sdw_core::vault::ports::{UnlockContext, UnlockHook};
 use sdw_core::workspace::features::FeatureFlags;
+use sdw_core::workspace::workload::WORKLOAD_HOME;
 use std::fs;
-use std::io::Write;
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 
 type Announce = fn(&str);
@@ -36,6 +35,31 @@ impl UnlockHook for EnsureSharedDir {
     }
 }
 
+/// The workload's home inside the vault: created, and given the shell start-up files a new user
+/// gets, if they are not there. (The vault shows every file as the workload's, whoever creates it.)
+struct PrepareWorkloadHome;
+impl UnlockHook for PrepareWorkloadHome {
+    fn name(&self) -> &str {
+        "workload-home"
+    }
+    fn run(&self, ctx: &UnlockContext<'_>) -> Result<(), String> {
+        if ctx.spec.id != "workspace" {
+            return Ok(());
+        }
+        for dir in [".local/bin", ".config"] {
+            fs::create_dir_all(format!("{WORKLOAD_HOME}/{dir}")).map_err(|e| e.to_string())?;
+        }
+        for name in [".bashrc", ".profile", ".bash_logout"] {
+            let target = format!("{WORKLOAD_HOME}/{name}");
+            let skeleton = format!("/etc/skel/{name}");
+            if !Path::new(&target).exists() && Path::new(&skeleton).exists() {
+                let _ = fs::copy(&skeleton, &target);
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Link ~/.ssh to the credentials stored inside the vault, if any.
 struct LinkSshCredentials {
     announce: Announce,
@@ -49,10 +73,12 @@ impl UnlockHook for LinkSshCredentials {
             return Ok(());
         }
         let ssh_creds = format!("{CREDENTIALS_DIR}/ssh");
-        let ssh_link = format!("{}/.ssh", home());
         if Path::new(&ssh_creds).exists() {
-            cmd::ok("rm", &["-f", &ssh_link]);
-            cmd::ok("ln", &["-sf", &ssh_creds, &ssh_link]);
+            // Root's (the ciphertext replication pushes over SSH) and the workload's own.
+            for ssh_link in [format!("{}/.ssh", home()), format!("{WORKLOAD_HOME}/.ssh")] {
+                cmd::ok("rm", &["-f", &ssh_link]);
+                cmd::ok("ln", &["-sf", &ssh_creds, &ssh_link]);
+            }
             (self.announce)("SSH credentials linked.");
         } else {
             (self.announce)(&format!(
@@ -83,7 +109,7 @@ impl UnlockHook for GitCredentials {
             "git",
             &[
                 "config",
-                "--global",
+                "--system",
                 "credential.helper",
                 &format!("store --file={token}"),
             ],
@@ -93,8 +119,8 @@ impl UnlockHook for GitCredentials {
     }
 }
 
-/// SYNC_ENABLED: write the vault passphrase to the sync key source (inside the vault, so it
-/// disappears when the vault locks). Disabled: remove a stale copy.
+/// SYNC_ENABLED: write the vault passphrase to the sync key source (a root-only file, removed again
+/// when the vault locks). Disabled: remove a stale copy.
 struct SyncCredential {
     enabled: bool,
     path: String,
@@ -115,22 +141,9 @@ impl UnlockHook for SyncCredential {
             }
             return Ok(());
         }
-        if let Some(parent) = Path::new(&self.path).parent() {
-            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        }
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&self.path)
-            .map_err(|e| e.to_string())?;
-        file.write_all(ctx.passphrase.as_bytes())
-            .map_err(|e| e.to_string())?;
-        // mode only applies on create; enforce on overwrite too.
-        fs::set_permissions(&self.path, fs::Permissions::from_mode(0o600))
-            .map_err(|e| e.to_string())?;
-        Ok(())
+        // Root-only and outside the vault (the workload owns every file inside it); see
+        // core::sync::layout::SYNC_PASSPHRASE_PATH.
+        crate::secrets::write_private_file(Path::new(&self.path), ctx.passphrase)
     }
 }
 
@@ -140,7 +153,6 @@ struct RemoteDestructKey {
     enabled: bool,
     announce: Announce,
     hash_path: String,
-    state_dir: String,
     cost: u32,
 }
 impl UnlockHook for RemoteDestructKey {
@@ -161,8 +173,9 @@ impl UnlockHook for RemoteDestructKey {
         let destruct_passphrase = destruct_key_to_passphrase(&derive_destruct_key(ctx.passphrase));
         let existed = Path::new(&self.hash_path).exists();
         let hash = bcrypt::hash(&destruct_passphrase, self.cost).map_err(|e| e.to_string())?;
-        fs::create_dir_all(&self.state_dir).map_err(|e| e.to_string())?;
-        fs::write(&self.hash_path, hash).map_err(|e| e.to_string())?;
+        // The hash lets whoever holds it test guesses of the vault passphrase it derives from, so
+        // it is root's alone (0600, in a 0700 directory), like the other secrets under /var/lib/sdw.
+        crate::secrets::write_private_file(Path::new(&self.hash_path), &hash)?;
         if !existed {
             (self.announce)(&format!(
                 "\nDestruction passphrase (save this): {destruct_passphrase}\n"
@@ -197,7 +210,8 @@ impl UnlockHook for MiseInstall {
             return Ok(());
         }
         if Path::new(&format!("{WORKSPACE_MOUNT}/.mise.toml")).exists() {
-            cmd::ok_cwd(WORKSPACE_MOUNT, "mise", &["install"]);
+            // The user's tools are installed by the user: into the workload's home, not root's.
+            crate::workload::ok_as_workload("mise", &["install"], WORKLOAD_HOME, WORKSPACE_MOUNT);
         }
         Ok(())
     }
@@ -223,6 +237,7 @@ impl UnlockHook for StartBackupWatcher {
 pub fn workspace_unlock_hooks(flags: FeatureFlags, announce: Announce) -> Vec<Box<dyn UnlockHook>> {
     vec![
         Box::new(EnsureSharedDir),
+        Box::new(PrepareWorkloadHome),
         Box::new(LinkSshCredentials { announce }),
         Box::new(GitCredentials { announce }),
         Box::new(SyncCredential {
@@ -234,7 +249,6 @@ pub fn workspace_unlock_hooks(flags: FeatureFlags, announce: Announce) -> Vec<Bo
             enabled: flags.remote_destruct,
             announce,
             hash_path: DESTRUCT_KEY_HASH_PATH.to_string(),
-            state_dir: DESTRUCT_STATE_DIR.to_string(),
             cost: 12,
         }),
     ]

@@ -55,6 +55,9 @@ pub const API_UPLOAD: &str = "/sync/api/upload";
 pub const API_DOWNLOAD: &str = "/sync/api/download";
 pub const API_DOCTOR: &str = "/sync/api/doctor";
 pub const API_DESTRUCT: &str = "/sync/api/destruct";
+/// Prometheus text metrics (METRICS_ENABLED=1). Under /sync/api/ so Caddy's gate covers it: a
+/// scraper authenticates with a session cookie or a Cloudflare Access service token.
+pub const API_METRICS: &str = "/sync/api/metrics";
 
 #[cfg(test)]
 mod tests {

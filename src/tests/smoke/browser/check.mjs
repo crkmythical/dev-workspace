@@ -33,6 +33,17 @@ const fail = (name, detail = "") => {
   console.log(`  FAIL  ${name}${detail ? `\n        ${String(detail).slice(0, 400)}` : ""}`);
 };
 const check = (name, ok, detail) => (ok ? pass(name) : fail(name, detail));
+// Everything except /auth/* and /sync/api/destruct sits behind the ingress auth gateway. A person
+// types the master password on the login page; the session cookie then rides every request of the
+// context, WebSocket upgrades included. Posting the form from the context's own request API stores
+// that cookie in the browser context exactly as the login page would.
+async function gateLogin(context) {
+  const res = await context.request.post(`${base}/auth/login`, {
+    form: { password, next: "/" },
+    maxRedirects: 0,
+  });
+  if (res.status() !== 303) throw new Error(`gate login failed: HTTP ${res.status()}`);
+}
 const step = (title) => console.log(`\n== ${title}`);
 
 if (!executablePath) {
@@ -95,6 +106,29 @@ async function waitForDesktop(page, file, seconds) {
 }
 const looksLikeDesktop = (seen) => seen.colors >= 12 && seen.lit > 0.02;
 
+/**
+ * Click the panel's Applications menu and report whether the remote screen reacted: input reaches
+ * the session. Only the region where the menu opens is compared (below the panel, left side). The
+ * panel itself holds a clock that changes by itself once a minute, which would pass for a reaction
+ * when the click did nothing.
+ */
+async function clickOpensMenu(page, shotName) {
+  const region = { x: 0, y: 30, width: 420, height: 500 };
+  const before = await analyse(await page.screenshot({ clip: region }));
+  await page.mouse.click(50, 12);
+  let after = before;
+  for (let i = 0; i < 6 && after.signature === before.signature; i++) {
+    await page.waitForTimeout(2500);
+    after = await analyse(
+      await page.screenshot({ path: path.join(shotsDir, shotName), clip: region }),
+    );
+  }
+  return {
+    changed: after.signature !== before.signature,
+    detail: JSON.stringify({ before, after }),
+  };
+}
+
 async function section(title, body) {
   step(title);
   try {
@@ -107,6 +141,7 @@ async function section(title, body) {
 // --- the sync page ------------------------------------------------------------------------------
 await section("sync page: a real browser uploads a file", async () => {
   const context = await browser.newContext({ viewport: { width: 1000, height: 700 } });
+  await gateLogin(context);
   const page = await context.newPage();
   // A real folder picker needs a person at a native dialog. The page gets the browser's private
   // file system as "the chosen folder", which is a genuine FileSystemDirectoryHandle.
@@ -160,6 +195,7 @@ await section("sync page: a real browser uploads a file", async () => {
 // --- the emergency panel -------------------------------------------------------------------------
 await section("emergency page: a wrong passphrase gets nowhere", async () => {
   const context = await browser.newContext();
+  await gateLogin(context);
   const page = await context.newPage();
   await page.goto(`${base}/sync/#emergency`);
   const button = page.locator("#ep-btn");
@@ -195,18 +231,17 @@ await section("emergency page: a wrong passphrase gets nowhere", async () => {
 if (stack === "kasmvnc" || stack === "both") {
   await section("desktop /vnc/ (KasmVNC): the picture and the input", async () => {
     const anonymous = await browser.newContext();
-    const refused = await anonymous.request.get(`${base}/vnc/`);
+    const refused = await anonymous.request.get(`${base}/vnc/`, { maxRedirects: 0 });
     check(
-      "without credentials the page is refused",
-      refused.status() === 401,
-      `status ${refused.status()}`,
+      "without a session the gate sends the page to the login",
+      refused.status() === 302 && (refused.headers().location ?? "").startsWith("/auth/login"),
+      `status ${refused.status()} -> ${refused.headers().location}`,
     );
     await anonymous.close();
 
-    const context = await browser.newContext({
-      httpCredentials: { username: "user", password },
-      viewport: { width: 1280, height: 720 },
-    });
+    // No credentials but the gate's session: KasmVNC has no login of its own.
+    const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+    await gateLogin(context);
     const page = await context.newPage();
     const sockets = [];
     page.on("websocket", (ws) => sockets.push(ws.url()));
@@ -215,13 +250,17 @@ if (stack === "kasmvnc" || stack === "both") {
     // event — wait for it to settle rather than reading once (a flaky race otherwise).
     let titled = false;
     try {
-      await page.waitForFunction(() => document.title === "KasmVNC", null, { timeout: 30000 });
+      // "KasmVNC" until the session connects, then "<desktop name> - KasmVNC" (e.g. "x11 - KasmVNC"):
+      // either is the client having loaded.
+      await page.waitForFunction(() => /(^| - )KasmVNC$/.test(document.title), null, {
+        timeout: 30000,
+      });
       titled = true;
     } catch {
       /* fell through; the actual title is reported in the failure detail */
     }
     check(
-      "with the master password the client loads",
+      "with the gate's session alone the client loads",
       response?.status() === 200 && titled,
       `status ${response?.status()}, title ${JSON.stringify(await page.title())}`,
     );
@@ -248,17 +287,11 @@ if (stack === "kasmvnc" || stack === "both") {
       JSON.stringify(seen),
     );
 
-    // The panel's Applications menu opens on a click: the remote session reacts to input.
-    await page.mouse.click(50, 12);
-    let after = seen;
-    for (let i = 0; i < 6 && after.signature === seen.signature; i++) {
-      await page.waitForTimeout(2500);
-      after = await analyse(await page.screenshot({ path: path.join(shotsDir, "vnc-menu.png") }));
-    }
+    const clicked = await clickOpensMenu(page, "vnc-menu.png");
     check(
       "a click on the panel changes the remote screen (input reaches the session)",
-      after.signature !== seen.signature,
-      JSON.stringify({ seen, after }),
+      clicked.changed,
+      clicked.detail,
     );
     await context.close();
   });
@@ -266,10 +299,8 @@ if (stack === "kasmvnc" || stack === "both") {
 
 if (stack === "selkies" || stack === "both") {
   await section("desktop /desktop/ (Selkies): the picture", async () => {
-    const context = await browser.newContext({
-      httpCredentials: { username: "user", password },
-      viewport: { width: 1280, height: 720 },
-    });
+    const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+    await gateLogin(context);
     const page = await context.newPage();
     const sockets = [];
     page.on("websocket", (ws) => sockets.push(ws.url()));
@@ -277,10 +308,22 @@ if (stack === "selkies" || stack === "both") {
     check("the client loads", response?.status() === 200, `status ${response?.status()}`);
     const seen = await waitForDesktop(page, "selkies-desktop.png", 90);
     check(`a WebSocket to the stream is open (${sockets.length})`, sockets.length > 0);
+    // Selkies 2.x builds the address from the page it was loaded from: <prefix>/api/websockets.
+    check(
+      "through /desktop/api/websockets",
+      sockets.some((u) => new URL(u).pathname === "/desktop/api/websockets"),
+      sockets.join(" "),
+    );
     check(
       `the stream shows a desktop (${seen.colors} colours, ${(seen.lit * 100).toFixed(0)}% lit)`,
       looksLikeDesktop(seen),
       JSON.stringify(seen),
+    );
+    const clicked = await clickOpensMenu(page, "selkies-menu.png");
+    check(
+      "a click on the panel changes the remote screen (input reaches the session)",
+      clicked.changed,
+      clicked.detail,
     );
     await context.close();
   });

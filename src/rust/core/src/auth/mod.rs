@@ -6,4 +6,5 @@
 //! deploy/docs/design-unified-auth-gateway.md.
 
 pub mod access_jwt;
+pub mod request;
 pub mod session;

@@ -1,21 +1,55 @@
-# Standalone Clash proxy client — independent of the main workspace stack.
-# Usage (from the repo root): docker compose -f deploy/client/docker-compose.yml up -d
-version: "3.8"
+# Standalone Clash proxy client: the workspace's own Clash, template and renderer (`sdw proxy-only`),
+# without the workspace. It turns a subscription into an HTTP and SOCKS5 proxy on this machine's
+# loopback, 127.0.0.1:7890 (HTTP and SOCKS5, mixed) and 127.0.0.1:7891 (SOCKS5).
+#
+# Run it from the repository root, with the subscription in the environment or in the repo's .env:
+#   docker compose --env-file .env -f deploy/client/docker-compose.yml up -d --build
+#   curl -x http://127.0.0.1:7890 https://www.google.com -I
+#
+# Behind a build-time proxy, set BUILD_PROXY (and APT_MIRROR=deb.debian.org outside mainland China).
+name: clash-client
 
 services:
   clash-client:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ../../src
+      dockerfile: image/Dockerfile
+      target: clash-client
+      args:
+        APT_MIRROR: ${APT_MIRROR:-mirrors.aliyun.com}
+        HTTP_PROXY: ${BUILD_PROXY:-}
+        HTTPS_PROXY: ${BUILD_PROXY:-}
+        NO_PROXY: ${BUILD_NO_PROXY:-localhost,127.0.0.0/8}
+    image: dev-workspace-clash-client:local
     container_name: clash-client
+    init: true
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:7890:7890"   # HTTP proxy
-      - "127.0.0.1:7891:7891"   # SOCKS5 proxy
     environment:
-      - CLASH_SUBSCRIPTION_URL=${CLASH_SUBSCRIPTION_URL}
+      CLASH_SUBSCRIPTION_URL: ${CLASH_SUBSCRIPTION_URL:?set CLASH_SUBSCRIPTION_URL to your Clash subscription link}
+      CLASH_DNS: ${CLASH_DNS:-}
+    ports:
+      # Loopback only: this is a proxy with no login, and anything that can reach it can use your
+      # subscription's traffic.
+      - "127.0.0.1:7890:7890"
+      - "127.0.0.1:7891:7891"
     volumes:
       - clash-client-config:/etc/clash
+    # Least privilege. `sdw proxy-only` starts as root only to hand /etc/clash to the clash user (a
+    # volume from an older image may be root's) and become that user: CHOWN for the first,
+    # SETUID/SETGID for the second. The config is then rendered, and Clash runs, as the clash user
+    # with no capability of its own; NET_BIND_SERVICE is what lets the binary's file capability
+    # bind the DNS port 53.
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
+    # The health check is the image's own (src/image/Dockerfile, clash-client stage): it is healthy
+    # once Clash accepts connections AND the subscription loaded nodes. It is not repeated here:
+    # a `healthcheck:` block that sets only part of it (start_interval, say) is refused by the
+    # daemon unless it sets start_period too, and then replaces the image's timings.
     logging:
       driver: local
       options:
