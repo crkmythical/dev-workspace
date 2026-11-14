@@ -253,7 +253,15 @@ pub fn clash_command(as_clash_user: bool) -> Command {
     } else {
         Command::new(CLASH_BIN)
     };
-    command.args(["-d", CLASH_DIR]);
+    // Dropping uid does not clear an inherited environment. PID 1 contains the master password,
+    // backup credentials and subscription URL; none is needed after config.yaml has been rendered.
+    // Start the network-facing proxy with a closed environment so an exploit in Clash cannot read
+    // unrelated workspace credentials, and so its own HTTP proxy variables cannot loop into itself.
+    command
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("HOME", "/var/empty")
+        .args(["-d", CLASH_DIR]);
     command
 }
 
@@ -330,10 +338,7 @@ impl FirewallBackend {
 /// argument", the x_tables path works). Each backend applies its ruleset atomically. Returns Err —
 /// so the boot fails closed — only when NEITHER backend can load the filter, or when it could lock
 /// IPv4 but not IPv6 (half-filtered would leak v6).
-pub fn apply_egress_firewall(
-    clash_uid: u32,
-    allow: &AllowList,
-) -> Result<FirewallBackend, String> {
+pub fn apply_egress_firewall(clash_uid: u32, allow: &AllowList) -> Result<FirewallBackend, String> {
     // 1. nftables: one `inet` table covering v4 and v6, applied atomically by `nft -f`.
     let (nft_ok, nft_err) = cmd::run_stdin("nft", &["-f", "-"], &egress_ruleset(clash_uid, allow));
     if nft_ok {
@@ -480,6 +485,24 @@ mod tests {
             ]
         );
         let as_root = clash_command(false);
+        for command in [&as_user, &as_root] {
+            let env: Vec<_> = command
+                .get_envs()
+                .map(|(name, value)| {
+                    (
+                        name.to_string_lossy().into_owned(),
+                        value.map(|v| v.to_string_lossy().into_owned()),
+                    )
+                })
+                .collect();
+            assert_eq!(
+                env,
+                [
+                    ("HOME".to_string(), Some("/var/empty".to_string())),
+                    ("PATH".to_string(), Some("/usr/bin:/bin".to_string())),
+                ]
+            );
+        }
         assert_eq!(as_root.get_program(), CLASH_BIN);
     }
 }

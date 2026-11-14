@@ -1,5 +1,15 @@
 # TODO
 
+> **2026-11-14 Rust-first 更新**：浏览器同步页和协议客户端已从 TypeScript/WebCrypto 迁到
+> `src/rust/web`（Rust/WASM），原生 smoke probe 位于 `src/rust/smoke-client`，共同复用
+> `sdw-core::sync::client`。Bun、Vite、Biome、TypeScript 配置和全部维护中的 `.ts` 源码已删除。
+> 同批修复：同步失败不再误记成功、轮询不重入、流式哈希、请求超时、服务端同 file-id
+> 串行与块序校验；远程销毁改为 202 scheduled 且幂等，未确认密钥擦除时不写 terminal marker；
+> root bridge 收窄为五个固定目标生命周期命令；Clash 和 HTTP gate 不再保留无关密钥环境。
+> 当前 Kali/KasmVNC review 镜像已构建；完整 smoke 首轮 563/2（仅下载器输出文案断言过期），
+> 修正后 `45-plugins` 76/0、WASM 浏览器 17/0 重跑通过，565 个检查均有通过记录。
+> 历史记录中的 TS/Bun 描述保留为当时状态，不代表当前架构。
+
 > **2026-11-04 更新**：2026-11-03 两轮 review 提出的问题，已经按**根因**逐项修了一遍。下面「第三轮」按根因列出
 > 做了什么、怎么验证的；「还没做」只列仍然开放的东西，其中大部分是这台机器上做不了的（没有嵌套虚拟化、没有 VPS、
 > 没有真实的 Cloudflare Access / GitHub CI）。更早的记录（运行时迁到 Rust、两轮 review 的原文、历史验证）保留在后面，

@@ -1,10 +1,9 @@
-//! Sync wire-protocol constants — a port of packages/core/src/sync/protocol.ts.
+//! Sync wire-protocol constants shared by every Rust adapter.
 //!
-//! These pin the on-the-wire envelope and MUST stay in step with any other
-//! implementation: sync-service/tests/parity.rs checks them against golden
-//! vectors generated from the authoritative TS side, and tests/smoke exercises
-//! the HTTP contract end to end. The layout/path constants live in
-//! `super::layout`; the self-destruct tuning in `crate::vault::destruct`.
+//! `sync::client` constructs the browser/native requests and sync-service parses them. Frozen
+//! vectors in sync-service/tests/parity.rs preserve compatibility with earlier releases, while
+//! system smoke exercises the active HTTP contract end to end. Filesystem paths live in
+//! `super::layout`; self-destruct tuning lives in `crate::vault::destruct`.
 
 /// 33-byte PNG header prepended to every encrypted payload (DLP camouflage).
 pub const PNG_HEADER: [u8; 33] = [
@@ -20,31 +19,22 @@ pub const NONCE_LENGTH: usize = 12;
 pub const TAG_LENGTH: usize = 16;
 pub const AES_KEY_LENGTH: usize = 32;
 
-// Sync key derivation: PBKDF2-HMAC-SHA256 over the vault passphrase (see crypto.rs + client.ts).
+// PBKDF2-HMAC-SHA256 over the vault passphrase (see crypto.rs and client.rs).
 pub const SYNC_KDF_SALT: &str = "sync-key-v2";
 pub const SYNC_KDF_ITERATIONS: u32 = 600_000;
 
-// Replay-window policy (super::replay).
 pub const REPLAY_WINDOW_SIZE: usize = 10_000;
 pub const REPLAY_TOLERANCE_MS: i64 = 300_000;
 
-// Max request body the API accepts. The browser sends one AEAD chunk per request, up to
-// CHUNK_SIZE = 4 MiB (packages/core/src/sync/protocol.ts) plus the 33-byte PNG header, 12-byte
-// nonce and 16-byte tag. axum's default `Bytes` limit is only 2 MiB, which would 413 a real chunk
-// before the handler (so files over ~2 MB could never upload); app() raises the limit to this. It
-// also bounds how much a single request can buffer in memory.
+// The browser sends one AEAD chunk per request, at most 4 MiB plus framing. Axum's default Bytes
+// limit is 2 MiB, so the app raises it to a bounded 5 MiB.
 pub const MAX_REQUEST_BODY_BYTES: usize = 5 * 1024 * 1024;
 
-// Server-side ceiling on one assembled upload, mirroring the browser client's SIZE_LIMIT
-// (packages/core/src/sync/protocol.ts = 500 MB). The client enforces it too, but the server must
-// not trust the client: without this an authenticated client (or a looping one) could grow a
-// single upload without bound and fill the vault disk. append_chunk refuses a crossing chunk.
+// Both clients enforce these, and the server independently caps assembled bytes and chunk count.
+pub const CHUNK_SIZE_BYTES: u64 = 4 * 1024 * 1024;
 pub const MAX_UPLOAD_BYTES: u64 = 500 * 1024 * 1024;
+pub const MAX_UPLOAD_CHUNKS: u64 = MAX_UPLOAD_BYTES.div_ceil(CHUNK_SIZE_BYTES);
 
-// HTTP wire contract: header names + API paths, the single Rust source the routes use. Mirrors
-// SYNC_HEADERS / SYNC_API in packages/core/src/sync/protocol.ts — the frozen values the browser
-// SPA speaks. The test below pins them so a Rust-side typo is caught; tests/smoke checks the two
-// languages agree end to end.
 pub const HEADER_OP: &str = "x-sync-op";
 pub const HEADER_TS: &str = "x-sync-ts";
 pub const HEADER_FILE_ID: &str = "x-sync-fileid";
@@ -55,16 +45,14 @@ pub const API_UPLOAD: &str = "/sync/api/upload";
 pub const API_DOWNLOAD: &str = "/sync/api/download";
 pub const API_DOCTOR: &str = "/sync/api/doctor";
 pub const API_DESTRUCT: &str = "/sync/api/destruct";
-/// Prometheus text metrics (METRICS_ENABLED=1). Under /sync/api/ so Caddy's gate covers it: a
-/// scraper authenticates with a session cookie or a Cloudflare Access service token.
+/// Prometheus text metrics (METRICS_ENABLED=1). Under /sync/api/ so Caddy's gate covers it.
 pub const API_METRICS: &str = "/sync/api/metrics";
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Freeze the on-the-wire contract. Changing any of these breaks the browser SPA, so a change
-    /// here must be deliberate and mirrored in the TS client (+ the smoke suite).
+    /// Freeze the on-the-wire contract used by the Rust server, WASM and native client.
     #[test]
     fn wire_contract_is_frozen() {
         assert_eq!(HEADER_OP, "x-sync-op");

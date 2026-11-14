@@ -248,13 +248,26 @@ mod tests {
         // proxy-only runs again as the clash user in the standalone client: it must reach its own
         // argument handling (a usage error, 2), not the refusal (126).
         assert_eq!(as_workload("proxy-only", &["--bogus".to_string()]), 2);
-        // The operator's commands, and anything unknown, are refused with the pointer to docker exec.
+        // Network/configuration changes, arbitrary-path transfers, package installation, pentest
+        // root access and destructive operations are all operator-only.
         for command in [
-            "self-destruct",
-            "destruct-passphrase",
+            "audit-log",
             "backup-init",
+            "desktop-install",
+            "destruct-passphrase",
             "entrypoint",
+            "init-pentest",
+            "init-vault",
+            "lock-pentest",
+            "pentest",
+            "pentest-bootstrap",
+            "pull",
+            "push",
+            "self-destruct",
+            "set-clash-dns",
+            "setup",
             "sync-service",
+            "unlock-pentest",
             "no-such-command",
         ] {
             assert_eq!(as_workload(command, &[]), 126, "{command}");

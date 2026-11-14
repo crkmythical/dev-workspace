@@ -97,7 +97,10 @@ mod tests {
 
     #[test]
     fn output_policy_is_drop_and_never_accept() {
-        for program in [egress_rules_v4(7890, &none()), egress_rules_v6(7890, &none())] {
+        for program in [
+            egress_rules_v4(7890, &none()),
+            egress_rules_v6(7890, &none()),
+        ] {
             assert!(program.contains(":OUTPUT DROP [0:0]"));
             assert!(!program.contains(":OUTPUT ACCEPT"));
             // INPUT/FORWARD stay open, like the nftables backend.

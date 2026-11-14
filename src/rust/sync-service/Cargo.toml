@@ -16,7 +16,7 @@ sdw-core = { path = "../core" }
 # The file audit sink and the `<NAME>_FILE` secret reader (adapters over the real file system).
 sdw-infra = { path = "../infra" }
 axum = "0.7"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "process"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "process", "sync"] }
 sha2 = "0.10"
 hex = "0.4"
 serde = { version = "1", features = ["derive"] }

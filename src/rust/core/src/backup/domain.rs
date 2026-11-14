@@ -14,8 +14,6 @@ pub const BACKUP_FALLBACK_INTERVAL_MS: i64 = 300_000;
 pub const BACKUP_FAILURE_THRESHOLD: u32 = 3;
 /// Doctor warns if the last success is older than this (10 min).
 pub const BACKUP_STALENESS_MS: i64 = 600_000;
-/// Maximum retry attempts before giving up on a single cycle.
-pub const BACKUP_MAX_RETRIES: u32 = 5;
 /// Base delay for exponential backoff (5 s).
 pub const BACKUP_BASE_BACKOFF_MS: i64 = 5_000;
 pub const BACKUP_KEEP_HOURLY: u32 = 24;

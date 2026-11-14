@@ -10,16 +10,16 @@
 | **Container escape** | Break out of Docker isolation | Not privileged, but `CAP_SYS_ADMIN` (FUSE) and `seccomp:unconfined` (the desktop's bwrap sandbox) weaken isolation; on Linux hosts with AppArmor the opt-in `docker-compose.apparmor.yml` also drops the AppArmor profile (see Non-Guarantees). Treat the container as a moderate boundary; use a dedicated VM for stronger separation |
 | **GitHub breach** | Access vault repository contents | Repository contains only gocryptfs ciphertext; AES-256. It also holds `gocryptfs.conf`, the passphrase-wrapped master key, so a weak passphrase can be guessed offline: new vaults wrap it with scrypt N=2^18, four times the work per guess of gocryptfs's default |
 | **Sync wire observer** | Intercept sync traffic | AES-256-GCM AEAD + PNG camouflage; no plaintext metadata. The key is PBKDF2-HMAC-SHA256-stretched from the passphrase, so a captured envelope cannot be brute-forced at raw-hash speed |
-| **Physical access** | Access to powered-off machine | Vault locked on container stop; workspace content is not on disk in the clear. The credentials listed under Non-Guarantees are |
-| **Cloudflare compromise** | Access tunnel traffic | End-to-end encryption between browser and container; CF sees TLS only |
+| **Physical access** | Access to powered-off machine | Workspace data is gocryptfs ciphertext at rest. Host-side configuration and credentials outside the vault retain their documented exposure |
+| **Cloudflare compromise** | Access edge traffic | Cloudflare terminates public TLS and can inspect ordinary login, code-server and desktop traffic. Sync file envelopes have an additional application-layer AES-GCM layer, so their path/content remain ciphertext at the edge |
 
 ## Trust Boundaries
 
-1. **Passphrase → vault**: the passphrase (typed, or `PASSWORD`) is handed to gocryptfs; in the browser the sync key derived from it (PBKDF2-HMAC-SHA256, password-stretched) is a non-extractable CryptoKey. See Non-Guarantees for where the passphrase also lives
+1. **Passphrase → vault**: the passphrase (typed, or `PASSWORD`) is handed to gocryptfs; the Rust/WASM browser derives a sync key with PBKDF2-HMAC-SHA256, verifies it against the server, keeps it only in the current page's WebAssembly memory and zeroes explicit copies when cleared. Reloading closes the key-bearing instance. See Non-Guarantees for where the passphrase also lives
 2. **Container → Host**: Docker isolation; single mapped port (localhost only)
 3. **Container → Internet**: through Clash only. `http_proxy` and friends point at it, `ssh` is configured to use it, and an nftables default-DROP filter lets nothing else out except the networks the operator lists in `EGRESS_ALLOW_CIDRS` (see Egress)
 4. **Workload → root**: the `dev` user reaches root only through `doas`, which runs the generated list of `sdw` commands (`sdw doas-rules`) with a clean environment
-5. **Sync SPA → Server**: AEAD-encrypted envelopes; server cannot read plaintext
+5. **Sync browser → Server**: application-layer AEAD envelopes protect paths and content from the TLS intermediary. The server intentionally derives the same key, decrypts each chunk and writes plaintext into the mounted vault; it is trusted for confidentiality
 6. **Vault → GitHub**: Only ciphertext pushed; git history contains no plaintext
 
 ## Privilege Separation
@@ -27,13 +27,14 @@
 Everything the user runs (code-server and its terminals, the desktops and their applications, build tools, whatever a package's install script does) runs as `dev` (uid 1000), with its home inside the vault (`/workspace/home`), so shell history, tool caches and configuration are encrypted at rest and gone when the vault is locked. The services that hold the secrets or guard the perimeter keep their own identities: the gate, backup, sync and supervisord are root's, Caddy is `caddy`, Clash is `clash`.
 
 * **No secrets in the workload's environment.** `sdw workload` starts every process with an allowlisted environment (locale, proxy variables, display, the desktop's settings). `WORKLOAD_ENV` names more variables to pass; one that is a workspace secret (`PASSWORD`, `RESTIC_*`, `AWS_*`, `CLASH_SUBSCRIPTION_URL`, `*_FILE`, ...) is refused with a warning. `75-privilege.sh` checks the running code-server's environment as well.
+* **Network-facing service environments are minimized.** Caddy starts under `env -i`; Clash is constructed with only `HOME` and `PATH` after its private config is rendered; the Rust gate resolves its required settings before Tokio starts and removes every inherited variable except process/TLS/proxy plumbing. A remote-destruct worker recovers operator configuration directly from root-only PID 1 rather than keeping it in the HTTP service.
 * **No second login.** code-server runs with `--auth none` and KasmVNC with `-DisableBasicAuth`: the session gate in front of Caddy is the only login, so no copy of the master password sits where `dev` could read it. A password the start-up generated is kept in `/var/lib/sdw/master-password` (root, 0700).
 * **The vault belongs to `dev`, to `dev` alone.** It is mounted by root with `-allow_other -force_owner 1000:1000`; the mount point is 0700 and gocryptfs turns on `default_permissions`, so no other user (Caddy, Clash) can enter it. The ciphertext directories `/vault/cipher` and `/pentest/cipher` are made 0700 at every start.
 * **The sync key source is not in the vault.** With `SYNC_ENABLED` the passphrase is written to `/run/sdw/sync-passphrase` (root, 0700 directory), removed by `lock-vault` and scrubbed by self-destruct.
 * **No setuid or setgid file but `doas`.** The rest are stripped at build time. `dev` has no capabilities.
-* **The bridge.** `doas` runs `/usr/local/libexec/sdw-priv/<verb>` as root with a clean environment, for the verbs in `PRIVILEGED_VERBS` (`core/src/workspace/workload.rs`: `doctor`, `lock-vault`, `unlock-vault`, `desktop-*`, `set-clash-dns`, `setup`, `push`, `pull`, `audit-log`, the pentest commands, `init-*`). Nothing else, no shell, no `keepenv`. A bridged process reads the container's configuration from PID 1's environment, which only root can read. `self-destruct`, `destruct-passphrase` and `backup-init` are NOT in the list: they are for the operator (`docker exec`) and print that when `dev` runs them. The rules file is generated from the same list the symlinks are, and `75-privilege.sh` checks that they agree.
+* **The bridge.** `doas` runs only five fixed-target lifecycle commands as root with a clean environment: `doctor`, `lock-vault`, `unlock-vault`, `desktop-start` and `desktop-stop`. Commands that accept arbitrary paths, install software, enter the pentest rootfs, expose audit data or rewrite network/auth configuration are operator-only (`docker exec -u root`), including `push`/`pull`, `setup`, `set-clash-dns`, `desktop-install`, pentest commands, `audit-log`, `init-*`, `self-destruct`, `destruct-passphrase` and `backup-init`. The rules and bridge entries are generated from the same Rust list and checked by smoke.
 
-What this does not give: the arguments of a bridged command are the workload's, so a bug in one of those commands is a way to root; and root in this container is still a container root with `CAP_SYS_ADMIN`.
+What this does not give: a vulnerability in one of the five bridged lifecycle commands remains a route to container root; and root in this container still has `CAP_SYS_ADMIN`.
 
 ## Residual Risks
 
@@ -43,7 +44,7 @@ What this does not give: the arguments of a bridged command are the workload's, 
 | gocryptfs vulnerability | Very Low | Critical | Monitor CVEs; key rotation is manual (`gocryptfs -passwd` on the cipher dir — there is no built-in command, and it desyncs the passphrase copies listed under Non-Guarantees). `gocryptfs -passwd -scryptn 18 /vault/cipher` also raises the scrypt cost of a vault created before it became the default |
 | Clash subscription compromise | Medium | Medium | Traffic visible to proxy provider; use trusted provider |
 | Docker Desktop vulnerability | Low | High | Keep updated; consider VM alternative |
-| Browser IndexedDB key extraction | Low | Medium | Key marked non-extractable; cleared on rotation |
+| Browser memory compromise | Low | High | The Rust/WASM client keeps the sync key only for the current page and zeroes explicit copies on Clear; any script executing in the same origin while the page is active can still use or inspect application memory, so CSP and ingress integrity remain part of the boundary |
 | A bug in a bridged `sdw` command | Low | High (root in the container) | The list is short and generated; the commands take few arguments; `dev` has no other way up |
 | A tool release replaced upstream | Low | High | Every tool baked into the image is pinned with a checksum (`src/image/tools/*.env`, `make update-tools`) and verified when it is downloaded; the pins are reviewed like any dependency |
 

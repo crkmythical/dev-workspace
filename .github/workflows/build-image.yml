@@ -1,88 +1,113 @@
-name: Build & Push Dev Workspace Image
+name: Build, verify & publish Dev Workspace
+
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
+
 env:
   GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/dev-workspace
   DOCKERHUB_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/dev-workspace
+
 permissions:
   contents: read
+
 jobs:
-  # Nothing is published unless the image boots and passes the smoke suite (src/tests/smoke).
-  smoke-default:
-    uses: ./.github/workflows/smoke.yml
-    with:
-      variant: default
-    permissions:
-      contents: read
-  smoke-full:
-    uses: ./.github/workflows/smoke.yml
-    with:
-      variant: full
-    permissions:
-      contents: read
-  build:
-    needs: [smoke-default, smoke-full]
+  # Build each publishable architecture once. The immutable GHCR candidate is then pulled and
+  # smoked on a native runner; release manifests are created only after all four exact candidates
+  # pass. Candidate tags may remain after a failed run, but no user-facing tag points at them.
+  build-and-smoke:
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Default image: KasmVNC desktop only (/vnc/). Small and quick to build.
           - { variant: default, stack: kasmvnc, runner: ubuntu-latest, platform: linux/amd64, arch: amd64 }
           - { variant: default, stack: kasmvnc, runner: ubuntu-24.04-arm, platform: linux/arm64, arch: arm64 }
-          # Full image (tag suffix -full): Selkies (/desktop/) AND KasmVNC. Built on every
-          # release so the Selkies path is exercised and cannot rot unnoticed.
           - { variant: full, stack: both, runner: ubuntu-latest, platform: linux/amd64, arch: amd64 }
           - { variant: full, stack: both, runner: ubuntu-24.04-arm, platform: linux/arm64, arch: arm64 }
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
     permissions:
       contents: read
       packages: write
-    env:
-      # `secrets` is not available in step-level `if`, so it is mapped here first.
-      HAS_DOCKERHUB: ${{ secrets.DOCKERHUB_TOKEN != '' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android \
             /opt/ghc /usr/local/share/boost /opt/hostedtoolcache
           sudo apt-get clean
           df -h /
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
       - name: Log in to GHCR
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Log in to Docker Hub
-        if: env.HAS_DOCKERHUB == 'true'
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Build and push (per-arch)
+
+      - name: Build immutable candidate
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: ./src
           file: ./src/image/Dockerfile
           platforms: ${{ matrix.platform }}
           push: true
-          tags: |
-            ${{ env.GHCR_IMAGE }}:${{ github.sha }}-${{ matrix.variant }}-${{ matrix.arch }}
+          tags: ${{ env.GHCR_IMAGE }}:${{ github.sha }}-${{ matrix.variant }}-${{ matrix.arch }}
           build-args: |
             BASE_IMAGE=kalilinux/kali-rolling
             DESKTOP_STACK=${{ matrix.stack }}
-          # What went into the image and how it was built, attached to it as attestations.
           provenance: mode=max
           sbom: true
           cache-from: type=registry,ref=${{ env.GHCR_IMAGE }}:cache-${{ matrix.variant }}-${{ matrix.arch }}
           cache-to: type=registry,ref=${{ env.GHCR_IMAGE }}:cache-${{ matrix.variant }}-${{ matrix.arch }},mode=max
+
+      - name: Set up Rust smoke client
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+
+      - name: Cache Rust smoke client
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: src/rust
+
+      - name: Pull exact candidate
+        run: docker pull "${GHCR_IMAGE}:${GITHUB_SHA}-${{ matrix.variant }}-${{ matrix.arch }}"
+
+      - name: Smoke exact candidate
+        env:
+          SMOKE_SHOTS_DIR: ${{ github.workspace }}/smoke-shots
+          SMOKE_REQUIRE_BROWSER: '1'
+        run: >-
+          src/tests/smoke/run.sh
+          --image "${GHCR_IMAGE}:${GITHUB_SHA}-${{ matrix.variant }}-${{ matrix.arch }}"
+          --services
+
+      - name: Browser screenshots
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-smoke-${{ matrix.variant }}-${{ matrix.arch }}
+          path: smoke-shots
+          if-no-files-found: ignore
+
+      - name: Containers, if smoke failed
+        if: failure()
+        run: |
+          docker ps -a
+          for c in $(docker ps -aq); do
+            echo "::group::$(docker inspect -f '{{.Name}}' "$c")"
+            docker logs --tail 80 "$c" 2>&1 || true
+            echo "::endgroup::"
+          done
+
   manifest:
-    needs: build
+    needs: build-and-smoke
     strategy:
       matrix:
         include:
@@ -97,31 +122,33 @@ jobs:
     steps:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
       - name: Log in to GHCR
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Log in to Docker Hub
         if: env.HAS_DOCKERHUB == 'true'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Create and push multi-arch manifests
+
+      - name: Publish verified multi-arch manifests
         run: |
           REF_NAME="${{ github.ref_name }}"
           SUFFIX="${{ matrix.suffix }}"
           SOURCES=(
-            "${{ env.GHCR_IMAGE }}:${{ github.sha }}-${{ matrix.variant }}-amd64"
-            "${{ env.GHCR_IMAGE }}:${{ github.sha }}-${{ matrix.variant }}-arm64"
+            "${GHCR_IMAGE}:${GITHUB_SHA}-${{ matrix.variant }}-amd64"
+            "${GHCR_IMAGE}:${GITHUB_SHA}-${{ matrix.variant }}-arm64"
           )
-          TAGS=("${{ env.GHCR_IMAGE }}:${REF_NAME}${SUFFIX}" "${{ env.GHCR_IMAGE }}:latest${SUFFIX}")
-          # Docker Hub copies, when configured.
+          TAGS=("${GHCR_IMAGE}:${REF_NAME}${SUFFIX}" "${GHCR_IMAGE}:latest${SUFFIX}")
           if [ "$HAS_DOCKERHUB" = "true" ]; then
-            TAGS+=("${{ env.DOCKERHUB_IMAGE }}:${REF_NAME}${SUFFIX}" "${{ env.DOCKERHUB_IMAGE }}:latest${SUFFIX}")
+            TAGS+=("${DOCKERHUB_IMAGE}:${REF_NAME}${SUFFIX}" "${DOCKERHUB_IMAGE}:latest${SUFFIX}")
           fi
-          for TAG in "${TAGS[@]}"; do
-            docker buildx imagetools create -t "${TAG}" "${SOURCES[@]}"
+          for tag in "${TAGS[@]}"; do
+            docker buildx imagetools create -t "$tag" "${SOURCES[@]}"
           done

@@ -1,5 +1,5 @@
-//! Authenticator for listing the shared directory — mirrors `listShared` in
-//! packages/core/src/sync/usecases.ts.
+//! Authenticator for listing the shared directory, paired with
+//! `sdw_core::sync::client::build_list_headers`.
 //!
 //! The client sends `X-Sync-Ts` and `X-Sync-Auth` = base64(nonce || tag): an
 //! AES-GCM envelope over an EMPTY message whose AAD is `list|<ts>`. Only a holder

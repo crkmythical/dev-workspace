@@ -4,13 +4,12 @@
 . "$(cd "$(dirname "$0")/.." && pwd)/lib.sh"
 
 step "sync protocol, end to end"
-# The browser SPA stays TypeScript, so the sync client used to prove the protocol is run with Bun
-# on the HOST (the runtime image carries no Bun) against the published port, through Caddy into the
-# Rust sync-service. The upload still lands in the container's vault, checked below.
+# The native Rust probe uses the same sdw-core request builders as the browser WASM client. It
+# runs on the host against the published port, through Caddy into the Rust sync-service.
 REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-# The master password is the throwaway workspace's PASSWORD (smoke.env). It is not read back from
-# the container: a workspace that takes its secrets from files has no PASSWORD in its environment.
-OUT="$(cd "$REPO_ROOT" && bun run tests/smoke/fixtures/sync_e2e.ts "http://127.0.0.1:${SMOKE_PORT:-18090}" "$SMOKE_PASSWORD" 2>&1)"
+OUT="$(cargo run -q --locked --manifest-path "$REPO_ROOT/rust/Cargo.toml" \
+  -p sdw-smoke-client --bin sync-e2e -- \
+  "http://127.0.0.1:${SMOKE_PORT:-18090}" "$SMOKE_PASSWORD" 2>&1)"
 printf '%s\n' "$OUT" | sed 's/^/  | /'
 expect_match "every protocol check passed" '^ALL SYNC CHECKS PASSED' "$OUT"
 expect_no_match "no protocol check failed" '^FAIL ' "$OUT"

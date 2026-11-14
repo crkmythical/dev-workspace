@@ -1,7 +1,6 @@
-//! Rust/Axum sync-service. Wire-compatible with the TypeScript implementation it
-//! replaces (packages/server + packages/core), proven by tests/parity.rs against
-//! golden vectors from the authoritative TS side, and by the shared HTTP contract
-//! in tests/smoke. See README.md.
+//! Rust/Axum auth and sync service. The browser WASM and native smoke client share
+//! `sdw-core` request construction with this server's parser and crypto; frozen vectors preserve
+//! compatibility with envelopes produced before the all-Rust migration.
 
 pub mod audit;
 pub mod destruct;
@@ -51,9 +50,14 @@ pub fn app(state: AppState) -> Router {
 /// the sync daemon; the `sdw sync-service` subcommand calls it, so the image ships one Rust binary
 /// (`sdw`) instead of a separate sync-service executable.
 pub fn run_blocking() {
+    // Resolve all service configuration before Tokio creates worker threads, then erase the
+    // inherited container environment. The gate is network-facing and does not need the vault,
+    // backup, proxy-subscription or cloud credentials it would otherwise inherit from PID 1.
+    let config = AppConfig::from_env();
+    retain_service_environment();
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
     rt.block_on(async {
-        let state = AppState::from_config(AppConfig::from_env());
+        let state = AppState::from_config(config);
         // When behind Cloudflare Access, prime and keep the team JWKS fresh so /auth/verify can
         // accept Access assertions. The initial fetch is awaited so the keys are ready before the
         // first request; a background task then refreshes them.
@@ -67,6 +71,31 @@ pub fn run_blocking() {
         println!("sync-service (rust) listening on {addr}");
         axum::serve(listener, app(state)).await.expect("serve");
     });
+}
+
+/// Keep only process plumbing and the proxy route needed by the Access-JWKS curl child. This runs
+/// before the Tokio runtime starts, avoiding concurrent process-environment mutation.
+fn retain_service_environment() {
+    const KEEP: &[&str] = &[
+        "PATH",
+        "LANG",
+        "TZ",
+        "SSL_CERT_DIR",
+        "SSL_CERT_FILE",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "no_proxy",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "NO_PROXY",
+    ];
+    for (name, _) in std::env::vars_os() {
+        if !KEEP.iter().any(|keep| name == *keep) {
+            std::env::remove_var(name);
+        }
+    }
 }
 
 /// Keep the Access JWKS fresh. Fetch immediately, then retry QUICKLY until the first success — at

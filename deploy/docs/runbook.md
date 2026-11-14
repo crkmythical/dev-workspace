@@ -217,7 +217,7 @@ docker exec -it dev-workspace self-destruct --force
 curl -X POST https://<hostname>/sync/api/destruct \
   -H "Content-Type: application/json" \
   -d '{"passphrase":"<your-destruct-passphrase>"}'
-# 200 = 成功; 404 = 密码错误; 429 = 速率限制
+# 202 = 已启动销毁任务; 404 = 密码错误; 429 = 速率限制
 ```
 
 ### 3. 浏览器 SPA

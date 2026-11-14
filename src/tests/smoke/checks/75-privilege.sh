@@ -94,7 +94,7 @@ CODE_SERVER_ENVIRON="$(docker exec -u dev "$WS" sh -c 'cat /proc/$(pgrep -f "bin
 expect_match "the running code-server's environment could be read (it is the workload's)" '^HOME=/workspace/home$' "$CODE_SERVER_ENVIRON"
 expect_no_match "the running code-server holds none of the secrets either" \
   '^(PASSWORD|RESTIC_PASSWORD|AWS_SECRET_ACCESS_KEY|CLASH_SUBSCRIPTION_URL|DESKTOP_BCRYPT_HASH)=' "$CODE_SERVER_ENVIRON"
-expect_match "the preinstalled runtimes are there for it" '^v20\.' "$(dx sdw workload -- node -v)"
+expect_match "the preinstalled runtimes are there for it" '^v26\.' "$(dx sdw workload -- node -v)"
 expect_match "… and so is the JDK" 'openjdk version "17' "$(dx sdw workload -- java -version 2>&1)"
 
 step "the bridge to root"
@@ -109,12 +109,17 @@ expect_match "doctor, which needs root, works from dev's terminal" 'All checks p
 expect_match "… and sees the container's configuration, not dev's" 'Vault mount — /workspace mounted' "$DOCTOR"
 OPERATOR="$(as_dev self-destruct 2>&1 < /dev/null)"
 expect_match "an operator's command is refused for dev, with where to run it" 'docker exec' "$OPERATOR"
-expect_true "the workload can still lock and unlock the vault through the bridge" as_dev sh -c 'command -v lock-vault && command -v unlock-vault'
+for command in audit-log desktop-install init-pentest init-vault lock-pentest pentest \
+  pentest-bootstrap pull push set-clash-dns setup unlock-pentest; do
+  expect_match "$command is operator-only, not a root bridge for arbitrary workload code" \
+    'docker exec' "$(as_dev "$command" 2>&1 < /dev/null)"
+done
+expect_true "the workload can still lock and unlock the vault through the narrow bridge" as_dev sh -c 'command -v lock-vault && command -v unlock-vault'
 
 step "the dev user's tools"
 expect_match "it installs its own runtime into its home, not into the image's" 'v22\.' \
   "$(dx sdw workload -- sh -c 'mise use -g node@22 >/dev/null 2>&1; node -v')"
-expect_true "… and the image's own are untouched" dx test -d /opt/mise/installs/node/20.20.2
+expect_true "… and the image's own are untouched" dx sh -c 'test -d "$(mise where node)"'
 expect_false "… the system tools are read-only to it" as_dev touch /opt/mise/probe
 dx rm -rf /workspace/home/.local/share/mise /workspace/home/.config/mise 2>/dev/null
 

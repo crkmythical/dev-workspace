@@ -5,8 +5,5 @@
 /// Ciphertext of the workspace vault.
 pub const VAULT_CIPHER_DIR: &str = "/vault/cipher";
 
-/// Unix socket the vault-state daemon listens on. `{RUN_DIR}/vault-state.sock`.
-pub const STATE_SOCKET_PATH: &str = "/var/run/vault-state.sock";
-
 /// Where vault-sync keeps its per-cycle state. `{RUN_DIR}/vault-sync`.
 pub const VAULT_SYNC_STATE_DIR: &str = "/var/run/vault-sync";

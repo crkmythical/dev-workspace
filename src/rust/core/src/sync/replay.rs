@@ -30,7 +30,7 @@ impl ReplayWindow {
 
     /// Returns true if the envelope is accepted, false on replay/out-of-window.
     pub fn check(&mut self, nonce_hex: &str, timestamp_ms: i64, now_ms: i64) -> bool {
-        if (now_ms - timestamp_ms).abs() > self.tolerance_ms {
+        if now_ms.abs_diff(timestamp_ms) > self.tolerance_ms as u64 {
             return false;
         }
         if self.set.contains(nonce_hex) {

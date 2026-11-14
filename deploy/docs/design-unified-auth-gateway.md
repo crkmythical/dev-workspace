@@ -153,7 +153,7 @@ explicit allowlist. Sketch:
     }
     import /etc/caddy/desktop.d/*.caddy   # /vnc/, /desktop/ (+ their WS)
     handle /sync/api/* { reverse_proxy 127.0.0.1:8081 }
-    handle_path /sync/* { root * /opt/workspace/packages/spa/dist; file_server }
+    handle_path /sync/* { root * /opt/sdw-web; file_server }
     handle { reverse_proxy 127.0.0.1:8082 }   # code-server
 }
 ```

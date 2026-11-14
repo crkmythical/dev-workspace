@@ -6,8 +6,9 @@
 //! the per-IP budget / global backstop and gets a 429 (not a 404), and only a well-formed wrong
 //! passphrase reaches the deliberately slow bcrypt verify. So response timing and the 429 can
 //! reveal that the feature is enabled, though neither leaks the passphrase. On the right passphrase
-//! it launches the destroyer synchronously and answers 200 — or 500 if it could not even start, so
-//! a launch failure is never hidden behind an optimistic 200.
+//! it starts the destroyer and answers 202 Accepted — or 500 if it could not start. Accepted means
+//! exactly "the irreversible worker was scheduled", not that key erasure has already completed.
+//! A process-wide atomic guard makes repeated valid requests idempotent.
 //!
 //! Every attempt that gets past the feature switch is audited (claimed address, User-Agent, why it
 //! was refused). The refusals are capped per minute so they cannot flood the log; a destruct that
@@ -21,6 +22,7 @@ use axum::{
     Json,
 };
 use serde_json::{json, Value};
+use std::sync::atomic::Ordering;
 
 use sdw_core::audit::{event, outcome, AuditEvent};
 
@@ -90,19 +92,29 @@ pub async fn destruct(State(state): State<AppState>, headers: HeaderMap, body: B
         return refuse("wrong_passphrase");
     }
 
-    // Launch the destroyer and only answer success if it actually started. A failure to even
-    // spawn it must not be hidden behind a 200. The child does the slow, irreversible work
-    // (quiesce, unmount, shred, then SIGTERM pid 1) — far longer than the audit line needs to
-    // reach the disk (quiesce stops only the vault-sync cron, not Caddy or this daemon).
+    // A valid retry while destruction is already running is idempotently accepted; it must not
+    // launch a second process that races the first over mounts, key files and the terminal marker.
+    if state
+        .destruct_started
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return (StatusCode::ACCEPTED, Json(json!({ "status": "scheduled" }))).into_response();
+    }
+
+    // Starting the worker is the most this request can confirm. The child performs the slow,
+    // irreversible phases and terminates PID 1, so a synchronous "destroyed" response would be
+    // false. A spawn failure re-opens the guard so the operator can retry.
     match state.destruct.trigger() {
         Ok(()) => {
             Metrics::inc(&state.metrics.destruct_triggered);
             state
                 .auditor
                 .record(audit(outcome::TRIGGERED, "right_passphrase"));
-            (StatusCode::OK, Json(json!({ "status": "destroyed" }))).into_response()
+            (StatusCode::ACCEPTED, Json(json!({ "status": "scheduled" }))).into_response()
         }
         Err(e) => {
+            state.destruct_started.store(false, Ordering::Release);
             eprintln!("remote destruct: {e}");
             Metrics::inc(&state.metrics.destruct_error);
             state.auditor.record(audit(outcome::ERROR, "launch_failed"));

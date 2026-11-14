@@ -1,4 +1,4 @@
-//! Sync key derivation + AEAD — must match packages/core/src/sync/client.ts byte-for-byte.
+//! Sync key derivation + AEAD shared by the Rust server, native client and browser WASM.
 //!
 //! PBKDF2-HMAC-SHA256 (password stretching) for the key; AES-256-GCM with a 12-byte nonce and the
 //! WebCrypto wire layout `ciphertext || tag`.
@@ -14,8 +14,8 @@ use super::protocol::{AES_KEY_LENGTH, SYNC_KDF_ITERATIONS, SYNC_KDF_SALT};
 ///
 /// The passphrase is the master password and these envelopes cross Cloudflare (a MITM boundary in
 /// the threat model), so it is PASSWORD-STRETCHED (600k iterations), not merely HKDF-expanded: a
-/// captured envelope cannot be brute-forced at raw-hash speed. Matches `deriveSyncKey` in
-/// packages/core/src/sync/client.ts; pinned byte-for-byte by sync-service/tests/parity.rs.
+/// captured envelope cannot be brute-forced at raw-hash speed. The frozen vectors in
+/// sync-service/tests/parity.rs pin the bytes produced by earlier releases.
 pub fn derive_key(passphrase: &str) -> [u8; AES_KEY_LENGTH] {
     let mut okm = [0u8; AES_KEY_LENGTH];
     pbkdf2_hmac::<Sha256>(

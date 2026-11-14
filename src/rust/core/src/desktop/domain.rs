@@ -154,7 +154,10 @@ mod tests {
             vec![DesktopTarget::Selkies]
         );
         // "none" is the headless profile: explicitly no stacks (NOT the legacy selkies fallback).
-        assert_eq!(parse_stack_marker(Some("none")), Vec::<DesktopTarget>::new());
+        assert_eq!(
+            parse_stack_marker(Some("none")),
+            Vec::<DesktopTarget>::new()
+        );
         assert_eq!(
             parse_stack_marker(Some("none\n")),
             Vec::<DesktopTarget>::new()

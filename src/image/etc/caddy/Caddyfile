@@ -90,11 +90,12 @@
 			reverse_proxy 127.0.0.1:8081
 		}
 		handle_path /sync/* {
-			# The sync page is ours: scripts only from itself, requests only to itself, and it
-			# cannot be framed (it holds the break-glass self-destruct form).
-			header Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+			# The sync page is Rust/WebAssembly. Only same-origin modules and Wasm compilation are
+			# allowed; there is no inline application script or third-party origin.
+			header Content-Security-Policy "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 			header X-Frame-Options DENY
-			root * /opt/workspace/packages/spa/dist
+			header Cache-Control "no-cache"
+			root * /opt/sdw-web
 			file_server
 		}
 

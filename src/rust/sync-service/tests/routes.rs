@@ -230,17 +230,16 @@ async fn destruct_fires_on_the_right_passphrase() {
     write(&h.state.key_hash_path, PASSPHRASE_HASH);
     let body = format!(r#"{{"passphrase":"{PASSPHRASE}"}}"#);
     let (status, body) = send(&h.state, post_json("/sync/api/destruct", &body)).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["status"], "destroyed");
-    // The trigger is launched synchronously before the response, so a failure to start it would
-    // have been a 500 (see destruct_reports_an_error_when_the_trigger_cannot_launch).
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(body["status"], "scheduled");
+    // The worker is launched before the 202 response; completion is deliberately not claimed.
     assert!(h.fired.load(Ordering::SeqCst), "the destruct trigger ran");
 }
 
 #[tokio::test]
 async fn destruct_reports_an_error_when_the_trigger_cannot_launch() {
-    // A right passphrase but the destroyer cannot be started: the route must NOT answer
-    // "destroyed". It reports 500 instead of hiding the failure behind an optimistic 200.
+    // A right passphrase but the destroyer cannot be started: the route must not answer
+    // "scheduled". It reports 500 and allows a later retry.
     struct Failing;
     impl DestructTrigger for Failing {
         fn trigger(&self) -> Result<(), String> {
@@ -409,8 +408,9 @@ async fn upload_chunk_then_finalize_lands_the_file() {
         hsh.update(plaintext);
         hex::encode(hsh.finalize())
     };
-    let meta =
-        format!(r#"{{"file_id":"fileABC","file_path":"out.txt","content_sha256":"{digest}"}}"#);
+    let meta = format!(
+        r#"{{"file_id":"fileABC","file_path":"out.txt","content_sha256":"{digest}","total_chunks":1}}"#
+    );
     let final_aad = build_aad("put-finalize", ts2, &["fileABC", "1"]);
     let req = upload_req(
         "put-finalize",
@@ -476,7 +476,7 @@ async fn finalize_without_a_checksum_is_rejected() {
 
     // Finalize WITHOUT content_sha256.
     let ts2 = ts1 + 1;
-    let meta = r#"{"file_id":"fileNoSum","file_path":"x.txt"}"#;
+    let meta = r#"{"file_id":"fileNoSum","file_path":"x.txt","total_chunks":1}"#;
     let final_aad = build_aad("put-finalize", ts2, &["fileNoSum", "1"]);
     let (status, out) = send(
         &h.state,
@@ -858,7 +858,7 @@ async fn destruct_attempts_are_audited_by_reason_and_a_fired_one_is_always_writt
     let (s, _) = send(&h.state, req("nope")).await;
     assert_eq!(s, StatusCode::NOT_FOUND);
     let (s, _) = send(&h.state, req(PASSPHRASE)).await;
-    assert_eq!(s, StatusCode::OK);
+    assert_eq!(s, StatusCode::ACCEPTED);
     assert!(h.fired.load(Ordering::SeqCst));
 
     let events = h.audit();

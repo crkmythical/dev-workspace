@@ -2,31 +2,36 @@
 # `FROM ${BASE_IMAGE}` (after the rust-builder stage) can still see it.
 ARG BASE_IMAGE=kalilinux/kali-rolling
 
-# --- Rust build stage: the sdw binary (CLI + entrypoint + daemons + sync API) -------------------
-# Compiled to a static musl binary so it drops into any base (glibc or not) with no runtime deps.
-# Pure-Rust crypto (no OpenSSL/ring), so musl-dev is all the toolchain it needs. --locked pins the
-# committed Cargo.lock. rust:1-alpine tracks the latest stable 1.x; CI can pin it tighter.
-# Digest-pinned for reproducible builds (bump the digest to move the toolchain). Tag: rust:1-alpine.
+# wasm-bindgen CLI must exactly match the crate selected in Cargo.lock. Build it in a cacheable
+# stage whose only project input is the lockfile; no second hand-maintained version pin exists.
+FROM rust:1-alpine@sha256:7e9e2d068a107a2adafd19930011178d14a78326053cd4c3a9f7ad3fd049557d AS wasm-bindgen-cli
+RUN apk add --no-cache build-base
+COPY rust/Cargo.lock /tmp/Cargo.lock
+RUN VERSION="$(awk '$0 == "name = \"wasm-bindgen\"" { found=1; next } found && /^version = / { gsub(/[\" ]/, "", $3); print $3; exit }' /tmp/Cargo.lock)" \
+    && test -n "$VERSION" \
+    && cargo install wasm-bindgen-cli --version "$VERSION" --locked
+
+# --- Rust build stage: Linux runtime + browser WebAssembly --------------------------------------
+# One toolchain builds both deliverables:
+#   * `sdw`, a static musl binary for the container runtime; and
+#   * `sdw-web`, the browser sync UI compiled to wasm32-unknown-unknown.
+# wasm-bindgen emits only the standards-required JavaScript loader (`--no-typescript`); all browser
+# behavior and the sync protocol live in Rust. Versions are locked by Cargo.lock, and the CLI is
+# pinned to the exact wasm-bindgen crate version so their wire formats cannot drift.
+# Digest-pinned builder image (bump the digest deliberately).
 FROM rust:1-alpine@sha256:7e9e2d068a107a2adafd19930011178d14a78326053cd4c3a9f7ad3fd049557d AS rust-builder
-RUN apk add --no-cache musl-dev
+RUN apk add --no-cache musl-dev \
+    && rustup target add wasm32-unknown-unknown
+COPY --from=wasm-bindgen-cli /usr/local/cargo/bin/wasm-bindgen /usr/local/cargo/bin/wasm-bindgen
 WORKDIR /build
 COPY rust/ ./rust/
-RUN cd rust && cargo build --release --locked \
-    && cp target/release/sdw /sdw
-
-# --- SPA build stage: the browser sync page (stays TypeScript) -----------------------------------
-# Built with Bun here, at BUILD TIME ONLY, so the runtime image carries no Bun. The compiled dist
-# is copied into the final image and served by the Rust sync-service.
-# Digest-pinned for reproducible builds. Tag: oven/bun:1.4.3.
-FROM oven/bun:1.4.3@sha256:ec06c3b6cea04192ae6770c434f668ca41d343ad19fa6472216c7b48be39c598 AS spa-builder
-WORKDIR /opt/workspace
-COPY package.json bunfig.toml bun.lock ./
-COPY packages/ ./packages/
-# Strict: the committed bun.lock governs what lands in the SPA bundle. The old
-# `|| bun install` fallback (with 2>/dev/null) silently re-resolved dependencies fresh on any
-# lockfile drift — defeating the lockfile. Fail loudly instead; CI pins the lockfile too.
-RUN bun install --frozen-lockfile
-RUN cd packages/spa && bunx vite build
+RUN cd rust \
+    && cargo build --release --locked -p sdw-cli \
+    && cp target/release/sdw /sdw \
+    && cargo build --profile wasm --locked -p sdw-web --target wasm32-unknown-unknown \
+    && wasm-bindgen target/wasm32-unknown-unknown/wasm/sdw_web.wasm \
+         --target web --no-typescript --out-dir /web-dist/pkg \
+    && cp -a web/static/. /web-dist/
 
 # --- Clash (mihomo): ONE pinned, verified download, shared by the workspace and the client -------
 # A static Go binary, so it runs on any base. image/tools/mihomo.env holds the version, URLs and
@@ -88,7 +93,7 @@ FROM ${BASE_IMAGE}
 #   selkies           — Selkies only (/desktop/): H.264/WebCodecs, a ~160 MB Python venv
 #   both              — Selkies + KasmVNC in parallel (published as the `-full` image)
 #   none              — headless: no desktop at all (code-server only; the lean phone/AVF profile)
-# Recorded in /etc/sdw-desktop-stack; read by desktop.ts SSOT at runtime.
+# Recorded in /etc/sdw-desktop-stack; parsed by the Rust desktop domain at runtime.
 ARG DESKTOP_STACK=kasmvnc
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -144,7 +149,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fuse3 \
     procps \
     psmisc \
-    socat \
     netcat-openbsd \
     unzip \
     git \
@@ -170,9 +174,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Bun is gone from the runtime image: the CLI, entrypoint and daemons are the Rust `sdw` binary
-# (installed below) and the SPA is pre-built in the spa-builder stage. Only the pinned third-party
-# binaries and the single `sdw` binary run here.
+# No JavaScript runtime is needed by the workspace application itself: the CLI, entrypoint,
+# daemons and browser UI are Rust (`sdw` + WebAssembly). Node remains installed only as a user
+# development runtime, not as part of this project's runtime or build chain.
 
 # Desktop layer — COMMON deps (both stacks): X server, XFCE, fonts, mesa, dbus.
 # XFCE is the session for BOTH stacks (selkies and kasmvnc). This eliminates the
@@ -317,22 +321,27 @@ RUN set -eux; \
 ENV MISE_DATA_DIR=/opt/mise
 ENV MISE_SYSTEM_DATA_DIR=/opt/mise
 
-# The language runtimes, at EXACT versions (image/.mise.toml holds the same pins): `node@20`, `latest`
-# and `zulu-17` float, so two builds a month apart could differ. mise checks each download itself.
+# Language runtimes are pinned once in image/.mise.toml. The install commands below name only the
+# tools, so changing a version never requires editing this Dockerfile too. mise verifies downloads.
 COPY image/.mise.toml /etc/mise/config.toml
 
 # Java layer — online download via mise. Trim, in-layer (so the layer actually shrinks), what a JDK
 # does not need to compile or run code: the source bundle for IDE navigation (src.zip), demos,
 # man pages, samples and license texts. jmods (needed only for `jlink` custom runtimes) is kept.
 # Then drop mise's download-archive cache — the runtime is already extracted under /opt/mise.
-RUN mise install java@zulu-17.70.113.0 && mise reshim \
+RUN MISE_HTTP_TIMEOUT=120 mise install java && mise reshim \
     && JH="$(mise where java)" \
     && rm -rf "$JH/lib/src.zip" "$JH/demo" "$JH/man" "$JH/sample" "$JH/legal" \
     && rm -rf /root/.cache/mise
 
-# Node + Python + pnpm — online download via mise. Drop mise's download cache in-layer (the runtimes
-# are already extracted under /opt/mise/installs; the cached archives are just download residue).
-RUN mise install node@20.20.2 python@3.12.16 pnpm@12.16.1 && mise reshim \
+# Node, Python and pnpm are independent cache/failure domains. One flaky upstream must not discard
+# another tool's successful 60 MB download and force all three to start again. The longer timeout
+# is local to each build step and does not enter the final runtime environment.
+RUN MISE_HTTP_TIMEOUT=120 mise install node && mise reshim \
+    && rm -rf /root/.cache/mise
+RUN MISE_HTTP_TIMEOUT=120 mise install python && mise reshim \
+    && rm -rf /root/.cache/mise
+RUN MISE_HTTP_TIMEOUT=120 mise install pnpm && mise reshim \
     && rm -rf /root/.cache/mise
 
 # One stable path for the JDK whatever its version: the install directory is named after it.
@@ -512,8 +521,9 @@ RUN find / -xdev -type f \( -perm -4000 -o -perm -2000 \) ! -path /usr/bin/doas 
 # The sync API daemon is part of the sdw binary now: supervisord runs `sdw sync-service`. It serves
 # /sync/api/* and reads SYNC_ENABLED / REMOTE_DESTRUCT_ENABLED from env.
 
-# The compiled SPA (built by the Bun spa-builder stage; the browser SPA stays TypeScript).
-COPY --from=spa-builder /opt/workspace/packages/spa/dist /opt/workspace/packages/spa/dist
+# The browser sync UI is Rust/WebAssembly. wasm-bindgen generated the loader in the build stage;
+# no TypeScript, Bun, Node, Vite or frontend package manager is part of the application build.
+COPY --from=rust-builder /web-dist /opt/sdw-web
 
 # No shell entrypoint: tini execs `sdw entrypoint` directly (it does the inert-mode check, the
 # required-env check and the whole boot). See ENTRYPOINT below.

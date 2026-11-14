@@ -28,10 +28,10 @@ tests/smoke/run.sh --image dev-workspace:latest --reuse --only '^50'   # 只重�
 | `docker-compose.smoke.yml` | 叠在仓库的 `docker-compose.yml` 上：换镜像、换 `env_file`、独立名字和端口、加假上游；补上 pentest 插件要的 `SYS_CHROOT` / `MKNOD` / `NET_RAW`（默认 compose 已不带它们） |
 | `smoke.env`, `*.env` | 实例的环境。`smoke.env` 里 **`EGRESS_ENFORCE=0`**：出口防火墙默认是开的，而除 `72` 外的检查都要直连辅助容器（sshd、MinIO、git 服务、假上游）；`72` 用 `enforce.env`（该变量留空 = 默认 = 开启，外加 `EGRESS_ALLOW_CIDRS`）另起实例 |
 | `fixtures/fake_upstream.py` | 假的 Clash 订阅 + 假的 HTTP 代理节点（把 CONNECT 转给真实互联网并记录），可选再列一个 Shadowsocks 节点 |
-| `fixtures/sync_e2e.ts` | 真实的同步协议客户端（core）对真实服务，在容器里跑 |
+| `rust/smoke-client` | 原生 Rust 协议客户端，复用浏览器 WASM 使用的 `sdw-core` request builders，对真实服务跑完整协议 |
 | `fixtures/stubs/` | `debootstrap`、`apt-get`、`curl` 的替身（两个几百 MB 的下载和 2 GB 的 rootfs），`45-plugins.sh` 用；`desktop-install` 的测试还通过 `SDW_TOOLS_DIR` 指向假的版本固定文件，真实的校验和校验照常运行 |
 | `fixtures/git_http_server.py` | 像 GitHub 那样要 token 的 git smart-HTTP 服务 |
-| `browser/` | Playwright + 系统 Chrome：同步页、紧急页、`/vnc/` 和 `/desktop/` 的画面与输入 |
+| `browser/` | Playwright + 系统 Chrome：Rust/WASM 同步页、紧急页、`/vnc/` 和 `/desktop/` 的画面与输入；Node 只驱动浏览器，不构建产品 |
 | `manual/` | 手动跑的验证脚本（Cloudflare 快速隧道、另一种 CPU 架构），见下 |
 
 | 检查 | 内容 |
@@ -40,11 +40,11 @@ tests/smoke/run.sh --image dev-workspace:latest --reuse --only '^50'   # 只重�
 | `15-clash` | 渲染出的 Clash 配置（0600、属主、模板属于镜像不在卷里）、控制器要求 secret、改 DNS 热加载且不轮换 secret、watcher 把被杀的 Clash 重新拉起 |
 | `20-auth` | 登录网关（无会话一律去登录页、cookie 属性、`next` 不能跳出本站）、响应头（CSP、HSTS、`Secure`）、WebSocket 的 Origin 校验、code-server / `/vnc/` **不再有第二个密码**、同步页、自毁端点对错误口令一律 404 |
 | `25-audit` | 审计日志（登录、限速、自毁调用；没有口令；0600）、Caddy / Clash 的运行用户与环境、`audit-log`、`doctor` 的审计行 |
-| `30-sync` | 同步协议全流程（分块、finalize、带认证的列表、重放 / 伪造 / 过期 / 路径穿越） |
+| `30-sync` | 原生 Rust client → Rust service 的协议全流程（分块、finalize、带认证的列表、重放 / 伪造 / 过期 / 路径穿越） |
 | `40-vault` | 磁盘上没有明文、被占用时 `lock-vault` 的行为（拒绝后恢复被停掉的服务）、干净锁定、错口令、强制锁定、重建容器后数据还在 |
 | `45-plugins` | `desktop-install`、pentest 插件（init / unlock / bootstrap 含 Kali 失败回退 / `pentest` 进入 / lock） |
 | `50-backup` | restic 监视器：基线、防抖、被排除的路径、恢复、仓库消失 3 次后写通知、恢复后清通知 |
-| `55-browser` | 真实 Chrome：同步页上传、紧急页、桌面画面和输入 |
+| `55-browser` | 真实 Chrome：Rust/WASM 同步页上传、会话内密钥、紧急页、桌面画面和输入 |
 | `60-replication` | `vault-sync` 按 cron 的方式跑（无容器环境变量）：推送、无变化不提交、远端不可用 3 次后写通知、恢复后补推 |
 | `65-secrets` | 文件型密钥：环境里没有口令和订阅 URL、用文件里的口令建 vault 并登录、读不了的文件让容器拒绝启动 |
 | `70-egress-variants` | 出口 degraded（订阅无节点，且**不退回直连**）、down（Clash 起不来 / 模板被破坏）、缺必填变量时拒绝启动 |
@@ -62,7 +62,7 @@ tests/smoke/run.sh --image dev-workspace:latest --reuse --only '^50'   # 只重�
 这些要么依赖本机的网络出口，要么太慢，所以不放进 `run.sh`。先 `tests/smoke/run.sh --image <镜像> --keep --only '^10'` 起一个保留的实例（容器名 `sdw-smoke-workspace`，端口 18090）。
 
 - `manual/tunnel.sh`：把这个一次性实例通过 Cloudflare 快速隧道（trycloudflare.com）暴露出去，经边缘测认证、WebSocket、自毁限流（伪造 `X-Forwarded-For` / `CF-Connecting-IP` 买不到额度），再让真实 Chrome 经 https 跑一遍浏览器检查。需要 `cloudflared`；`HOME` 指向临时目录，不会读你自己的 `~/.cloudflared`。
-- `manual/emulated.sh [linux/amd64]`：另一种 CPU 架构，经 qemu-user。从真实的 Dockerfile 里原样取出下载并校验的那几段（Bun + sha256、Caddy + sha512、restic、Clash），在目标平台上构建，装上仓库的包（冻结的 lockfile）并跑 core 和 cli 的单元测试。其余的 apt 和 mise 安装与架构无关，在模拟下要跑几个小时，不做。
+- `manual/emulated.sh [linux/amd64]`：另一种 CPU 架构，经 qemu-user。从真实 Dockerfile 取出固定下载与校验步骤，并运行 Rust/WASM 构建的架构子集。完整镜像在模拟下需数小时，不作为日常检查。
 - 真实的 `pentest-bootstrap`（`stubs/` 里的 `debootstrap` 只是替身）：`docker exec sdw-smoke-workspace init-pentest && docker exec sdw-smoke-workspace unlock-pentest && docker exec sdw-smoke-workspace pentest-bootstrap`。约 300 MB 下载，软件模拟下要 35 分钟。然后 `printf '%s\n' 'nmap --version' 'service tor start' 'exit' | docker exec -i sdw-smoke-workspace pentest`。官方 `http.kali.org` 重定向偶尔取不到 Release，这时会按设计回退到 Debian bookworm。tor 起不来多半是 vault 挂载缺 `allow_other`（见 `45-plugins`）。
 - 真实的 `desktop-install`：`docker exec sdw-smoke-workspace desktop-install chromium`（apt 经 Clash 联网），再 `docker exec -d -e DISPLAY=:2 -e HOME=/workspace/.desktop-vnc sdw-smoke-workspace chromium --no-sandbox`，在 `/vnc/` 里能看到窗口。
 
@@ -74,4 +74,4 @@ tests/smoke/run.sh --image dev-workspace:latest --reuse --only '^50'   # 只重�
 
 ## 加一个检查
 
-在 `checks/` 放一个 `NN-name.sh`：`source ../lib.sh`，用 `step` 分段，`expect_eq / expect_match / expect_true / expect_code`，最后调用 `finish`（它打印 `RESULT passed= failed= skipped=`，`run.sh` 靠这行汇总）。需要另起实例的检查用 `instance`（见 `70-egress-variants.sh`），每个实例用自己的网段，因为 Clash 用自己的 DNS，假上游必须有固定地址。文件名不要叫 `*.test.ts` / `*.spec.ts`，否则根目录的 `bun test` 会去执行它。
+在 `checks/` 放一个 `NN-name.sh`：`source ../lib.sh`，用 `step` 分段，使用 `expect_eq / expect_match / expect_true / expect_code`，最后调用 `finish`。需要另起实例时用 `instance`（见 `70-egress-variants.sh`）。业务协议探针放进 Cargo workspace，Shell 只编排进程和断言。

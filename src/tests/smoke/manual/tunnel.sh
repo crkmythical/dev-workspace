@@ -103,6 +103,6 @@ if [ -d "$HERE/../browser/node_modules/playwright-core" ] && command -v node >/d
   echo "browser checks through the tunnel:"
   (cd "$HERE/../browser" && SMOKE_BASE="$URL" SMOKE_PASSWORD="$PASS" SMOKE_STACK="${SMOKE_STACK:-kasmvnc}" node check.mjs) || failed=$((failed + 1))
 else
-  echo "(browser checks skipped: run 'bun install' in src/tests/smoke/browser, and have node)"
+  echo "(browser checks skipped: run 'npm ci' in src/tests/smoke/browser, and have node)"
 fi
 [ "$failed" -eq 0 ]

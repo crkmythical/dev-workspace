@@ -1,58 +1,44 @@
 # sync-service (Rust / Axum)
 
-The tunnel-exposed file-sync daemon, in Rust: part of the `sdw` multi-call binary, run as
-`sdw sync-service`. It speaks the wire protocol and HTTP contract the browser SPA expects and
-replaced an earlier TypeScript service (`packages/server`), which has since been removed.
+The loopback HTTP adapter for the unified auth gateway and encrypted browser upload protocol. It is
+linked into the `sdw` multi-call binary and run as `sdw sync-service`; Caddy is the only published
+listener and forwards `/auth/*` and `/sync/api/*` to `127.0.0.1:8081`.
 
-## What it serves
-
-Caddy serves the compiled SPA statically and reverse-proxies only `/sync/api/*` here (`:8081`).
+## Routes
 
 | Route | Behaviour |
-|-------|-----------|
-| `POST /sync/api/upload` | `put-chunk` / `put-finalize`, authenticated-then-stored, replay-protected |
-| `GET /sync/api/download` | authenticated directory listing only (no file content) |
-| `GET /sync/api/doctor` | `disabled` / `vault-locked` / `ready`; gated behind Caddy basic-auth |
-| `POST /sync/api/destruct` | remote self-destruct: feature-gated, rate-limited, bcrypt-verified |
+|---|---|
+| `GET/POST /auth/*` | Login, session verification and logout for the unified ingress gate |
+| `POST /sync/api/upload` | AEAD chunk/finalize, replay window, strict chunk ordering and atomic commit |
+| `GET /sync/api/download` | Key-authenticated metadata listing only; never returns file content |
+| `GET /sync/api/doctor` | `disabled`, `vault-locked` or `ready` |
+| `GET /sync/api/metrics` | Optional authenticated Prometheus counters |
+| `POST /sync/api/destruct` | Feature-gated, rate-limited trigger; `202 scheduled`, never a premature completion claim |
 
-`SYNC_ENABLED` and `REMOTE_DESTRUCT_ENABLED` gate the API and the destruct route; a feature that is
-off answers 404, indistinguishable from a route that is absent. Filesystem work runs on blocking
-threads (`spawn_blocking`).
+`SYNC_ENABLED`, `REMOTE_DESTRUCT_ENABLED` and `METRICS_ENABLED` default off. Filesystem work runs
+through `spawn_blocking`. Requests for one upload id share a sequencer that prevents concurrent
+append/finalize races and enforces chunk indices; different uploads remain concurrent.
 
-The destruct route keeps the irreversible step behind a trait. In production the trigger launches
-the `self-destruct` CLI (which shreds the keys, stops every service and SIGTERMs PID 1), so the
-destruction logic lives in one place; the route answers 500 if that launch fails, and tests use a
-fake trigger that never crosses the boundary.
+The service resolves its configuration before creating Tokio worker threads, then removes inherited
+container variables other than process/TLS/proxy plumbing. A remote-destruction worker reloads
+operator configuration from root-only PID 1. The process still runs as container root because the
+current upload path and destroy trigger cross root-owned vault/runtime boundaries; splitting it into
+an unprivileged HTTP process and a narrow privileged broker remains a hardening opportunity.
 
-## How the two copies are kept honest
+## One Rust protocol
 
-The browser SPA stays TypeScript (File System Access API + WebCrypto), so the shared wire logic
-exists twice. The seams:
+The browser (`sdw-web`) and native smoke probe (`sdw-smoke-client`) both construct requests with
+`sdw-core::sync::client`. This service consumes the matching Rust parser, crypto, constants and path
+rules. Frozen vectors in `testdata/` preserve compatibility with previously shipped envelopes;
+`tests/routes.rs` exercises the active HTTP contract, and full smoke runs native plus real-browser
+end-to-end paths.
 
-- **`tests/parity.rs`** checks the Rust side against a FROZEN golden-vector snapshot
-  (`testdata/wire-vectors.json`) of the original TS server: HKDF, AES-256-GCM, AAD framing, the PNG
-  body, the list authenticator, path validation. The generator was retired with `packages/server`,
-  so the vectors cannot be regenerated here; this guards the Rust side from regressing but does not
-  observe the live TS client.
-- **`tests/bcrypt_parity.rs`** pins that the `bcrypt` crate verifies hashes `Bun.password`
-  produced — the remote destruct depends on it.
-- **`tests/routes.rs`** drives the HTTP surface (gates, doctor shape, listing auth, a real
-  encrypted chunk+finalize through the store, and the whole destruct decision path).
-
-The authoritative end-to-end cross-language check is the smoke suite (`src/tests/smoke`,
-`make smoke`), which boots the image and drives the real browser SPA against this daemon. Unit
-parity alone cannot catch a change made only on the live TS side.
-
-## Run
+## Validate
 
 ```bash
-cargo test                 # parity + bcrypt + routes + units
+cargo test --workspace --locked
 cargo clippy --all-targets -- -D warnings
-cargo build --release
+cargo clippy -p sdw-web --target wasm32-unknown-unknown -- -D warnings
 ```
 
-## Shipped in the image
-
-`image/Dockerfile` builds the `sdw` binary in a musl `rust-builder` stage;
-`image/supervisord.conf` runs the daemon as `sdw sync-service`. Validated by the smoke suite
-(a real-browser upload into the vault and remote destruct). See `deploy/docs/rust-migration.md`.
+See `deploy/docs/rust-migration.md` for the full language boundary and build path.

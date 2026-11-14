@@ -23,23 +23,35 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [[ ! -f "$SCRIPT_DIR/docker-compose.yml" ]]; then
   echo "ERROR: Run this script from the dev-workspace project directory"; exit 1
 fi
+cd "$SCRIPT_DIR"
+
+RESTORE_DIR=""
+cleanup() {
+  if [[ -n "$RESTORE_DIR" && -d "$RESTORE_DIR" ]]; then
+    chmod -R u+w "$RESTORE_DIR" 2>/dev/null || true
+    rm -r "$RESTORE_DIR"
+  fi
+}
+trap cleanup EXIT
 
 # 4. Handle vault repo. Migration fetches the ciphertext now; it is put into the vault volume in
 # step 7, before the container first starts (a start with an empty volume would create a NEW vault).
 if [[ "$MODE" == "migrate" ]]; then
   [[ -z "$VAULT_REPO" ]] && read -rp "Vault repo URL: " VAULT_REPO
-  rm -rf vault-cipher
-  git clone "$VAULT_REPO" vault-cipher
+  mkdir -p "$SCRIPT_DIR/.poc-tmp"
+  RESTORE_DIR="$(mktemp -d "$SCRIPT_DIR/.poc-tmp/vault-import.XXXXXX")"
+  git clone "$VAULT_REPO" "$RESTORE_DIR"
 elif [[ "$MODE" == "init" ]]; then
-  echo "Fresh mode: run 'init-vault' after container starts"
+  echo "Fresh mode: the entrypoint will initialize and unlock the vault on first start"
 fi
 
 # 5. Create .env from example if not exists
 if [[ ! -f .env ]]; then
-  cp .env.example .env
-  echo "Created .env from .env.example — please edit with your values"
-  ${EDITOR:-nano} .env
+  install -m 600 .env.example .env
+  echo "Created private .env from .env.example — please edit with your values"
+  "${EDITOR:-vi}" .env
 fi
+chmod 600 .env
 
 # 6. Image acquisition
 # (stderr stays visible: with it hidden a failed build, e.g. a missing buildx plugin or an apt
@@ -64,7 +76,7 @@ bash deploy/scripts/setup-cloudflared.sh || true
 if [[ "$MODE" == "migrate" ]]; then
   echo "Restoring the vault ciphertext into the vault volume..."
   docker compose run --rm --no-deps --entrypoint bash \
-    -v "$SCRIPT_DIR/vault-cipher:/restore:ro" workspace -c '
+    -v "$RESTORE_DIR:/restore:ro" workspace -c '
       set -e
       if [ -e /vault/cipher/gocryptfs.conf ]; then
         echo "The vault volume already holds a vault; not overwriting it." >&2
@@ -75,7 +87,8 @@ if [[ "$MODE" == "migrate" ]]; then
       chmod 0700 /vault/cipher
       echo "Restored $(ls /vault/cipher | wc -l) entries."
     ' || { echo "ERROR: could not restore the vault; nothing was started." >&2; exit 1; }
-  rm -rf vault-cipher
+  cleanup
+  RESTORE_DIR=""
 fi
 
 # 8. Start
@@ -90,8 +103,4 @@ fi
 # 9. Instructions
 echo ""
 echo "=== Workspace started ==="
-if [[ "$MODE" == "init" ]]; then
-  echo "Run: docker exec -it dev-workspace init-vault"
-else
-  echo "Run: docker exec -it dev-workspace unlock-vault"
-fi
+echo "Run: docker compose exec workspace doctor"

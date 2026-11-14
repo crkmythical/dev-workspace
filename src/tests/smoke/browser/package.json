@@ -6,7 +6,7 @@
   "scripts": {
     "check": "node check.mjs"
   },
-  "dependencies": {
+  "devDependencies": {
     "playwright-core": "1.64.1"
   }
 }

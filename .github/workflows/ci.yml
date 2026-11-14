@@ -11,32 +11,6 @@ permissions:
   contents: read
 
 jobs:
-  lint-and-test:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: src
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          # The version the image's spa-builder stage and the smoke tests use (oven/bun:1.4.3).
-          bun-version: 1.4.3
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Lint & format check
-        run: bunx biome ci .
-
-      - name: Type check
-        run: bun run typecheck
-
-      - name: Run tests
-        run: bun test
-
   rust:
     runs-on: ubuntu-latest
     defaults:
@@ -52,11 +26,16 @@ jobs:
           # name (@stable), and a commit hash is not a toolchain.
           toolchain: stable
           components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
 
       - name: Cache
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: src/rust
+
+      - name: Rust-only product source
+        working-directory: ${{ github.workspace }}
+        run: test -z "$(git ls-files '*.ts' '*.tsx')"
 
       - name: Format check
         run: cargo fmt --all --check
@@ -64,12 +43,22 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 
+      - name: Browser WASM
+        run: |
+          cargo clippy -p sdw-web --target wasm32-unknown-unknown -- -D warnings
+          cargo build --profile wasm --locked -p sdw-web --target wasm32-unknown-unknown
+          VERSION="$(awk '$0 == "name = \"wasm-bindgen\"" { found=1; next } found && /^version = / { gsub(/[\" ]/, "", $3); print $3; exit }' Cargo.lock)"
+          test -n "$VERSION"
+          cargo install wasm-bindgen-cli --locked --version "$VERSION"
+          wasm-bindgen target/wasm32-unknown-unknown/wasm/sdw_web.wasm \
+            --target web --no-typescript --out-dir /tmp/sdw-web
+          test ! -e /tmp/sdw-web/sdw_web.d.ts
+
       - name: Test
         run: cargo test --workspace --locked
 
-  # Known vulnerabilities in the dependencies that end up in the image: the Rust crates (the policy,
-  # with a reason for every ignored advisory, is src/rust/.cargo/audit.toml) and the Bun packages
-  # (the SPA and its build tools). An advisory that appears after a merge fails the next run.
+  # Known vulnerabilities in every Rust dependency used by the native runtime, browser WASM and
+  # native smoke client. The policy, with a reason for each ignored advisory, is audit.toml.
   audit:
     runs-on: ubuntu-latest
     steps:
@@ -86,19 +75,6 @@ jobs:
       - name: cargo audit
         working-directory: src/rust
         run: cargo audit
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: 1.4.3
-
-      - name: Install dependencies
-        working-directory: src
-        run: bun install --frozen-lockfile
-
-      - name: bun audit
-        working-directory: src
-        run: bun audit --audit-level=high
 
   # Shell scripts (shellcheck is preinstalled on the runner) and the rule that no secrets file is
   # ever tracked: .env holds the master password, which is also the vault passphrase.

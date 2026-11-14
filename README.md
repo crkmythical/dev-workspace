@@ -2,6 +2,8 @@
 
 加密、云端就绪的开发环境，集成远程桌面、Code Server 和代理。
 
+项目业务代码采用 **Rust-first**：Linux 运行时、CLI、守护进程、鉴权/同步服务、协议实现和浏览器界面均为 Rust；浏览器界面编译为 WebAssembly。仓库不再维护 TypeScript，也不再使用 Bun/Vite/前端包管理器构建产品。Shell 只承担宿主安装、容器编排和系统级 smoke 驱动；真实浏览器 smoke 保留一小段 Playwright JavaScript 适配器。
+
 > 详细中文上手指南见 [`deploy/docs/QUICKSTART.md`](deploy/docs/QUICKSTART.md)；架构与运维见 [`deploy/docs/`](deploy/docs/)。
 
 ## 快速开始
@@ -69,7 +71,7 @@ export DOCKER_CONTEXT=colima-dev-workspace
 
 ```bash
 KALI_MIRROR=mirrors.aliyun.com        # 官方重定向 http.kali.org 在这里只有约 14 KB/s；TUNA 的 Kali 镜像回 403
-BUILD_PROXY=http://192.168.5.2:1080   # 可选。构建步骤（curl / cargo / bun / mise / apt）走它，不写进镜像或其历史
+BUILD_PROXY=http://192.168.5.2:1080   # 可选。构建步骤（curl / cargo / wasm-bindgen / mise / apt）走它，不写进镜像或其历史
 COMPOSE_FILE=docker-compose.yml:docker-compose.apparmor.yml   # Colima 的 VM 是 Ubuntu + AppArmor，否则 vault 挂载被拒
 ```
 
@@ -82,7 +84,7 @@ make smoke     # 对刚构建的镜像（默认 dev-workspace:$WORKSPACE_VARIANT
 |------|------------|
 | `falling back to the classic builder` | 没装 buildx，见上 |
 | 核心 apt 层 `exit code: 100` | 官方 Kali 重定向挑到了坏镜像：设 `KALI_MIRROR=mirrors.aliyun.com`（已验证整层 198 个包 170 MB 一次装完） |
-| `pull access denied` / 拉 `rust`、`oven/bun`、`kali-rolling` 超时 | 拉镜像是 Docker 守护进程做的，`BUILD_PROXY` 管不到：用 `--proxy` 重新跑上面的脚本 |
+| `pull access denied` / 拉 `rust`、`kali-rolling` 超时 | 拉镜像是 Docker 守护进程做的，`BUILD_PROXY` 管不到：用 `--proxy` 重新跑上面的脚本 |
 | GitHub release 下载偶发失败 | 下载已带 `--retry 5 --retry-all-errors`；仍失败就设 `BUILD_PROXY` |
 | `mount failed: Permission denied`（vault 一直锁着） | 没加 AppArmor 覆盖文件，见上 `COMPOSE_FILE` |
 
@@ -160,7 +162,7 @@ docker compose up -d
 docker build -t dev-workspace:trixie -f src/image/Dockerfile --build-arg BASE_IMAGE=debian:trixie-slim ./src
 ```
 
-两个镜像除 OS 标识外工具链完全一致（Node、Python、Java、Selkies、KasmVNC 等；Bun 仅在构建时用于编译同步页，运行镜像里没有）。
+两个镜像除 OS 标识外工具链完全一致。项目自身的运行时、协议和浏览器同步页均为 Rust；同步页在构建阶段编译为 WebAssembly。Node、Python 和 Java 只是预装给用户的开发工具，不参与本项目运行。
 
 ## 容器内命令
 
@@ -179,7 +181,7 @@ audit-log [--json] [N] # 最近 N 条审计事件（默认 20）：登录成功/
                     # 被拒的跨站 WebSocket、自毁接口的每次调用、出口状态变化。每行：时间、事件、结果、声明的来源地址 / User-Agent
 ```
 
-以上在 code-server 终端里直接敲就行：以 `dev` 运行的会话里，需要 root 的几个（`doctor`、`lock-vault`、`unlock-vault`、`desktop-*`、`set-clash-dns`、`setup`、`push`/`pull`、`audit-log`、pentest 系列、`init-*`）由 `doas` 桥接，桥接名单是生成的（`sdw doas-rules`）。下面三个**只能由运营者在宿主上 `docker exec` 运行**，`dev` 运行会被拒绝并提示：
+以上命令通过 `docker exec` 运行时是运营者操作。code-server/桌面的 `dev` 会话只保留一个很窄的无密码桥接：`doctor`、`lock-vault`、`unlock-vault`、`desktop-start` 和 `desktop-stop`。接受任意路径、安装软件、进入 pentest rootfs、读取审计日志或修改代理配置的命令（`push`/`pull`、`setup`、`set-clash-dns`、`desktop-install`、pentest 系列、`audit-log`、`init-*` 等）必须由宿主执行 `docker exec -u root dev-workspace <命令>`；这样任意依赖或扩展不能借便利命令获得 root 文件访问或网络控制。`self-destruct`、`destruct-passphrase`、`backup-init` 同样仅限运营者。
 
 ```bash
 docker exec -it dev-workspace self-destruct --force   # 自毁，见 runbook
@@ -214,7 +216,7 @@ docker exec -it dev-workspace backup-init             # 初始化 restic 仓库�
 
 ## 工作区用户（`dev`）
 
-你在 code-server 终端和桌面里运行的一切（包括包的安装脚本）都是 `dev`（uid 1000）：家目录 `/workspace/home`（在 vault 里，所以 shell 历史、工具缓存加密落盘、锁定即消失）；环境变量是白名单，**没有**工作区的任何密钥；没有 capability，也没有除 `doas` 外的 setuid 程序。网关、备份、同步、supervisord 是 root，Caddy 是 `caddy`，Clash 是 `clash`。要让工具看到某个 `.env` 变量，把名字写进 `WORKLOAD_ENV=GITHUB_TOKEN,NPM_TOKEN`；密钥类变量（`PASSWORD`、`RESTIC_*`、`AWS_*`、`CLASH_SUBSCRIPTION_URL`……）会被拒绝并警告。预装的运行时（Node 20、JDK 17 等）在只读的 `/opt/mise`，`dev` 用 `mise` 把自己的版本装进家目录。
+你在 code-server 终端和桌面里运行的一切（包括包的安装脚本）都是 `dev`（uid 1000）：家目录 `/workspace/home`（在 vault 里，所以 shell 历史、工具缓存加密落盘、锁定即消失）；环境变量是白名单，**没有**工作区的任何密钥；没有 capability，也没有除 `doas` 外的 setuid 程序。网关、备份、同步、supervisord 是 root，Caddy 是 `caddy`，Clash 是 `clash`。要让工具看到某个 `.env` 变量，把名字写进 `WORKLOAD_ENV=GITHUB_TOKEN,NPM_TOKEN`；密钥类变量（`PASSWORD`、`RESTIC_*`、`AWS_*`、`CLASH_SUBSCRIPTION_URL`……）会被拒绝并警告。预装的运行时（Node 26 LTS、JDK 17 等）在只读的 `/opt/mise`，`dev` 用 `mise` 把自己的版本装进家目录。
 
 局限：桥接给 root 的命令名单虽短，其中任何一个命令的漏洞都是提权的路；容器里的 root 仍是带 `CAP_SYS_ADMIN` 的容器 root。完整的边界、做了什么、没做什么见 `deploy/docs/threat-model.md`。
 
@@ -277,7 +279,7 @@ launchctl unload ~/Library/LaunchAgents/com.cloudflare.tunnel.plist
 
 ## 验证（smoke test）
 
-单元测试（`bun test`）不启动镜像。`src/tests/smoke/` 把真镜像和一个假上游一起起来，从外面检查启动、认证、vault、备份与复制、出口降级、自毁，加上 `--services` 时对真实的 S3 端点、sshd、git HTTP、Shadowsocks 节点，以及用真实 Chrome 看同步页和桌面画面。它有自己的 compose 项目、端口和网络，不读 `.env`，可以放心在已有真实工作区的机器上跑：
+单元测试（`cargo test --workspace --locked`）不启动镜像。`src/tests/smoke/` 把真镜像和一个假上游一起起来，从外面检查启动、认证、vault、备份与复制、出口降级、自毁，加上 `--services` 时对真实的 S3 端点、sshd、git HTTP、Shadowsocks 节点，以及用真实 Chrome 看 Rust/WASM 同步页和桌面画面。它有自己的 compose 项目、端口和网络，不读 `.env`，可以放心在已有真实工作区的机器上跑：
 
 ```bash
 make smoke                                # 测刚用 `make build` 构建的镜像（dev-workspace:$WORKSPACE_VARIANT，取自 .env）
@@ -292,7 +294,7 @@ make smoke-build                          # 先按生产基础（Kali）另外�
 | 命令 | 作用 |
 |------|------|
 | `make check-tools` / `make update-tools` | 镜像里下载的第三方工具（`src/image/tools/*.env`）是否落后于各自项目的最新版 / 移到最新版并写入新的校验和（改动像依赖升级一样审阅）。CI 每周跑一次检查 |
-| `make audit` | Rust 与 Bun 依赖的已知漏洞（`src/rust/.cargo/audit.toml` 里每条被忽略的公告都写明了理由） |
+| `make audit` | Cargo workspace 全部 Rust 依赖（原生运行时、WASM 和 smoke client）的已知漏洞；忽略项及理由在 `src/rust/.cargo/audit.toml` |
 | `make lint-sh` | 全部 shell 脚本过一遍 shellcheck |
 | `make install-hooks` | 每个 clone 做一次：提交前拒绝带进密钥文件，或带进 `.env` 里出现过的值 |
 | `make secrets-init` | 把 PASSWORD 和订阅地址从 `.env` 写成 `secrets/*`（0600），配合 `docker-compose.secrets.yml` |
@@ -339,7 +341,7 @@ docker pull <username>/dev-workspace:latest
 
 
 
-已验证：Apple Silicon Mac 上的 Colima（vz，真机）从零构建，并跑完整套 smoke。默认镜像（KasmVNC）`run.sh --services` **553 通过 / 0 失败 / 0 跳过**（2026-11-04）；`-full` 镜像（Selkies 2.2.0 + KasmVNC）的 Selkies 相关子集（启动、认证、真 Chrome 的桌面画面、权限分离、vault 锁定）也全过。详见 `deploy/docs/TODO.md`。
+已验证：2026-11-15 在 Apple Silicon + Colima 上从当前 Dockerfile 构建 `dev-workspace:rust-wasm-review`，Rust/WASM 真 Chrome、权限、vault、自毁及全部 services 均通过。完整 `--services` 首轮为 **563 通过 / 2 个过期文案断言失败**；断言改为匹配下载器当前的 `verified from` / `sha256 mismatch` 后，`45-plugins` 整组 **76/0** 重跑通过，因此 565 个实际检查均已有通过记录。`-full` 的 Selkies 路径本轮未重建，最近一次结果仍见 `deploy/docs/TODO.md`。
 
 当前没验证的：
 ```yml

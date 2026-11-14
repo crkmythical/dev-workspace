@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Sync — Secure Dev Workspace</title>
+  <link rel="stylesheet" href="./app.css">
+</head>
+<body>
+  <main id="sync-panel">
+    <h1>Sync</h1>
+    <div class="status"><span id="status-dot" class="dot warn"></span><span id="status-text">Initializing…</span></div>
+    <section class="controls">
+      <label class="passphrase"><span>Vault passphrase</span><input id="passphrase" type="password" autocomplete="current-password"></label>
+      <div class="buttons">
+        <button id="set-passphrase" type="button">Set passphrase</button>
+        <button id="choose-folder" type="button">Choose folder</button>
+        <button id="clear-key" type="button">Clear key</button>
+        <button id="diagnostics" type="button">Diagnostics</button>
+      </div>
+      <p id="folder-label" class="muted">No folder selected</p>
+      <p class="notice">The key is kept only in this tab. Reloading or closing the tab clears it.</p>
+    </section>
+    <h2>Activity</h2>
+    <div id="activity" aria-live="polite"></div>
+  </main>
+
+  <main id="emergency-panel" hidden>
+    <section class="emergency">
+      <h1>⚠ Emergency destruct</h1>
+      <p>This starts irreversible workspace destruction.</p>
+      <input id="ep-pass" type="password" placeholder="Destruction passphrase" autocomplete="off">
+      <input id="ep-confirm" type="text" placeholder='Type "DESTROY" to confirm' autocomplete="off">
+      <button id="ep-btn" type="button" disabled>Execute</button>
+      <div id="ep-status" aria-live="assertive"></div>
+    </section>
+  </main>
+
+  <script type="module" src="./bootstrap.js"></script>
+</body>
+</html>

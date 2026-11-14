@@ -5,7 +5,9 @@
 //! TS server). Paths and the destruct trigger are injected through `AppConfig` so
 //! the whole surface runs against a temp dir with a fake trigger in tests.
 
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::collections::HashMap;
+use std::os::unix::fs::MetadataExt;
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use sdw_core::sync::crypto::derive_key;
@@ -143,6 +145,54 @@ fn is_on(value: Option<&str>) -> bool {
     )
 }
 
+const MAX_TRACKED_UPLOADS: usize = 2_048;
+const UPLOAD_SESSION_STALE_MS: i64 = 6 * 60 * 60 * 1_000;
+
+/// Per-file upload sequencing. Requests for different file ids remain concurrent; requests for the
+/// same id are serialized so append-size checks, chunk order, checksum and rename form one logical
+/// transaction.
+#[derive(Default)]
+pub struct UploadSession {
+    pub next_chunk: u64,
+    pub finalized: bool,
+    pub last_seen_ms: i64,
+}
+
+pub(crate) type UploadLock = Arc<tokio::sync::Mutex<UploadSession>>;
+type UploadMap = Arc<tokio::sync::Mutex<HashMap<String, UploadLock>>>;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct KeyStamp {
+    device: u64,
+    inode: u64,
+    size: u64,
+    modified_seconds: i64,
+    modified_nanoseconds: i64,
+}
+
+impl From<&std::fs::Metadata> for KeyStamp {
+    fn from(metadata: &std::fs::Metadata) -> Self {
+        Self {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            size: metadata.size(),
+            modified_seconds: metadata.mtime(),
+            modified_nanoseconds: metadata.mtime_nsec(),
+        }
+    }
+}
+
+struct CachedSyncKey {
+    stamp: KeyStamp,
+    key: [u8; 32],
+}
+
+impl Drop for CachedSyncKey {
+    fn drop(&mut self) {
+        self.key.fill(0);
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub replay: Arc<Mutex<ReplayWindow>>,
@@ -152,6 +202,8 @@ pub struct AppState {
     pub passphrase_path: Arc<str>,
     pub key_hash_path: Arc<str>,
     pub destruct: Arc<dyn DestructTrigger>,
+    /// Idempotence guard: only one irreversible destroy process may be launched at a time.
+    pub destruct_started: Arc<AtomicBool>,
     pub auth: AuthState,
     /// Throttle for `POST /auth/login` (separate from the self-destruct limiter).
     pub login_limiter: Arc<Mutex<RateLimiter>>,
@@ -159,7 +211,8 @@ pub struct AppState {
     pub metrics: Arc<Metrics>,
     /// `GET /sync/api/metrics` answers only when METRICS_ENABLED is on (else 404).
     pub metrics_enabled: bool,
-    key: Arc<Mutex<Option<[u8; 32]>>>,
+    key: Arc<Mutex<Option<CachedSyncKey>>>,
+    uploads: UploadMap,
 }
 
 /// Everything the service needs from the outside world.
@@ -210,6 +263,7 @@ impl AppState {
             passphrase_path: cfg.passphrase_path.into(),
             key_hash_path: cfg.key_hash_path.into(),
             destruct: cfg.destruct,
+            destruct_started: Arc::new(AtomicBool::new(false)),
             auth: cfg.auth,
             login_limiter: Arc::new(Mutex::new(RateLimiter::new(RateLimitConfig {
                 window_ms: LOGIN_RATE_LIMIT_WINDOW_MS,
@@ -220,24 +274,63 @@ impl AppState {
             metrics: Arc::new(Metrics::default()),
             metrics_enabled: cfg.metrics_enabled,
             key: Arc::new(Mutex::new(None)),
+            uploads: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         }
     }
 
-    /// Resolve the AEAD key, honouring vault lock state. A missing passphrase file
-    /// drops any cached key and returns None (vault locked).
-    pub fn sync_key(&self) -> Option<[u8; 32]> {
-        if !std::path::Path::new(&*self.passphrase_path).exists() {
-            *self.key.lock().unwrap() = None;
+    /// Return the sequencer for one upload id. The registry is bounded; completed and stale idle
+    /// entries are discarded before admitting more, so an authenticated client cannot grow server
+    /// memory without limit by minting ids and abandoning them.
+    pub(crate) async fn upload_session(&self, id: &str, now_ms: i64) -> Option<UploadLock> {
+        let mut uploads = self.uploads.lock().await;
+        if let Some(session) = uploads.get(id) {
+            return Some(session.clone());
+        }
+        if uploads.len() >= MAX_TRACKED_UPLOADS {
+            uploads.retain(|_, session| {
+                session.try_lock().map_or(true, |state| {
+                    !state.finalized
+                        && now_ms.saturating_sub(state.last_seen_ms) < UPLOAD_SESSION_STALE_MS
+                })
+            });
+        }
+        if uploads.len() >= MAX_TRACKED_UPLOADS {
             return None;
         }
+        let session = Arc::new(tokio::sync::Mutex::new(UploadSession {
+            last_seen_ms: now_ms,
+            ..UploadSession::default()
+        }));
+        uploads.insert(id.to_string(), session.clone());
+        Some(session)
+    }
+
+    /// Resolve the AEAD key while honouring lock and password-rotation state. The passphrase file
+    /// is atomically replaced on unlock; device/inode/mtime/size therefore form a cheap cache key.
+    /// A missing or unreadable file immediately drops and zeroes the cached key.
+    pub fn sync_key(&self) -> Option<[u8; 32]> {
+        let metadata = match std::fs::metadata(&*self.passphrase_path) {
+            Ok(metadata) => metadata,
+            Err(_) => {
+                *self.key.lock().unwrap() = None;
+                return None;
+            }
+        };
+        let stamp = KeyStamp::from(&metadata);
         let mut guard = self.key.lock().unwrap();
-        if let Some(k) = *guard {
-            return Some(k);
+        if let Some(cached) = guard.as_ref().filter(|cached| cached.stamp == stamp) {
+            return Some(cached.key);
         }
-        let pass = std::fs::read_to_string(&*self.passphrase_path).ok()?;
-        let k = derive_key(pass.trim());
-        *guard = Some(k);
-        Some(k)
+        let pass = match std::fs::read_to_string(&*self.passphrase_path) {
+            Ok(pass) => pass,
+            Err(_) => {
+                *guard = None;
+                return None;
+            }
+        };
+        let key = derive_key(pass.trim());
+        *guard = Some(CachedSyncKey { stamp, key });
+        Some(key)
     }
 
     /// Whether the sync key file is present right now (what `doctor` reports).

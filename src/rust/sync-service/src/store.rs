@@ -155,9 +155,9 @@ pub enum FinalizeOutcome {
     NoChunks,
 }
 
-/// Verify the staged upload's whole-file checksum and commit it, all in ONE call so no concurrent
-/// append can slip between the hash and the rename (the former hash-then-commit sequence had that
-/// TOCTOU). A mismatch discards the staged file; a missing staged file is NoChunks, not an error.
+/// Verify the staged upload's whole-file checksum and commit it. The route holds the per-upload
+/// sequencer across this call, so an append for the same id cannot race the hash and rename. A
+/// mismatch discards the staged file; a missing staged file is NoChunks, not an error.
 pub fn finalize_verified(
     dirs: &Dirs,
     id: &str,

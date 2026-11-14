@@ -279,6 +279,12 @@ fn run_phase(
             Ok(None)
         }
         "mark-complete" => {
+            if !*keys_destroyed {
+                return Err(
+                    "key erasure was not confirmed; refusing to write the terminal marker"
+                        .to_string(),
+                );
+            }
             log(label_of("mark-complete"));
             deps.effects.clear_shell_history()?;
             deps.effects.write_completion_marker(&(deps.now)())?;
@@ -1310,14 +1316,23 @@ mod tests {
             .borrow()
             .iter()
             .any(|l| l.contains("KEY ERASURE FAILED")));
-        // best effort: later phases still ran, down to the completion marker
+        // Best effort: non-terminal cleanup still runs, but an unconfirmed key erasure must never
+        // create the marker that makes the container inert and tells the host watcher to delete it.
         assert!(calls
             .borrow()
             .iter()
             .any(|c| c == "effects.shredTree:/c/ws"));
+        assert!(!calls
+            .borrow()
+            .iter()
+            .any(|c| c.starts_with("effects.marker:")));
         assert_eq!(
-            calls.borrow().last().map(String::as_str),
-            Some("effects.marker:2026-01-01T00:00:00.000Z")
+            report
+                .phases
+                .iter()
+                .find(|p| p.phase == "mark-complete")
+                .map(|p| p.ok),
+            Some(false)
         );
     }
 

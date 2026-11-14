@@ -1,13 +1,8 @@
-//! Pure domain logic and use cases — a Rust port of packages/core.
+//! Pure domain rules, use cases, crypto and cross-adapter protocol construction.
 //!
-//! No I/O. Most of it depends only on serde (for the persisted forms the TS side builds with
-//! JSON); `sync::{crypto,wire,aad,replay,path_safety,rate_limit}` add the sync AEAD primitives
-//! (RustCrypto: aes-gcm/pbkdf2/sha2/hex), which are likewise pure computation — the TS core held
-//! the same crypto. Every rule is unit-testable on its own. The Rust sync wire format is pinned to
-//! a frozen golden-vector snapshot of the original TS server (sync-service/tests/parity.rs); the
-//! live browser client is TS, so the authoritative cross-language check is the end-to-end smoke
-//! suite, not a shared unit test (see deploy/docs/rust-migration.md). The infra/cli crates provide
-//! the adapters; the sync-service crate consumes these primitives over the wire.
+//! This crate performs no I/O. Native CLI/infra, Axum sync service, browser WebAssembly and the
+//! native smoke probe all depend inward on these rules, so the project has no second-language
+//! protocol implementation. The infra and driving adapter crates own external effects.
 
 pub mod audit;
 pub mod auth;

@@ -1,4 +1,4 @@
-//! Where the sync service lives and keeps its files — a port of packages/core/src/sync/layout.ts.
+//! Filesystem layout of the Rust sync service and clients.
 //! The sync-service crate consumes these directly (see its state.rs/main.rs). Paths deriving from
 //! WORKSPACE_MOUNT/CREDENTIALS_DIR are literals (see crate::shared::layout).
 

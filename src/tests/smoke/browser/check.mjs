@@ -37,9 +37,12 @@ const check = (name, ok, detail) => (ok ? pass(name) : fail(name, detail));
 // types the master password on the login page; the session cookie then rides every request of the
 // context, WebSocket upgrades included. Posting the form from the context's own request API stores
 // that cookie in the browser context exactly as the login page would.
+let loginSequence = 0;
 async function gateLogin(context) {
+  loginSequence++;
   const res = await context.request.post(`${base}/auth/login`, {
     form: { password, next: "/" },
+    headers: { "cf-connecting-ip": `198.51.100.${200 + loginSequence}` },
     maxRedirects: 0,
   });
   if (res.status() !== 303) throw new Error(`gate login failed: HTTP ${res.status()}`);
@@ -47,6 +50,10 @@ async function gateLogin(context) {
 const step = (title) => console.log(`\n== ${title}`);
 
 if (!executablePath) {
+  if (process.env.SMOKE_REQUIRE_BROWSER === "1") {
+    fail("no Chrome or Chromium found for the release browser gate");
+    process.exit(1);
+  }
   skip("no Chrome or Chromium found (set CHROME_PATH)");
   process.exit(0);
 }
@@ -148,22 +155,25 @@ await section("sync page: a real browser uploads a file", async () => {
   await page.addInitScript(() => {
     window.showDirectoryPicker = async () => navigator.storage.getDirectory();
   });
-  page.on("dialog", (dialog) => dialog.accept(password));
-  const logText = () => page.locator("#log").innerText();
+  const logText = () => page.locator("#activity").innerText();
 
   await page.goto(`${base}/sync/`);
   await page
-    .locator("#st")
-    .filter({ hasText: "Set passphrase to start" })
+    .locator("#status-text")
+    .filter({ hasText: "Set passphrase and choose a folder" })
     .waitFor({ timeout: 15000 });
-  pass("the page loads and asks for the passphrase");
+  pass("the Rust/WASM page loads and asks for its inputs");
 
+  await page.locator("#passphrase").fill(password);
   await page.getByRole("button", { name: "Set passphrase" }).click();
-  await page.locator("#log").filter({ hasText: "Key set" }).waitFor({ timeout: 10000 });
-  pass("the key is derived in the browser (WebCrypto, secure context)");
+  await page
+    .locator("#activity")
+    .filter({ hasText: "Key verified and set for this tab" })
+    .waitFor({ timeout: 15000 });
+  pass("the sync key is derived and verified by Rust/WASM");
 
   await page.getByRole("button", { name: "Choose folder" }).click();
-  await page.locator("#log").filter({ hasText: "Folder selected" }).waitFor({ timeout: 10000 });
+  await page.locator("#activity").filter({ hasText: "Folder selected" }).waitFor({ timeout: 10000 });
   await page.evaluate(async () => {
     const root = await navigator.storage.getDirectory();
     const handle = await root.getFileHandle("browser-upload.txt", { create: true });
@@ -173,7 +183,7 @@ await section("sync page: a real browser uploads a file", async () => {
   });
   try {
     await page
-      .locator("#log")
+      .locator("#activity")
       .filter({ hasText: "↑ browser-upload.txt" })
       .waitFor({ timeout: 30000 });
     pass("the file is noticed, sealed and uploaded without a click");
@@ -183,12 +193,11 @@ await section("sync page: a real browser uploads a file", async () => {
   check("the page did not report an error", !/Error|✗/.test(await logText()), await logText());
 
   await page.reload();
-  try {
-    await page.locator("#log").filter({ hasText: "Key restored" }).waitFor({ timeout: 15000 });
-    pass("after a reload the key comes back from IndexedDB");
-  } catch {
-    fail("after a reload the key comes back from IndexedDB", await logText());
-  }
+  await page
+    .locator("#status-text")
+    .filter({ hasText: "Set passphrase and choose a folder" })
+    .waitFor({ timeout: 15000 });
+  check("a reload clears the session-only key", await page.locator("#passphrase").inputValue() === "");
   await context.close();
 });
 
@@ -221,8 +230,10 @@ await section("emergency page: a wrong passphrase gets nowhere", async () => {
     );
   }
   check(
-    "the inputs stay locked afterwards (no repeated triggers)",
-    await page.locator("#ep-pass").isDisabled(),
+    "a rejected attempt clears the secret and allows a corrected retry",
+    !(await page.locator("#ep-pass").isDisabled()) &&
+      (await page.locator("#ep-pass").inputValue()) === "" &&
+      (await button.isDisabled()),
   );
   await context.close();
 });

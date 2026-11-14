@@ -3,39 +3,27 @@
 ## Structure
 
 Two top-level directories: `src/` holds everything that builds into the image (the Rust
-workspace, the browser TypeScript, the `image/` recipe, the `tests/`); `deploy/` holds host-side
-operation (setup/teardown scripts, systemd units, the standalone proxy `client/`, these `docs/`).
-The runtime is Rust; the only TypeScript left is the browser upload page.
+workspace, image recipe and smoke tests); `deploy/` holds host-side operation. All maintained
+product logic is Rust. The browser page is compiled from Rust to WebAssembly; the only JavaScript
+shipped with it is wasm-bindgen's generated loader.
 
 ```
-src/rust/                 The runtime — a Cargo workspace, hexagonal
-├── core/   (sdw-core)    Pure rules + use cases, one folder per bounded context, no I/O:
-│                         shared/ vault/ sync/ backup/ desktop/ egress/ workspace/ plugins/ transfer/
-├── infra/  (sdw-infra)   Adapters for core's ports: gocryptfs, supervisorctl, Clash, restic,
-│                         replication (git), notifications, shred, caddy, destruct-key, time, ...
-├── cli/    (sdw, bin)    The multi-call binary: every container command + the `entrypoint` and the
-│                         `backup-watcher` / `vault-sync` daemons. `sdw install` symlinks each command.
-└── sync-service (lib)    The Axum sync API (/sync/api/*: upload / list / doctor / destruct); a
-                          library folded into `sdw` and run as `sdw sync-service` (one binary).
+src/rust/                 Cargo workspace, hexagonal runtime plus browser client
+├── core/   (sdw-core)    Pure rules, use cases and the shared sync wire builders; no I/O
+├── infra/  (sdw-infra)   Adapters: gocryptfs, supervisorctl, Clash, restic, git, audit, shred, ...
+├── cli/    (sdw, bin)    Multi-call Linux binary: commands, entrypoint and daemons
+├── sync-service (lib)    Axum ingress/auth/sync API, linked into `sdw`
+├── web/    (sdw-web)     Rust browser UI compiled to WebAssembly with wasm-bindgen
+└── smoke-client          Native Rust end-to-end sync protocol probe
 
-src/packages/             The only TypeScript — the browser upload page
-├── core/   (@sdw/core)   The sync CLIENT the browser needs: sync/{aad,client,envelope,protocol}
-│                         (WebCrypto; also run by the host smoke fixture).
-└── spa/    (@sdw/spa)    The browser UPLOAD page: a one-way encrypted push of a chosen local
-                          folder into the vault (File System Access API + WebCrypto). NOT a
-                          two-way sync — no download, delete or conflict handling. Vite-built,
-                          served by Caddy under /sync/ (plus a /sync/#emergency destruct panel).
+src/image/                Multi-stage image recipe and runtime configuration
+src/tests/                Shell-driven system smoke tests plus a small Playwright JS browser driver
 ```
 
-Hexagonal, unchanged by the Rust port: `core` holds the rules and use cases and depends on no
-other crate; `infra` implements core's ports; `cli` and `sync-service` are the driving adapters.
-Inside core the dependency points inward: `domain` <- `ports` <- `usecases`. Every core module
-has mirrored tests, and `src/rust/sync-service/tests/parity.rs` pins the wire protocol to golden
-vectors. The retired TS runtime (`src/packages/{server,cli,infra}` + the reimplemented core domain)
-was replaced binary-for-binary; see deploy/docs/rust-migration.md.
-
-`src/tests/architecture.test.ts` still guards the surviving TypeScript: core is a leaf, the SPA
-depends only on core, and neither imports a node:/bun runtime (the browser invariants).
+Hexagonal boundaries remain: `core` holds rules and use cases and depends on no adapter crate;
+`infra` implements core's ports; `cli`, `sync-service`, `web` and `smoke-client` are driving
+adapters. The browser and native probe both call `core::sync::client`, so the wire protocol has one
+Rust implementation. `src/rust/sync-service/tests/parity.rs` keeps frozen compatibility vectors.
 
 ## Plugins
 
@@ -136,8 +124,10 @@ checks them against the running image.
 
 ## Runtime Stack
 
-- **Rust** — the CLI, entrypoint, daemons (`sdw` multi-call binary) and the sync service, all
-  static musl binaries; no language runtime ships in the image.
+- **Rust** — the CLI, entrypoint, daemons (`sdw` multi-call binary), sync service and protocol
+  logic; the Linux executable is static musl.
+- **Rust / WebAssembly** — the browser upload page; DOM and File System Access bindings via
+  wasm-bindgen/web-sys, with the same RustCrypto wire implementation as the server and native probe.
 - **Axum / Tokio** — the sync service's HTTP server (`/sync/api/*`)
 - **Caddy** — Reverse proxy (code-server + the sync-service API + the static SPA + dual desktops on single port)
 - **KasmVNC (default) / Selkies (optional)** — Browser-accessible remote desktop; the image holds one or both, chosen at build time. See "Remote Desktop: Selkies vs KasmVNC" below.
@@ -150,7 +140,7 @@ checks them against the running image.
 ## Security Layers
 
 ```
-L6: E2E encryption (WebCrypto AES-256-GCM)       ← Sync file transfer
+L6: E2E encryption (RustCrypto AES-256-GCM in WASM) ← Sync file transfer
 L5: gocryptfs (AES-256)                           ← Disk encryption at rest
 L4: Unified auth gateway — deny-by-default        ← Perimeter: ONE session-cookie / Cloudflare
     (Caddy forward_auth -> sync-service)             Access-JWT check in front of every route, HTTP + WS

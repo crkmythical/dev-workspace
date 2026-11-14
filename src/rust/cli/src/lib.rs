@@ -1,12 +1,8 @@
-//! The container's command surface as one multi-call binary — a Rust port of packages/cli.
+//! The container's native command surface as one Rust multi-call binary.
 //!
 //! Like busybox, one binary serves every command. It is installed once and symlinked per command
-//! name; `argv[0]`'s basename selects the command (or `sdw <command>` works directly, which the
-//! entrypoint and the supervised/cron jobs use). This replaces the Bun launchers that `bun run`
-//! one `.ts` entry each (packages/cli/scripts/install-bins.ts).
-//!
-//! Commands are ported one at a time; the Dockerfile keeps running Bun until every command and the
-//! entrypoint live here (the single stage-3 image cutover).
+//! name; argv[0]'s basename selects the command, while `sdw <command>` is used by entrypoint,
+//! supervisor and cron.
 
 pub mod commands;
 mod dispatch;

@@ -23,7 +23,6 @@ on:
     paths:
       - 'src/image/**'
       - 'src/rust/**'
-      - 'src/packages/**'
       - 'src/tests/smoke/**'
       - 'deploy/scripts/**'
       - 'deploy/client/**'
@@ -74,15 +73,16 @@ jobs:
           cache-from: type=gha,scope=smoke-${{ matrix.variant }}
           cache-to: type=gha,mode=max,scope=smoke-${{ matrix.variant }}
 
-      # checks/30-sync.sh runs the TypeScript sync client with Bun ON THE HOST (the image carries no
-      # Bun), and 55-browser.sh installs Playwright with it; GitHub's runners do not ship Bun.
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      # checks/30-sync.sh runs the native Rust protocol probe on the host. The browser check uses
+      # the runner's Node only as a Playwright driver for real Chrome; no product code is JavaScript.
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
-          bun-version: 1.4.3
-      - name: Install the workspace dependencies
-        working-directory: src
-        run: bun install --frozen-lockfile
+          toolchain: stable
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: src/rust
       - name: Smoke test
         env:
           SMOKE_SHOTS_DIR: ${{ github.workspace }}/smoke-shots

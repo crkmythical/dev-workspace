@@ -67,7 +67,7 @@ http_route() {
   expect_eq "the vault passphrase itself is not the destruct passphrase" 404 \
     "$(post "{\"passphrase\":\"$SMOKE_PASSWORD\"}")"
   expect_true "the data is still there" dx test -s /workspace/secret.txt
-  expect_eq "the right passphrase triggers it (200)" 200 "$(post "{\"passphrase\":\"$PASS\"}")"
+  expect_eq "the right passphrase schedules it (202)" 202 "$(post "{\"passphrase\":\"$PASS\"}")"
   assert_destroyed
   stack_down
 }

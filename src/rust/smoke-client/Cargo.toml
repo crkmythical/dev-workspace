@@ -1,0 +1,16 @@
+[package]
+name = "sdw-smoke-client"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Native Rust end-to-end sync protocol probe used by the smoke suite"
+
+[[bin]]
+name = "sync-e2e"
+path = "src/main.rs"
+
+[dependencies]
+sdw-core = { path = "../core" }
+getrandom = "0.2"
+serde_json = "1"
+sha2 = "0.10"

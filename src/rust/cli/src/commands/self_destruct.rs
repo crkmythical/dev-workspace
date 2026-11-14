@@ -25,6 +25,10 @@ fn parse_flags(args: &[String]) -> (bool, bool, bool) {
 }
 
 pub fn run(args: &[String]) -> i32 {
+    // The network-facing sync service deliberately scrubs its inherited environment before it can
+    // launch this worker. Root can recover the immutable container configuration from PID 1; a
+    // direct `docker exec` invocation already has those variables, and adopt never overwrites them.
+    sdw_infra::container_env::adopt();
     let (force, skip_shred, remote) = parse_flags(args);
 
     if !force {

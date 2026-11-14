@@ -52,6 +52,14 @@ write_secret() {
 
 echo "Writing secret files from $ENV_FILE:"
 
+# Validate every required input before writing anything. A missing subscription used to truncate an
+# existing good secret file to empty, even without --force, and left a half-updated secret set.
+url="$(env_value CLASH_SUBSCRIPTION_URL)"
+if [ -z "$url" ]; then
+  echo "  $ENV_FILE has no CLASH_SUBSCRIPTION_URL; no secret file was changed" >&2
+  exit 1
+fi
+
 password="$(env_value PASSWORD)"
 if [ -z "$password" ]; then
   # 16 random bytes as hex, the same shape the container generates when PASSWORD is empty.
@@ -59,15 +67,7 @@ if [ -z "$password" ]; then
   echo "  $ENV_FILE has no PASSWORD: generated one (read it with: cat secrets/password)"
 fi
 write_secret password "$password"
-
-url="$(env_value CLASH_SUBSCRIPTION_URL)"
-if [ -z "$url" ]; then
-  echo "  $ENV_FILE has no CLASH_SUBSCRIPTION_URL; put the URL in secrets/clash_subscription_url yourself" >&2
-  : >secrets/clash_subscription_url
-  chmod 600 secrets/clash_subscription_url
-else
-  write_secret clash_subscription_url "$url"
-fi
+write_secret clash_subscription_url "$url"
 
 cat <<'EOF'
 

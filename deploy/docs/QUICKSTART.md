@@ -58,7 +58,7 @@ docker logs -f dev-workspace
 | 远程桌面(KasmVNC) | http://localhost:18080/vnc/ | 同一个登录会话,**不会再弹第二次** |
 | 上传页/单向(需 `SYNC_ENABLED=1`) | http://localhost:18080/sync/ | 同一个登录会话;页面内再输 vault 口令来派生上传密钥 |
 
-登录网关是唯一的一道登录:code-server 以 `--auth none`、KasmVNC 以 `-DisableBasicAuth` 运行,不再各有一个密码。你在 code-server 终端和桌面里运行的一切都以**普通用户 `dev`**(uid 1000,家目录 `/workspace/home`,在 vault 里)运行,看不到 `PASSWORD`、备份和订阅的密钥;需要 root 的几个命令(`doctor`、`lock-vault`、`unlock-vault`、`desktop-*`、`push`/`pull`……)直接敲就行,由 `doas` 桥接。`self-destruct`、`destruct-passphrase`、`backup-init` 只能由运营者用 `docker exec` 运行。要让你的工具看到某个 `.env` 变量,把它的名字写进 `WORKLOAD_ENV=GITHUB_TOKEN,NPM_TOKEN`(密钥类变量会被拒绝)。
+登录网关是唯一的一道登录:code-server 以 `--auth none`、KasmVNC 以 `-DisableBasicAuth` 运行,不再各有一个密码。你在 code-server 终端和桌面里运行的一切都以**普通用户 `dev`**(uid 1000,家目录 `/workspace/home`,在 vault 里)运行,看不到 `PASSWORD`、备份和订阅密钥。无密码 `doas` 桥接只保留 `doctor`、`lock-vault`、`unlock-vault`、`desktop-start`、`desktop-stop`;安装软件、任意路径传输、pentest rootfs、审计读取和代理配置命令都必须由宿主执行 `docker exec -u root dev-workspace <命令>`。要让普通开发工具看到某个 `.env` 变量,把名字写进 `WORKLOAD_ENV=GITHUB_TOKEN,NPM_TOKEN`(工作区自身密钥会被拒绝)。
 
 端口 18080 来自 `TUNNEL_HOST_PORT`(默认值);改了它横幅会打印实际端口。桌面默认 `autostart=false`,浏览器打开 `/vnc/` 即会按需拉起;或在容器内 `desktop-start`。桌面程序的日志在 `/var/log/desktop/<程序>.log`(各 2 MB,留一份备份)。
 

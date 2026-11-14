@@ -169,29 +169,17 @@ pub fn parse_requested_names(raw: &str) -> Vec<String> {
         .collect()
 }
 
-/// Commands that need root, so a workload reaches them through the bridge: `doas` runs a symlink of
-/// the same name under [`PRIV_BRIDGE_DIR`] as root, with a clean environment, and nothing else
-/// (`/etc/doas.conf` lists exactly these paths). Everything that mounts, kills, installs packages,
-/// talks to supervisord or reads the secrets is here. Deliberately NOT here: `backup-init`,
-/// `destruct-passphrase` and `self-destruct`, which are for the operator (`docker exec`), not for
-/// code running in the workspace.
+/// Commands exposed through the passwordless root bridge. Keep this list deliberately tiny: every
+/// bridged command is callable by an arbitrary dependency or extension running as `dev`.
+///
+/// Only fixed-target lifecycle operations remain. Commands that accept paths, install packages,
+/// enter a root shell, reveal audit data or rewrite network/auth configuration are operator-only
+/// and must be invoked with `docker exec -u root` from the host.
 pub const PRIVILEGED_VERBS: &[&str] = &[
-    "audit-log",
-    "desktop-install",
     "desktop-start",
     "desktop-stop",
     "doctor",
-    "init-pentest",
-    "init-vault",
-    "lock-pentest",
     "lock-vault",
-    "pentest",
-    "pentest-bootstrap",
-    "pull",
-    "push",
-    "set-clash-dns",
-    "setup",
-    "unlock-pentest",
     "unlock-vault",
 ];
 
@@ -409,11 +397,23 @@ mod tests {
     #[test]
     fn operator_commands_are_not_reachable_from_the_workload() {
         for verb in [
-            "self-destruct",
-            "destruct-passphrase",
+            "audit-log",
             "backup-init",
+            "desktop-install",
+            "destruct-passphrase",
             "entrypoint",
+            "init-pentest",
+            "init-vault",
+            "lock-pentest",
+            "pentest",
+            "pentest-bootstrap",
+            "pull",
+            "push",
+            "self-destruct",
+            "set-clash-dns",
+            "setup",
             "sync-service",
+            "unlock-pentest",
         ] {
             assert!(!PRIVILEGED_VERBS.contains(&verb), "{verb}");
         }

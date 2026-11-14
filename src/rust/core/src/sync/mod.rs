@@ -1,4 +1,5 @@
 pub mod aad;
+pub mod client;
 pub mod crypto;
 pub mod layout;
 pub mod path_safety;

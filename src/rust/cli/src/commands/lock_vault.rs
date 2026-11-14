@@ -10,7 +10,6 @@ use sdw_core::vault::specs::workspace_vault;
 use sdw_core::vault::usecases::{cancel_lock, lock_vault, LockDeps, LockResult};
 use sdw_infra::gocryptfs::GocryptfsVolume;
 use sdw_infra::holders::SupervisorHolders;
-use sdw_infra::state::broadcast_state;
 
 pub fn run(_args: &[String]) -> i32 {
     let volume = GocryptfsVolume;
@@ -70,7 +69,6 @@ pub fn run(_args: &[String]) -> i32 {
 
     // The sync key source is only valid while the vault is open.
     let _ = std::fs::remove_file(SYNC_PASSPHRASE_PATH);
-    broadcast_state("locked");
     if forced {
         // A lazy unmount detaches at once, but whoever already had a file open keeps it.
         println!("Processes that still had files open can keep using them until they exit.");

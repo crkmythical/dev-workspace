@@ -5,7 +5,6 @@
 
 use crate::cmd;
 use crate::destruct_key::{derive_destruct_key, destruct_key_to_passphrase};
-use crate::state::broadcast_state;
 use sdw_core::shared::layout::{CREDENTIALS_DIR, WORKSPACE_MOUNT};
 use sdw_core::sync::layout::SYNC_PASSPHRASE_PATH;
 use sdw_core::vault::destruct::DESTRUCT_KEY_HASH_PATH;
@@ -185,20 +184,6 @@ impl UnlockHook for RemoteDestructKey {
     }
 }
 
-/// Tell listeners on the state socket that the vault unlocked.
-struct BroadcastStateHook;
-impl UnlockHook for BroadcastStateHook {
-    fn name(&self) -> &str {
-        "broadcast-state"
-    }
-    fn run(&self, ctx: &UnlockContext<'_>) -> Result<(), String> {
-        if ctx.spec.id == "workspace" {
-            broadcast_state("unlocked");
-        }
-        Ok(())
-    }
-}
-
 /// Install the user's mise-managed tools if the vault carries a .mise.toml.
 struct MiseInstall;
 impl UnlockHook for MiseInstall {
@@ -257,7 +242,6 @@ pub fn workspace_unlock_hooks(flags: FeatureFlags, announce: Announce) -> Vec<Bo
 /// Extra hooks for an interactive unlock only (they need a running supervisord, or are slow).
 pub fn interactive_unlock_extras(backup_enabled: bool) -> Vec<Box<dyn UnlockHook>> {
     vec![
-        Box::new(BroadcastStateHook),
         Box::new(MiseInstall),
         Box::new(StartBackupWatcher {
             enabled: backup_enabled,

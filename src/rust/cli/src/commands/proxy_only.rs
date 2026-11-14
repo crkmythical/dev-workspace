@@ -34,7 +34,7 @@ pub fn run(args: &[String]) -> i32 {
 /// gone before the subscription is fetched or parsed. Returns only on failure. `None`: carry on
 /// as the current user (not root, or an image without the clash user, which `prepare_clash_dir`
 /// has already warned about).
-fn become_clash_user() -> Option<i32> {
+fn become_clash_user(subscription_url: &str, dns: &str) -> Option<i32> {
     if !is_root() || prepare_clash_dir().is_none() {
         return None;
     }
@@ -46,6 +46,14 @@ fn become_clash_user() -> Option<i32> {
         }
     };
     let err = Command::new("setpriv")
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("HOME", "/var/empty")
+        // The re-exec still has to render the config. Pass only the two resolved inputs it needs;
+        // do not copy PASSWORD, backup credentials or any other PID 1 environment into a
+        // network-facing uid.
+        .env("CLASH_SUBSCRIPTION_URL", subscription_url)
+        .env("CLASH_DNS", dns)
         .args([
             &format!("--reuid={CLASH_USER}"),
             &format!("--regid={CLASH_USER}"),
@@ -64,7 +72,8 @@ fn serve() -> i32 {
         eprintln!("proxy-only: CLASH_SUBSCRIPTION_URL is not set.");
         return 2;
     }
-    if let Some(code) = become_clash_user() {
+    let (resolved_dns, _) = crate::commands::clash_dns::resolve_dns();
+    if let Some(code) = become_clash_user(&config.clash_subscription_url, &resolved_dns) {
         return code;
     }
     let (dns, source) = crate::commands::clash_dns::resolve_dns();

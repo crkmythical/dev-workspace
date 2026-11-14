@@ -23,7 +23,6 @@ pub mod replication;
 pub mod restic;
 pub mod secrets;
 pub mod shred;
-pub mod state;
 pub mod supervisor;
 pub mod time;
 pub mod unlock_hooks;

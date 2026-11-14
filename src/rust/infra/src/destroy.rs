@@ -17,7 +17,10 @@ use sdw_core::vault::destruct::{
 use sdw_core::vault::ports::{DestroyEffects, RemoteRepoResult, Shredder};
 use sdw_core::workspace::workload::GENERATED_PASSWORD_PATH;
 use std::fs;
+use std::io::Write;
 use std::path::Path;
+use std::process::{Command, Stdio};
+use zeroize::Zeroize;
 
 #[derive(Default)]
 pub struct DestroyOptions {
@@ -35,6 +38,74 @@ impl ShellDestroyEffects {
     }
 }
 
+fn github_repo_slug(remote: &str) -> Option<String> {
+    let trimmed = remote.trim().trim_end_matches('/').trim_end_matches(".git");
+    let candidate = if let Some(rest) = trimmed.strip_prefix("git@github.com:") {
+        rest
+    } else if let Some((_, hierarchical)) = trimmed.split_once("://") {
+        let (authority, path) = hierarchical.split_once('/')?;
+        let host = authority.rsplit('@').next()?.split(':').next()?;
+        if host != "github.com" {
+            return None;
+        }
+        path
+    } else {
+        trimmed
+    };
+    let mut parts = candidate.split('/');
+    let owner = parts.next()?;
+    let repo = parts.next()?;
+    let safe = |part: &str| {
+        !part.is_empty()
+            && part
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"-_.".contains(&byte))
+    };
+    (parts.next().is_none() && safe(owner) && safe(repo)).then(|| format!("{owner}/{repo}"))
+}
+
+fn delete_github_repo(slug: &str, token: &str) -> bool {
+    if token.is_empty()
+        || token.len() > 512
+        || token
+            .bytes()
+            .any(|byte| byte.is_ascii_control() || byte == b'"' || byte == b'\\')
+    {
+        return false;
+    }
+    let config = format!(
+        "silent\nshow-error\nfail\nrequest = \"DELETE\"\nurl = \"https://api.github.com/repos/{slug}\"\n\
+         header = \"Accept: application/vnd.github+json\"\n\
+         header = \"Authorization: Bearer {token}\"\n\
+         header = \"X-GitHub-Api-Version: 2022-11-28\"\n"
+    );
+    let mut child = match Command::new("curl")
+        .args(["--config", "-"])
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("http_proxy", "http://127.0.0.1:7890")
+        .env("https_proxy", "http://127.0.0.1:7890")
+        .env("all_proxy", "socks5h://127.0.0.1:7890")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(_) => return false,
+    };
+    if child
+        .stdin
+        .take()
+        .is_none_or(|mut stdin| stdin.write_all(config.as_bytes()).is_err())
+    {
+        let _ = child.kill();
+        let _ = child.wait();
+        return false;
+    }
+    child.wait().is_ok_and(|status| status.success())
+}
+
 impl DestroyEffects for ShellDestroyEffects {
     fn quiesce_services(&self) -> Result<(), String> {
         cmd::ok("supervisorctl", &["stop", "vault-sync-cron"]);
@@ -46,10 +117,19 @@ impl DestroyEffects for ShellDestroyEffects {
             Some(r) => r,
             None => return Ok(RemoteRepoResult::SkippedNoRepo),
         };
-        if !Path::new(&format!("{CREDENTIALS_DIR}/github-token")).exists() {
-            return Ok(RemoteRepoResult::SkippedNoToken);
-        }
-        if cmd::ok("gh", &["repo", "delete", "--yes", repo]) {
+        let Some(slug) = github_repo_slug(repo) else {
+            return Ok(RemoteRepoResult::Failed);
+        };
+        let token_path = format!("{CREDENTIALS_DIR}/github-token");
+        let mut token = match fs::read_to_string(&token_path) {
+            Ok(token) if !token.trim().is_empty() => token,
+            _ => return Ok(RemoteRepoResult::SkippedNoToken),
+        };
+        // Feed the credential to curl through a private stdin config. It never appears in argv,
+        // the environment, a persistent gh config, stdout or stderr.
+        let deleted = delete_github_repo(&slug, token.trim());
+        token.zeroize();
+        if deleted {
             Ok(RemoteRepoResult::Deleted)
         } else {
             Ok(RemoteRepoResult::Failed)

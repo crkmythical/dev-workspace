@@ -1,5 +1,5 @@
 # Dependabot keeps what it can resolve on its own current: GitHub Actions (pinned by commit SHA),
-# the Rust crates, the Bun packages and the digest-pinned base images in the Dockerfile. The
+# the Rust crates, the test-only Playwright npm package and digest-pinned base images. The
 # third-party binaries baked into the image are pinned with checksums by deploy/scripts/update-tools.sh
 # (a scheduled workflow, tools.yml, reports when they are behind): Dependabot cannot compute those.
 version: 2
@@ -15,8 +15,8 @@ updates:
     groups:
       rust-minor-and-patch:
         update-types: [minor, patch]
-  - package-ecosystem: bun
-    directory: /src
+  - package-ecosystem: npm
+    directory: /src/tests/smoke/browser
     schedule:
       interval: weekly
   - package-ecosystem: docker

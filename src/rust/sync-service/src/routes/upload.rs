@@ -1,5 +1,4 @@
-//! POST /sync/api/upload — port of packages/server/src/routes/upload.ts over the
-//! receiveUpload() use case (packages/core/src/sync/usecases.ts).
+//! POST /sync/api/upload: authenticated Rust sync protocol receive path.
 //!
 //! Order IS the security argument and is preserved exactly:
 //!   feature gate -> key available -> framing -> timestamp -> authenticate ->
@@ -20,7 +19,8 @@ use sdw_core::sync::aad::build_aad;
 use sdw_core::sync::crypto::decrypt;
 use sdw_core::sync::path_safety::{check_relative_path, PathCheck};
 use sdw_core::sync::protocol::{
-    HEADER_CHUNK_IDX, HEADER_FILE_ID, HEADER_OP, HEADER_TS, MAX_UPLOAD_BYTES, REPLAY_TOLERANCE_MS,
+    HEADER_CHUNK_IDX, HEADER_FILE_ID, HEADER_OP, HEADER_TS, MAX_UPLOAD_BYTES, MAX_UPLOAD_CHUNKS,
+    REPLAY_TOLERANCE_MS,
 };
 use sdw_core::sync::wire::parse_upload_body;
 
@@ -87,7 +87,7 @@ pub async fn upload(State(state): State<AppState>, headers: HeaderMap, body: Byt
     // A present-but-out-of-tolerance timestamp is a stale/clock problem, distinct from a replay.
     // Report it as such instead of the misleading "replay-detected" the window would otherwise
     // return for the same condition.
-    if (now - ts).abs() > REPLAY_TOLERANCE_MS {
+    if now.abs_diff(ts) > REPLAY_TOLERANCE_MS as u64 {
         return err(StatusCode::BAD_REQUEST, "stale-timestamp");
     }
 
@@ -106,21 +106,35 @@ pub async fn upload(State(state): State<AppState>, headers: HeaderMap, body: Byt
         let Some(id) = flat_segment(&file_id_hdr) else {
             return err(StatusCode::BAD_REQUEST, "bad-file-id");
         };
+        let index = match chunk_idx.parse::<u64>() {
+            Ok(index) if index < MAX_UPLOAD_CHUNKS => index,
+            _ => return err(StatusCode::BAD_REQUEST, "bad-chunk-index"),
+        };
+        let Some(session) = state.upload_session(&id, now).await else {
+            return err(StatusCode::SERVICE_UNAVAILABLE, "too-many-uploads");
+        };
+        let mut session = session.lock().await;
+        session.last_seen_ms = now;
+        if session.finalized {
+            return err(StatusCode::CONFLICT, "upload-finalized");
+        }
+        if index != session.next_chunk {
+            return err(StatusCode::CONFLICT, "out-of-order-chunk");
+        }
         let res = tokio::task::spawn_blocking(move || {
             store::append_chunk(&dirs, &id, &plaintext, MAX_UPLOAD_BYTES)
         })
         .await;
         match res {
-            Ok(Ok(())) => {}
+            Ok(Ok(())) => session.next_chunk += 1,
             Ok(Err(store::AppendError::TooLarge)) => {
                 return err(StatusCode::PAYLOAD_TOO_LARGE, "upload-too-large")
             }
             _ => return err(StatusCode::INTERNAL_SERVER_ERROR, "internal"),
         }
-        let idx = chunk_idx.parse::<i64>().unwrap_or(0);
         return (
             StatusCode::OK,
-            Json(json!({ "status": "chunk-received", "chunk_idx": idx })),
+            Json(json!({ "status": "chunk-received", "chunk_idx": index })),
         )
             .into_response();
     }
@@ -134,6 +148,16 @@ pub async fn upload(State(state): State<AppState>, headers: HeaderMap, body: Byt
         else {
             return err(StatusCode::BAD_REQUEST, "bad-file-id");
         };
+        if id != file_id_hdr {
+            return err(StatusCode::BAD_REQUEST, "file-id-mismatch");
+        }
+        let total_chunks = match data.get("total_chunks").and_then(Value::as_u64) {
+            Some(total) if (1..=MAX_UPLOAD_CHUNKS).contains(&total) => total,
+            _ => return err(StatusCode::BAD_REQUEST, "bad-total-chunks"),
+        };
+        if chunk_idx.parse::<u64>().ok() != Some(total_chunks) {
+            return err(StatusCode::BAD_REQUEST, "chunk-count-mismatch");
+        }
         let rel = match check_relative_path(
             data.get("file_path").and_then(Value::as_str).unwrap_or(""),
         ) {
@@ -141,16 +165,31 @@ pub async fn upload(State(state): State<AppState>, headers: HeaderMap, body: Byt
             PathCheck::Err(_) => return err(StatusCode::BAD_REQUEST, "bad-file-path"),
         };
 
-        // Whole-file integrity is REQUIRED: the client always sends it (client.ts), so a finalize
-        // without it is malformed. It is the only assembly check (the server does not track chunk
-        // counts), so it must be present before anything is committed.
+        // Whole-file integrity and the declared chunk count are both required. The per-id session
+        // below serializes finalize with append, so no chunk can slip between hashing and rename.
         let expected = match data.get("content_sha256").and_then(Value::as_str) {
-            Some(h) if !h.is_empty() => h.to_string(),
+            Some(h)
+                if h.len() == 64
+                    && h.bytes()
+                        .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()) =>
+            {
+                h.to_string()
+            }
             _ => return err(StatusCode::BAD_REQUEST, "missing-checksum"),
         };
 
-        // Hash-verify and commit in ONE blocking call so no concurrent append can slip between the
-        // checksum and the rename.
+        let Some(upload) = state.upload_session(&id, now).await else {
+            return err(StatusCode::SERVICE_UNAVAILABLE, "too-many-uploads");
+        };
+        let mut upload = upload.lock().await;
+        upload.last_seen_ms = now;
+        if upload.finalized {
+            return err(StatusCode::CONFLICT, "upload-finalized");
+        }
+        if upload.next_chunk != total_chunks {
+            return err(StatusCode::CONFLICT, "chunk-count-mismatch");
+        }
+
         let outcome = {
             let rel = rel.clone();
             tokio::task::spawn_blocking(move || {
@@ -159,15 +198,22 @@ pub async fn upload(State(state): State<AppState>, headers: HeaderMap, body: Byt
             .await
         };
         return match outcome {
-            Ok(Ok(store::FinalizeOutcome::Committed)) => (
-                StatusCode::OK,
-                Json(json!({ "status": "upload-complete", "path": rel })),
-            )
-                .into_response(),
+            Ok(Ok(store::FinalizeOutcome::Committed)) => {
+                upload.finalized = true;
+                (
+                    StatusCode::OK,
+                    Json(json!({ "status": "upload-complete", "path": rel })),
+                )
+                    .into_response()
+            }
             Ok(Ok(store::FinalizeOutcome::ChecksumMismatch)) => {
+                upload.next_chunk = 0;
                 err(StatusCode::BAD_REQUEST, "checksum-mismatch")
             }
-            Ok(Ok(store::FinalizeOutcome::NoChunks)) => err(StatusCode::BAD_REQUEST, "no-chunks"),
+            Ok(Ok(store::FinalizeOutcome::NoChunks)) => {
+                upload.next_chunk = 0;
+                err(StatusCode::BAD_REQUEST, "no-chunks")
+            }
             _ => err(StatusCode::INTERNAL_SERVER_ERROR, "internal"),
         };
     }

@@ -68,7 +68,7 @@ write_pin burpsuite burp.jar
 write_pin idea idea.tar.gz
 OUT="$(dx env SDW_TOOLS_DIR=/tmp/fake-tools desktop-install burpsuite 2>&1)"
 expect_match "a downloaded application installs" 'Installed Burp Suite' "$OUT"
-expect_match "after fetch-tool checked its sha256" '/opt/desktop-apps/burpsuite/burpsuite.jar: OK' "$OUT"
+expect_match "after fetch-tool checked its sha256" 'fetch-tool: burpsuite verified from' "$OUT"
 expect_true "its jar is where its launcher expects it" dx test -s /opt/desktop-apps/burpsuite/burpsuite.jar
 expect_match "and it has a menu entry" 'Exec=java -jar /opt/desktop-apps/burpsuite/burpsuite.jar' \
   "$(dx cat /usr/share/applications/burpsuite.desktop)"
@@ -80,7 +80,7 @@ expect_false "and the downloaded archive is not left behind" dx test -e /opt/des
 dx rm -rf /opt/desktop-apps/burpsuite /usr/share/applications/burpsuite.desktop
 write_pin burpsuite burp.jar 0000000000000000000000000000000000000000000000000000000000000000
 OUT="$(dx env SDW_TOOLS_DIR=/tmp/fake-tools desktop-install burpsuite 2>&1)"
-expect_match "a download that does not match its pin is refused" 'FAILED' "$OUT"
+expect_match "a download that does not match its pin is refused" 'sha256 mismatch.*rejected' "$OUT"
 expect_match "and reported" 'ERROR: Failed to download Burp Suite' "$OUT"
 expect_false "no jar is left" dx test -e /opt/desktop-apps/burpsuite/burpsuite.jar
 expect_false "and no menu entry" dx test -e /usr/share/applications/burpsuite.desktop
