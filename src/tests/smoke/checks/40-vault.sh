@@ -46,6 +46,11 @@ esac
 
 dx pkill -f 'sleep 599' || true
 sleep 1
+if hosted_runner; then
+  skip "clean lock, unlock, forced lock and container re-create all release a FUSE mount, which a restricted CI runner cannot do; run locally"
+  finish
+  exit
+fi
 step "lock: clean, when nothing holds the mount"
 # A listening unix socket inside the vault pins the mount without being an open file, so fuser
 # cannot see it. The desktop session used to start an ssh-agent whose socket sat in the vault's

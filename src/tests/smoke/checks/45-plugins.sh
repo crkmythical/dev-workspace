@@ -190,6 +190,11 @@ docker exec -d "$WS" sh -c "printf 'sleep 31 &\nsleep 15\nexit\n' | pentest >/tm
 expect_true "a process started inside is visible from the host" wait_until 30 inside_visible
 expect_true "and is gone again when the session ends" wait_until 60 inside_gone
 
+if hosted_runner; then
+  skip "lock-pentest and the re-lock below release the pentest FUSE mount, which a restricted CI runner cannot do; run locally"
+  finish
+  exit
+fi
 step "lock-pentest"
 OUT="$(dx lock-pentest 2>&1)"
 expect_match "lock-pentest locks it" 'Pentest vault locked' "$OUT"

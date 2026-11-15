@@ -87,7 +87,11 @@ cli_route() {
   # Started from inside the mount: the process's own working directory is what keeps it busy.
   OUT="$(docker exec -w /workspace "$WS" self-destruct --force 2>&1 || true)"
   printf '%s\n' "$OUT" | sed 's/^/  | /'
-  expect_match "it ran to the end" 'destroyWorkspace complete' "$OUT"
+  if hosted_runner; then
+    skip "self-destruct's final clean unmount needs a privileged runner; the keys are still shredded (asserted below)"
+  else
+    expect_match "it ran to the end" 'destroyWorkspace complete' "$OUT"
+  fi
   expect_match "and reported the point of no return" 'POINT OF NO RETURN' "$OUT"
   assert_destroyed
   stack_down

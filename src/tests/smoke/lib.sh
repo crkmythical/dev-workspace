@@ -38,6 +38,12 @@ skip() {
   printf '  SKIP  %s\n' "$1"
 }
 
+# A few checks exercise kernel features a restricted CI runner cannot provide: releasing a FUSE
+# mount (the vault and pentest locks, self-destruct) and ptrace/environ isolation between users.
+# Where SMOKE_HOSTED_RUNNER is set those specific parts report SKIP instead of FAIL; they still run
+# in full locally and on any privileged (self-hosted or VM) runner, where the variable is unset.
+hosted_runner() { [ -n "${SMOKE_HOSTED_RUNNER:-}" ]; }
+
 # Printed last by every check; run.sh adds the numbers up.
 finish() {
   printf 'RESULT passed=%d failed=%d skipped=%d\n' "$PASSED" "$FAILED" "$SKIPPED"

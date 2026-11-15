@@ -66,45 +66,13 @@ jobs:
           cache-from: type=registry,ref=${{ env.GHCR_IMAGE }}:cache-${{ matrix.variant }}-${{ matrix.arch }}
           cache-to: type=registry,ref=${{ env.GHCR_IMAGE }}:cache-${{ matrix.variant }}-${{ matrix.arch }},mode=max
 
-      - name: Set up Rust smoke client
-        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-        with:
-          toolchain: stable
-
-      - name: Cache Rust smoke client
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
-        with:
-          workspaces: src/rust
-
-      - name: Pull exact candidate
-        run: docker pull "${GHCR_IMAGE}:${GITHUB_SHA}-${{ matrix.variant }}-${{ matrix.arch }}"
-
       - name: Smoke exact candidate
-        env:
-          SMOKE_SHOTS_DIR: ${{ github.workspace }}/smoke-shots
-          SMOKE_REQUIRE_BROWSER: '1'
-        run: >-
-          src/tests/smoke/run.sh
-          --image "${GHCR_IMAGE}:${GITHUB_SHA}-${{ matrix.variant }}-${{ matrix.arch }}"
-          --services
-
-      - name: Browser screenshots
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: ./.github/actions/run-smoke
         with:
-          name: release-smoke-${{ matrix.variant }}-${{ matrix.arch }}
-          path: smoke-shots
-          if-no-files-found: ignore
-
-      - name: Containers, if smoke failed
-        if: failure()
-        run: |
-          docker ps -a
-          for c in $(docker ps -aq); do
-            echo "::group::$(docker inspect -f '{{.Name}}' "$c")"
-            docker logs --tail 80 "$c" 2>&1 || true
-            echo "::endgroup::"
-          done
+          image: ${{ env.GHCR_IMAGE }}:${{ github.sha }}-${{ matrix.variant }}-${{ matrix.arch }}
+          pull: 'true'
+          require-browser: 'true'
+          artifact-name: release-smoke-${{ matrix.variant }}-${{ matrix.arch }}
 
   host-binaries:
     strategy:

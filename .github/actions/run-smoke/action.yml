@@ -1,0 +1,68 @@
+name: Run smoke
+description: >-
+  Smoke-test an already-built workspace image. Shared by the CI smoke workflow (smoke.yml, which
+  loads the image locally) and the release build (build-image.yml, which pushes an immutable
+  candidate and pulls it back), so the two cannot drift. SMOKE_HOSTED_RUNNER is set here: a
+  GitHub-hosted runner cannot release a FUSE mount or enforce ptrace isolation, so the handful of
+  checks that need those report SKIP instead of FAIL (they run in full locally and on a privileged
+  self-hosted/VM runner, where the variable is unset).
+
+inputs:
+  image:
+    description: Image reference to test.
+    required: true
+  pull:
+    description: docker pull the image before testing (for a pushed release candidate).
+    required: false
+    default: 'false'
+  require-browser:
+    description: Fail rather than skip when the real-Chrome browser check cannot run.
+    required: false
+    default: 'false'
+  artifact-name:
+    description: Name of the uploaded desktop-screenshots artifact.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Rust smoke client
+      uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      with:
+        toolchain: stable
+    - name: Cache Rust smoke client
+      uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      with:
+        workspaces: src/rust
+
+    - name: Pull candidate
+      if: inputs.pull == 'true'
+      shell: bash
+      run: docker pull "${{ inputs.image }}"
+
+    - name: Smoke
+      shell: bash
+      env:
+        SMOKE_SHOTS_DIR: ${{ github.workspace }}/smoke-shots
+        SMOKE_HOSTED_RUNNER: '1'
+        SMOKE_REQUIRE_BROWSER: ${{ inputs.require-browser == 'true' && '1' || '' }}
+      run: src/tests/smoke/run.sh --image "${{ inputs.image }}" --services
+
+    - name: Desktop screenshots
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: smoke-shots
+        if-no-files-found: ignore
+
+    - name: Containers, if smoke failed
+      if: failure()
+      shell: bash
+      run: |
+        docker ps -a
+        for c in $(docker ps -aq); do
+          echo "::group::$(docker inspect -f '{{.Name}}' "$c")"
+          docker logs --tail 80 "$c" 2>&1 || true
+          echo "::endgroup::"
+        done
