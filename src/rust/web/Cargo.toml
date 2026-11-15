@@ -17,7 +17,7 @@ sha2 = "0.10"
 wasm-bindgen = "=0.2.130"
 wasm-bindgen-futures = "=0.4.80"
 zeroize = "1"
-gloo-timers = { version = "0.3", features = ["futures"] }
+gloo-timers = { version = "0.4", features = ["futures"] }
 getrandom = { version = "0.2", features = ["js"] }
 console_error_panic_hook = "0.1"
 web-sys = { version = "=0.3.107", features = [
