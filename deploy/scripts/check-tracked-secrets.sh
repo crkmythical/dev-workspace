@@ -17,6 +17,12 @@ else
   what="tracked"
 fi
 bad="$(printf '%s\n' "$files" | grep -E -- "$PATTERN" || true)"
+# Files intentionally tracked in this private, single-user repo are allowlisted (one path per line,
+# whole-line match). The list is absent from the throwaway test repos, so the guard stays strict there.
+ALLOW_FILE="deploy/scripts/allowed-tracked-secrets.txt"
+if [ -n "$bad" ] && [ -f "$ALLOW_FILE" ]; then
+  bad="$(printf '%s\n' "$bad" | grep -vxF -f "$ALLOW_FILE" || true)"
+fi
 if [ -n "$bad" ]; then
   echo "secret files are $what:" >&2
   printf '%s\n' "$bad" | sed 's/^/  /' >&2
