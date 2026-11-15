@@ -132,7 +132,7 @@ run_host() {
   OUT="$(env PATH="$bin:$PATH" HOME="$work/home" CF_API_TOKEN=exported-token-must-not-reach-curl ORCH_TMPDIR="$work/tmp" FAKE_STATE="$state" FAKE_PIDS="$pids" "$host" "$@" 2>&1)"
   rc=$?
 }
-mode_of() { stat -f %Lp "$1" 2>/dev/null || stat -c %a "$1"; }
+mode_of() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; } # GNU first, then BSD/macOS fallback
 
 echo '== prebuilt sdw-host installer'
 case "$(uname -s)-$(uname -m)" in
