@@ -40,6 +40,27 @@ runs:
       shell: bash
       run: docker pull "${{ inputs.image }}"
 
+    - name: Ensure a browser for the smoke gate
+      shell: bash
+      run: |
+        if [ -x /usr/bin/google-chrome ] || [ -x /usr/bin/google-chrome-stable ] \
+          || [ -x /usr/bin/chromium ] || [ -x /usr/bin/chromium-browser ]; then
+          echo "a system browser is already present; the smoke test will use it"
+          exit 0
+        fi
+        # GitHub's arm64 Linux runners ship no Chrome (Google builds none for linux-arm64). Fetch
+        # Playwright's Chromium, which it does build for arm64, and point the driver at it with
+        # CHROME_PATH. playwright-core alone never downloads a browser, so the matching full
+        # playwright CLI installs it into the cache that playwright-core.executablePath() resolves.
+        cd src/tests/smoke/browser
+        npm ci --ignore-scripts --no-audit --no-fund
+        ver="$(node -p "require('playwright-core/package.json').version")"
+        npx -y "playwright@${ver}" install --with-deps chromium
+        chrome="$(node -e 'console.log(require("playwright-core").chromium.executablePath())')"
+        test -x "$chrome"
+        echo "CHROME_PATH=$chrome" >>"$GITHUB_ENV"
+        echo "using Playwright Chromium at $chrome"
+
     - name: Smoke
       shell: bash
       env:
