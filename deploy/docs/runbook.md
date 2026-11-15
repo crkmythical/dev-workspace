@@ -201,8 +201,8 @@ Every program the image downloads (Caddy, restic, croc, Clash/mihomo, code-serve
 IDEA, Burp Suite) is pinned to a version and a checksum in `src/image/tools/<name>.env`, and the
 build fails if a download does not match. `make check-tools` lists the ones behind their project's
 latest release (CI runs it weekly, `.github/workflows/tools.yml`); `make update-tools` writes the
-new pins, and the diff is reviewed like any dependency bump. `make audit` checks the Rust and Bun
-dependencies against the advisory databases.
+new pins, and the diff is reviewed like any dependency bump. `make audit` checks the Cargo
+workspace against the Rust advisory database.
 
 ## Emergency Self-Destruct
 

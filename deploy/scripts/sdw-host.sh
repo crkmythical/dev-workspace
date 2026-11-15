@@ -15,5 +15,6 @@ fi
 if command -v sdw-host >/dev/null 2>&1; then
   exec sdw-host "$@"
 fi
-echo "sdw-host is not installed and cargo is unavailable; install a release binary first." >&2
+echo "sdw-host is not installed and cargo is unavailable." >&2
+echo "Install a prebuilt binary with deploy/scripts/install-sdw-host.sh --repo OWNER/REPO" >&2
 exit 127

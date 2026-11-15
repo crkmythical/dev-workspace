@@ -289,11 +289,13 @@ make smoke-build                          # 先按生产基础（Kali）另外�
 
 ## Rust 宿主工具
 
-高风险宿主逻辑统一在 `sdw-host`：工作区销毁、self-destruct watcher、Cloudflare 命名隧道、临时实例编排、systemd 单元和文件型密钥初始化。原有 11 个 `.sh` 路径从约 970 行收缩到共 60 行，只负责定位项目和 `exec`。
+高风险和有状态宿主逻辑统一在 `sdw-host`：销毁、watcher、Cloudflare、systemd、密钥初始化、第三方工具 pin 更新和 Git 历史清理。对应 13 个兼容 `.sh` 入口从约 1,370 行收缩到约 70 行，只负责定位项目和 `exec`。
 
 ```bash
 make host          # 构建 src/rust/target/release/sdw-host
-make install-host  # 可选：安装到 ~/.local/bin/sdw-host
+make install-host  # 从源码安装到 ~/.local/bin/sdw-host
+# 没有 Cargo：从 GitHub Release 选择本机平台、验 SHA-256 后安装
+deploy/scripts/install-sdw-host.sh --repo OWNER/REPO
 make test-host     # 全生命周期 fake Cloudflare/Docker + 销毁范围测试
 ```
 
@@ -303,13 +305,13 @@ make test-host     # 全生命周期 fake Cloudflare/Docker + 销毁范围测试
 
 | 命令 | 作用 |
 |------|------|
-| `make check-tools` / `make update-tools` | 镜像里下载的第三方工具（`src/image/tools/*.env`）是否落后于各自项目的最新版 / 移到最新版并写入新的校验和（改动像依赖升级一样审阅）。CI 每周跑一次检查 |
+| `make check-tools` / `make update-tools` | Rust updater 查询 GitHub/JetBrains/PortSwigger，交叉核对发布方 checksum，全部计划成功后才事务式写 `src/image/tools/*`；CI 每周只读检查 |
 | `make audit` | Cargo workspace 全部 Rust 依赖（原生运行时、WASM 和 smoke client）的已知漏洞；忽略项及理由在 `src/rust/.cargo/audit.toml` |
 | `make lint-sh` | 全部 shell 脚本过一遍 shellcheck |
 | `make install-hooks` | 每个 clone 做一次：提交前拒绝带进密钥文件，或带进 `.env` 里出现过的值 |
 | `make secrets-init` | Rust `sdw-host` 把 PASSWORD 和订阅地址原子写成 `secrets/*`（0600）；输入 `.env` 也必须是 0600，缺必填项时一个文件都不改 |
 | `make env-example` | 改了 `env_schema.rs` 之后重新生成 `.env.example`（测试会在两者不一致时失败） |
-| `make purge-env-history` | 把 `.env` 从整个 git 历史里清掉。**改写历史**：默认只演习，`YES=1` 才真做，会先备份。推送或分享之前，同时要轮换里面出现过的密钥 |
+| `make purge-env-history` | Rust 工具默认只演练；`YES=1` 时要求 `git-filter-repo`，先创建并验证完整 bundle，重写后确认所有 refs 已无 `.env`，最后才清 reflog/GC |
 
 `.env` 不再被 git 跟踪（`.gitignore` 里有它），已经泄漏进历史的值要当作泄漏处理。
 
@@ -320,6 +322,8 @@ make test-host     # 全生命周期 fake Cloudflare/Docker + 销毁范围测试
 - **镜像变体**：默认镜像只含 KasmVNC；带 `-full` 后缀的镜像含 Selkies + KasmVNC（`DESKTOP_STACK=both`）。每次发布都会构建两种，保证 Selkies 一直可用
 - **多架构**：`linux/amd64` + `linux/arm64`（原生 runner，无 QEMU 模拟）
 - **Registry**：GHCR（始终推送）+ Docker Hub（配置 secrets 后自动推送）
+- **宿主二进制**：原生构建 `linux-{amd64,arm64}` 与 `darwin-{amd64,arm64}`；4 个 `.tar.gz`、4 个独立 SHA-256 和总 `SHA256SUMS` 共 9 个 Release assets
+- **发布顺序**：四个镜像候选逐一 smoke、manifest 和四个宿主构建全部通过后，才从 draft 发布 GitHub Release；已发布资产拒绝覆盖
 - **缓存**：按变体与架构分离的 registry cache（GHCR 上的 `cache-<variant>-<arch>` tag）
 
 ### 配置步骤

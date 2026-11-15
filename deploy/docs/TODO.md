@@ -1,5 +1,12 @@
 # TODO
 
+> **2026-11-15 维护面 Rust 化更新**：`sdw-host` 继续接管 `update-tools` 与 `.env` 历史清理；
+> tag 发布矩阵增加 Linux/macOS × amd64/arm64 四个原生宿主包、独立/汇总 SHA-256 和
+> checksum 验证安装器。工具更新先完成全部计划再事务写入；历史清理要求 git-filter-repo，
+> bundle 先创建并验证，重写后再验证所有 refs。本轮完成真实只读上游 check；安装器、
+> Selkies 依赖重锁和历史改写分别只用 fake release、fake `uv`/`unzip` 与临时 Git 仓库验证。
+> 没有改写本仓库历史、执行真实 Selkies 重锁或实际发布 GitHub Release。
+
 > **2026-11-15 宿主 Rust 化更新**：新增 `sdw-host`，接管 destroy、self-destruct watcher、
 > 命名 tunnel、临时 Cloudflare Access 实例、systemd 单元、Docker context 安全锁和
 > secrets-init。原 Shell 路径仅保留定位项目后 `exec` 的兼容入口；Cloudflare 状态改为

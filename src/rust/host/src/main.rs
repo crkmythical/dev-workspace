@@ -2,9 +2,11 @@ mod cloudflare;
 mod destroy;
 mod docker_context;
 mod env_file;
+mod history;
 mod process;
 mod secrets;
 mod services;
+mod tools;
 mod watcher;
 
 fn main() {
@@ -17,12 +19,14 @@ fn main() {
         Some("up") => cloudflare::up(&args[2..]),
         Some("down") => cloudflare::down(&args[2..]),
         Some("run-tunnel") => cloudflare::run_tunnel(&args[2..]),
+        Some("purge-history") => history::run(&args[2..]),
         Some("secrets-init") => secrets::run(&args[2..]),
         Some("services") => services::run(&args[2..]),
+        Some("update-tools") => tools::run(&args[2..]),
         Some("watch") => watcher::run(&args[2..]),
         Some("-h" | "--help") | None => {
             eprintln!(
-                "usage: sdw-host <destroy|watch|services|secrets-init|setup-tunnel|provision|teardown|up|down|run-tunnel> [options]"
+                "usage: sdw-host <destroy|watch|services|secrets-init|purge-history|setup-tunnel|provision|teardown|up|down|run-tunnel|update-tools> [options]"
             );
             0
         }

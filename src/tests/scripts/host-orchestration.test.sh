@@ -30,6 +30,7 @@ cleanup() {
   if [ -f "$pids" ]; then
     while IFS= read -r pid; do kill -TERM -- "-$pid" 2>/dev/null || true; done <"$pids"
   fi
+  chmod -R u+w "$work" 2>/dev/null || true
   rm -r "$work"
 }
 trap cleanup EXIT
@@ -132,6 +133,273 @@ run_host() {
   rc=$?
 }
 mode_of() { stat -f %Lp "$1" 2>/dev/null || stat -c %a "$1"; }
+
+echo '== prebuilt sdw-host installer'
+case "$(uname -s)-$(uname -m)" in
+  Darwin-arm64) release_asset=sdw-host-darwin-arm64.tar.gz ;;
+  Darwin-x86_64) release_asset=sdw-host-darwin-amd64.tar.gz ;;
+  Linux-aarch64 | Linux-arm64) release_asset=sdw-host-linux-arm64.tar.gz ;;
+  Linux-x86_64) release_asset=sdw-host-linux-amd64.tar.gz ;;
+  *) echo 'unsupported test host'; exit 1 ;;
+esac
+release_dir="$work/release"
+download_bin="$work/download-bin"
+mkdir -p "$release_dir" "$download_bin" "$work/archive-fix"
+# The installer requires the archive to contain a file named exactly sdw-host.
+cp "$host" "$work/archive-fix/sdw-host"
+tar -czf "$release_dir/$release_asset" -C "$work/archive-fix" sdw-host
+(cd "$release_dir" && shasum -a 256 "$release_asset" >"$release_asset.sha256")
+cat >"$download_bin/curl" <<'EOF'
+#!/usr/bin/env bash
+out=
+url=
+prev=
+for arg in "$@"; do
+  [ "$prev" = -o ] && out="$arg"
+  case "$arg" in https://*) url="$arg" ;; esac
+  prev="$arg"
+done
+cp "$FAKE_RELEASE_DIR/${url##*/}" "$out"
+EOF
+chmod +x "$download_bin/curl"
+install_dir="$work/installed"
+OUT="$(env PATH="$download_bin:$PATH" FAKE_RELEASE_DIR="$release_dir" \
+  "$repo/deploy/scripts/install-sdw-host.sh" --repo owner/project --version v1.0.0 --install-dir "$install_dir" 2>&1)"
+rc=$?
+check 'prebuilt installer exits 0' 0 "$rc"
+check 'prebuilt installer writes an executable' yes "$([ -x "$install_dir/sdw-host" ] && echo yes || echo no)"
+has 'installer reports the selected native platform' "$OUT" 'Installed .* sdw-host'
+cp "$install_dir/sdw-host" "$work/installed-before-bad-checksum"
+cp "$release_dir/$release_asset.sha256" "$work/good-installer-checksum"
+printf '%064d  %s\n' 0 "$release_asset" >"$release_dir/$release_asset.sha256"
+OUT="$(env PATH="$download_bin:$PATH" FAKE_RELEASE_DIR="$release_dir" \
+  "$repo/deploy/scripts/install-sdw-host.sh" --repo owner/project --version v1.0.0 --install-dir "$install_dir" 2>&1)"
+rc=$?
+check 'a bad installer checksum is rejected' 1 "$rc"
+check 'checksum rejection does not replace the installed binary' 0 \
+  "$(cmp -s "$work/installed-before-bad-checksum" "$install_dir/sdw-host"; echo $?)"
+cp "$work/good-installer-checksum" "$release_dir/$release_asset.sha256"
+cat >"$work/archive-fix/sdw-host" <<'EOF'
+#!/definitely/missing/sdw-host-interpreter
+EOF
+chmod 0755 "$work/archive-fix/sdw-host"
+tar -czf "$release_dir/$release_asset" -C "$work/archive-fix" sdw-host
+(cd "$release_dir" && shasum -a 256 "$release_asset" >"$release_asset.sha256")
+OUT="$(env PATH="$download_bin:$PATH" FAKE_RELEASE_DIR="$release_dir" \
+  "$repo/deploy/scripts/install-sdw-host.sh" --repo owner/project --version v1.0.0 --install-dir "$install_dir" 2>&1)"
+rc=$?
+check 'an unusable installer candidate is rejected' yes "$([ "$rc" -ne 0 ] && echo yes || echo no)"
+check 'candidate rejection does not replace the installed binary' 0 \
+  "$(cmp -s "$work/installed-before-bad-checksum" "$install_dir/sdw-host"; echo $?)"
+"$install_dir/sdw-host" --help >/dev/null 2>&1
+check 'the previous binary remains usable after candidate rejection' 0 "$?"
+check 'candidate rejection removes the temporary executable' 0 \
+  "$(find "$install_dir" -maxdepth 1 -name '.sdw-host.*' | wc -l | tr -d ' ')"
+
+echo '== Rust git history purge in an isolated repository'
+history_parent="$work/history"
+history_repo="$history_parent/repo"
+mkdir -p "$history_repo"
+git -C "$history_repo" init -q
+git -C "$history_repo" config user.name smoke
+git -C "$history_repo" config user.email smoke@example.test
+printf 'base\n' >"$history_repo/README"
+git -C "$history_repo" add README
+git -C "$history_repo" commit -qm base
+printf 'historical-secret\n' >"$history_repo/.env"
+git -C "$history_repo" add .env
+git -C "$history_repo" commit -qm secret
+git -C "$history_repo" branch retained-secret
+git -C "$history_repo" tag secret-snapshot
+git -C "$history_repo" rm -q .env
+printf '.env\n' >"$history_repo/.gitignore"
+git -C "$history_repo" add .gitignore
+git -C "$history_repo" commit -qm untrack
+run_host purge-history --project-dir "$history_repo"
+check 'history purge defaults to dry-run' 0 "$rc"
+has 'dry-run reports the backup and rewrite plan' "$OUT" 'dry run.*With --yes'
+check 'dry-run creates no bundle' 0 "$(find "$history_parent" -name '*.bundle' | wc -l | tr -d ' ')"
+cat >"$bin/git-filter-repo" <<'EOF'
+#!/usr/bin/env bash
+FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch --force \
+  --index-filter 'git rm --cached --ignore-unmatch -q .env' \
+  --prune-empty --tag-name-filter cat -- --all >/dev/null
+for ref in $(git for-each-ref --format='%(refname)' refs/original/); do git update-ref -d "$ref"; done
+EOF
+chmod +x "$bin/git-filter-repo"
+run_host purge-history --project-dir "$history_repo" --yes
+check 'confirmed history purge exits 0' 0 "$rc"
+check '.env is absent from every rewritten ref' 0 "$(git -C "$history_repo" log --all --format=%H -- .env | wc -l | tr -d ' ')"
+check 'the rewritten branch is retained' 0 \
+  "$(git -C "$history_repo" show-ref --verify --quiet refs/heads/retained-secret; echo $?)"
+check 'the rewritten tag is retained' 0 \
+  "$(git -C "$history_repo" show-ref --verify --quiet refs/tags/secret-snapshot; echo $?)"
+bundle="$(find "$history_parent" -maxdepth 1 -name '*.bundle' | head -1)"
+check 'a backup bundle was created first' yes "$([ -f "$bundle" ] && echo yes || echo no)"
+check 'the backup bundle verifies' 0 "$(git -C "$history_repo" bundle verify "$bundle" >/dev/null 2>&1; echo $?)"
+
+echo '== Rust tool pin updater with fake upstream releases'
+tool_bin="$work/tool-bin"
+tools_dir="$work/tools"
+mkdir -p "$tool_bin" "$tools_dir"
+cat >"$tools_dir/mihomo.env" <<'EOF'
+NAME=mihomo
+VERSION=1.0.0
+URL_amd64='https://old.example/mihomo-amd64.gz'
+SHA256_amd64=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+URL_arm64='https://old.example/mihomo-arm64.gz'
+SHA256_arm64=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+EOF
+cat >"$tools_dir/code-server.env" <<'EOF'
+NAME=code-server
+VERSION=1.0.0
+URL_amd64='https://old.example/code-server-amd64.deb'
+SHA256_amd64=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+URL_arm64='https://old.example/code-server-arm64.deb'
+SHA256_arm64=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+EOF
+cat >"$tools_dir/idea.env" <<'EOF'
+NAME=idea
+VERSION=2025.3
+EOF
+cat >"$tools_dir/burpsuite.env" <<'EOF'
+NAME=burpsuite
+VERSION=2026.3.3
+EOF
+cat >"$work/tool-release-mihomo.json" <<'EOF'
+{"tag_name":"v2.0.0","assets":[
+ {"name":"mihomo-linux-amd64-v2.0.0.gz","browser_download_url":"https://downloads.example/mihomo-amd64.gz","digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111"},
+ {"name":"mihomo-linux-arm64-v2.0.0.gz","browser_download_url":"https://downloads.example/mihomo-arm64.gz","digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222"}
+]}
+EOF
+printf '%s\n' '{"tag_name":"v2.0.0","assets":[]}' >"$work/tool-release-code-server.json"
+printf '%s\n' '{"tag_name":"v2.2.0","assets":[]}' >"$work/tool-release-selkies.json"
+printf '%s\n' '{"IIC":[{"version":"2025.3"}]}' >"$work/tool-release-idea.json"
+printf 'fake Selkies wheel\n' >"$work/selkies.whl"
+if command -v sha256sum >/dev/null 2>&1; then
+  selkies_sha="$(sha256sum "$work/selkies.whl")"
+else
+  selkies_sha="$(shasum -a 256 "$work/selkies.whl")"
+fi
+selkies_sha="${selkies_sha%% *}"
+cat >"$tools_dir/selkies.env" <<EOF
+NAME=selkies
+VERSION=2.2.0
+URL_amd64='https://downloads.example/selkies.whl'
+SHA256_amd64=$selkies_sha
+URL_arm64='https://downloads.example/selkies.whl'
+SHA256_arm64=$selkies_sha
+EOF
+cat >"$tool_bin/curl" <<'EOF'
+#!/usr/bin/env bash
+root="$(cd "$(dirname "$0")/.." && pwd)"
+out=
+url=
+config=
+authorization=no
+prev=
+for arg in "$@"; do
+  [ "$prev" = -o ] && out="$arg"
+  [ "$prev" = -K ] && config="$arg"
+  case "$arg" in
+    https://*) url="$arg" ;;
+    *[Aa]uthorization:*) authorization=yes ;;
+  esac
+  prev="$arg"
+done
+auth_config=no
+if [ -n "$config" ]; then
+  auth_config=yes
+  grep -Eq '^header = "Authorization: Bearer .+"$' "$config" && authorization=yes
+fi
+printf '%s auth_config=%s authorization=%s\n' "$url" "$auth_config" "$authorization" >>"$root/tool-curl.log"
+case "$url" in
+  https://api.github.com/repos/MetaCubeX/mihomo/releases/latest)
+    response="$root/tool-release-mihomo.json" ;;
+  https://api.github.com/repos/coder/code-server/releases/latest)
+    response="$root/tool-release-code-server.json" ;;
+  https://api.github.com/repos/selkies-project/selkies/releases/latest)
+    response="$root/tool-release-selkies.json" ;;
+  'https://data.services.jetbrains.com/products/releases?code=IIC&latest=true&type=release')
+    response="$root/tool-release-idea.json" ;;
+  'https://portswigger-cdn.net/burp/releases/download?product=community&type=Jar')
+    printf '%s\r\n' 'HTTP/2 302' 'location: https://example.test/burpsuite_community_v2026.3.3.jar'
+    exit 0 ;;
+  https://downloads.example/selkies.whl)
+    cp "$root/selkies.whl" "$out"
+    exit 0 ;;
+  *)
+    echo "unexpected fake curl URL: $url" >&2
+    exit 1 ;;
+esac
+if [ -n "$out" ]; then cp "$response" "$out"; else cat "$response"; fi
+EOF
+cat >"$tool_bin/unzip" <<'EOF'
+#!/usr/bin/env bash
+cat <<'METADATA'
+Metadata-Version: 2.4
+Requires-Dist: example-package==1.2.3
+Requires-Dist: ignored-package==1.0; extra == "test"
+METADATA
+EOF
+cat >"$tool_bin/uv" <<'EOF'
+#!/usr/bin/env bash
+out=
+prev=
+for arg in "$@"; do
+  [ "$prev" = -o ] && out="$arg"
+  prev="$arg"
+done
+[ -n "$out" ] || exit 1
+cat >"$out" <<'LOCK'
+example-package==1.2.3 \
+    --hash=sha256:3333333333333333333333333333333333333333333333333333333333333333
+LOCK
+EOF
+chmod +x "$tool_bin"/*
+OUT="$(env PATH="$tool_bin:$PATH" TMPDIR="$work/tmp" "$host" update-tools --project-dir "$project" --tools-dir "$tools_dir" selkies 2>&1)"
+rc=$?
+check 'a missing Selkies lock is regenerated with fake uv' 0 "$rc"
+has 'the regenerated Selkies lock records its source version' \
+  "$(cat "$tools_dir/selkies-requirements.txt")" '^# Generated .* selkies 2\.2\.0'
+has 'the fake resolver output is retained' \
+  "$(cat "$tools_dir/selkies-requirements.txt")" '^example-package==1\.2\.3'
+OUT="$(env PATH="$tool_bin:$PATH" TMPDIR="$work/tmp" "$host" update-tools --project-dir "$project" --tools-dir "$tools_dir" mihomo 2>&1)"
+rc=$?
+check 'tool updater writes a newer release' 0 "$rc"
+has 'updated pin records the new version' "$(cat "$tools_dir/mihomo.env")" '^VERSION=2\.0\.0$'
+has 'updated pin records API digest' "$(cat "$tools_dir/mihomo.env")" '^SHA256_arm64=2222'
+OUT="$(env PATH="$tool_bin:$PATH" TMPDIR="$work/tmp" "$host" update-tools --project-dir "$project" --tools-dir "$tools_dir" --check mihomo 2>&1)"
+check 'updated pin passes check mode' 0 "$?"
+: >"$work/tool-curl.log"
+OUT="$(env PATH="$tool_bin:$PATH" TMPDIR="$work/tmp" GITHUB_TOKEN=github-host-scope-test-token \
+  "$host" update-tools --project-dir "$project" --tools-dir "$tools_dir" --check mihomo idea burpsuite 2>&1)"
+rc=$?
+check 'authenticated updater host-scope probe exits 0' 0 "$rc"
+check 'GitHub API request uses the private authorization config' 1 \
+  "$(grep -Ec '^https://api\.github\.com/.* auth_config=yes authorization=yes$' "$work/tool-curl.log")"
+check 'JetBrains request receives no GitHub authorization config' 1 \
+  "$(grep -Ec '^https://data\.services\.jetbrains\.com/.* auth_config=no authorization=no$' "$work/tool-curl.log")"
+check 'PortSwigger request receives no GitHub authorization config' 1 \
+  "$(grep -Ec '^https://portswigger-cdn\.net/.* auth_config=no authorization=no$' "$work/tool-curl.log")"
+hasnt 'GitHub token is absent from updater output and fake curl logs' \
+  "$OUT$(cat "$work/tool-curl.log")" 'github-host-scope-test-token'
+cp "$tools_dir/mihomo.env" "$work/mihomo-before-failure"
+cp "$tools_dir/code-server.env" "$work/code-server-before-failure"
+cat >"$work/tool-release-mihomo.json" <<'EOF'
+{"tag_name":"v3.0.0","assets":[
+ {"name":"mihomo-linux-amd64-v3.0.0.gz","browser_download_url":"https://downloads.example/mihomo-amd64-v3.gz","digest":"sha256:4444444444444444444444444444444444444444444444444444444444444444"},
+ {"name":"mihomo-linux-arm64-v3.0.0.gz","browser_download_url":"https://downloads.example/mihomo-arm64-v3.gz","digest":"sha256:5555555555555555555555555555555555555555555555555555555555555555"}
+]}
+EOF
+OUT="$(env PATH="$tool_bin:$PATH" TMPDIR="$work/tmp" "$host" update-tools --project-dir "$project" --tools-dir "$tools_dir" mihomo code-server 2>&1)"
+rc=$?
+check 'one bad release fails a multi-tool update' 1 "$rc"
+has 'the failed batch had already planned another update' "$OUT" 'mihomo.*-> 3\.0\.0'
+check 'a failed batch leaves the first selected pin byte-for-byte intact' 0 \
+  "$(cmp -s "$work/mihomo-before-failure" "$tools_dir/mihomo.env"; echo $?)"
+check 'a failed batch leaves the second selected pin byte-for-byte intact' 0 \
+  "$(cmp -s "$work/code-server-before-failure" "$tools_dir/code-server.env"; echo $?)"
 
 echo '== Rust secret initialization'
 cat >"$project/config.env" <<'EOF'
