@@ -21,7 +21,7 @@ sha2 = { version = "0.10", features = ["oid"] }
 hex = "0.4"
 # Session-cookie signing for the auth gateway (core::auth::session). HMAC-SHA256 as the MAC and
 # as a PRF for the persistent-key derivation. Pure computation; same RustCrypto family as above.
-hmac = "0.12"
+hmac = "0.13"
 # Cloudflare Access JWT verification (core::auth::access_jwt): RS256 = RSASSA-PKCS1v1.5-SHA256 over
 # the team JWKS, so the gate can accept an edge-authenticated session. Pure-Rust (num-bigint-dig),
 # no ring/OpenSSL — consistent with the static musl build. base64url for the JWT segments.
