@@ -43,6 +43,64 @@ docker compose up -d
 
 **Linux 宿主机（Ubuntu、Debian 等带 AppArmor 的发行版）**：Docker 默认的 AppArmor 配置禁止 `mount(2)`，gocryptfs 挂载 vault 会失败（启动后 vault 保持锁定，报 `fusermount3: mount failed: Permission denied`；Docker Desktop 没有 AppArmor，不受影响）。在 `.env` 里取消注释 `COMPOSE_FILE=docker-compose.yml:docker-compose.apparmor.yml`，或每次用 `docker compose -f docker-compose.yml -f docker-compose.apparmor.yml up -d`。这个覆盖文件会去掉容器最后一层 AppArmor 约束，是安全上的取舍，所以不是默认；见 `deploy/docs/threat-model.md`。
 
+## 端到端流程（Phase 1–6）
+
+从验证到发布再到运行的一条龙；每条命令下文各节有详述，这里是串起来的顺序。
+
+**环境前提（本机 Colima，一次性）**
+
+```bash
+export DOCKER_CONTEXT=colima-dev-workspace   # 每个运行 docker/make 的 shell 都要；不要用 docker context use
+# .env 已配好 PASSWORD 与 CLASH_SUBSCRIPTION_URL；Colima（Ubuntu + AppArmor）需要：
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.apparmor.yml
+```
+
+**Phase 1 — 本地验证（权威的全量校验）**
+
+```bash
+make check     # Rust fmt+clippy+test + shellcheck + 宿主测试（= lint test lint-sh test-host）
+make build     # 构建镜像（首次约 15 分钟；国内网络见「在 Mac 上本机构建」设 KALI_MIRROR / BUILD_PROXY）
+make smoke     # 对刚构建的镜像跑完整 smoke（含 vault/pentest/自毁等特权段，本机 Colima 全跑）
+```
+
+托管 runner 上的 CI smoke 会跳过需要特权挂载/FUSE 的检查，本机 Colima 不跳——所以本地 `make smoke` 是最权威的验收。
+
+**Phase 2 — 推送触发 CI**
+
+```bash
+git push origin main       # 触发 ci.yml：rust / host-macos / audit / scripts
+```
+
+**Phase 3 — 打 tag 发布镜像 + Release**
+
+```bash
+git tag v1.0.0 && git push origin v1.0.0   # 触发 build-image.yml
+# 产出：GHCR 的 :v1.0.0 / :latest / :v1.0.0-full / :latest-full；GitHub Release 含 9 个 sdw-host 资产
+```
+
+**Phase 4 — 运行并访问**
+
+```bash
+docker compose up -d                         # 创建并解锁 vault，启动横幅打印端口/状态
+# 浏览器 http://localhost:18080 输入 PASSWORD（无用户名）；Code / /vnc/ / /sync/ 共用会话
+docker exec -it dev-workspace doctor         # 健康检查（出口/桌面/备份）
+```
+
+**Phase 5 — 远程访问（可选，需自有域名）**
+
+```bash
+brew install cloudflared
+./deploy/scripts/setup-cloudflared.sh --hostname <你的域名>   # 需 cloudflared 登录你的 Cloudflare 账号（浏览器授权）
+# 然后 https://<你的域名>
+```
+
+**Phase 6 — 销毁**
+
+```bash
+./destroy.sh --force                  # 删本项目的容器/卷/镜像/隧道（按 compose 项目标签，不碰别的项目）
+./destroy.sh --force --delete-project # 连这份 checkout 一起删
+```
+
 ## 在 Mac 上本机构建（Colima，含国内网络）
 
 已在 Apple Silicon（Apple M5、macOS 27.0.1，Colima 0.10.3 + vz/virtiofs，Docker 29）上从零构建成功：Kali 基础、默认 KasmVNC 栈，
