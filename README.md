@@ -398,9 +398,10 @@ docker load < dev-workspace-kali-kasmvnc-linux-amd64.tar.gz   # x86_64 Linux
 
 已验证（2026-11-16）：
 
-- 新的 Alpine minimal 镜像已在 Apple Silicon + Colima 实际构建并启动为 healthy；登录入口、无 editor 路由、配置标签和 113 MB `docker save` gzip 包均已验证。
-- 默认 Kali + KasmVNC + code-server 配置已实际重建并启动为 healthy；Debian minimal 适配也已完成实际构建。
-- Rust workspace 测试、Actionlint、Dockerfile 的 Kali/Alpine 构建检查全部通过。新的三个 GitHub 手动入口尚未推送到 GitHub 运行。
+- [最终覆盖矩阵](https://github.com/crkmythical/dev-workspace/actions/runs/43895296656) 在固定的 Ubuntu 24.04 原生 runner 上完成：13 种 pairwise + 边界配置、26 个 amd64/arm64 镜像，40/40 jobs 成功，覆盖清单定义的 108 个两两选项组合。
+- 每个架构镜像都实际检查了构建配置与应有/不应有的程序，启动容器并验证 vault 挂载及 uid/gid、登录入口、code-server 和 KasmVNC/Selkies 对应端口，最后执行 `docker save`、gzip 和 tar 完整性检查。矩阵测试包不上传。
+- Kali、Debian、Alpine 三个手动入口均已实际运行；Alpine minimal 还在 Apple Silicon + Colima 本机通过。Ubuntu 26.04/kernel 7.0 托管 runner 会拒绝 Alpine 的 FUSE 挂载，因此两个原生架构 runner 均显式固定为 Ubuntu 24.04，不再跟随 `ubuntu-latest` 漂移。
+- `v1.0.0` 两文件 Release 已实际发布并复核；Rust workspace 测试、Clippy、Actionlint、Compose 与 Dockerfile 检查通过。
 - 真实命名 Cloudflare Tunnel 已完成创建、DNS 路由、LaunchAgent、公网 302/登录页验证和删除。
 
 当前没验证的：
@@ -409,11 +410,11 @@ docker load < dev-workspace-kali-kasmvnc-linux-amd64.tar.gz   # x86_64 Linux
 Docker Desktop 本身和真实的裸机 Linux/systemd 路径（Colima 已验证）。
 Cloudflare Access 策略（命名 Tunnel 生命周期已经实测）。
 真实 R2 / AWS S3；以及将 VAULT_GIT_REPO 指向真实 GitHub 远端的复制与恢复（现有测试使用本地替身）。
-GitHub 上新的 构建镜像 — Kali/Debian/Alpine 入口和两文件 Release 尚未实际运行；定时 fuzz.yml、tools.yml 也尚未触发。
+GitHub 上的定时 fuzz.yml 和 tools.yml 尚未实际触发。
 机场节点的其他协议、真实订阅下的 mode:rule / REJECT。
 Tor 引导到 30% 以上，没等到 100%；出口防火墙开启时的 Tor。
 没完整建成过 Kali pentest rootfs。
 Kata microVM 隔离已接进编排并本机端到端跑通（`deploy/scripts/setup-kata-runtime.sh` + `deploy/orchestration/up-kata.sh`/`down-kata.sh`：完整工作区起进 microVM，vault/egress 防火墙/网关登录都通，runp 实测 10/10 稳定）。**未在生产环境验证的**：裸机 Linux 上的性能（嵌套 vz 下 virtio-fs I/O 慢，重型 GUI 会卡）、Mac 宿主端口暴露（需 `colima ssh -L` 隧道）、多实例 + Cloudflare 边缘的接入、Kata 下重跑整套 smoke。gVisor 仍不适用（netstack 无 nftables）。
-Selkies 本身曾在 GitHub amd64/arm64 runner 通过托管 smoke；新的可选配置打包入口尚未在 GitHub 运行。GPU 硬件编码、浏览器端出声以及 Firefox/Safari 客户端仍未验证。
+Selkies 的单栈与 KasmVNC+Selkies 双栈已在 amd64/arm64 的 Kali、Debian 覆盖配置中通过启动与端口检查；仍未验证 GPU 硬件编码、浏览器端出声及 Firefox/Safari 客户端。
 防火墙后的 GUI 应用：只验证了镜像自带的 Firefox ESR；Chromium/IDEA/Burp 没测。
 ```
