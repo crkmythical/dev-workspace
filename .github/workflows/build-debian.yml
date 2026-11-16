@@ -48,4 +48,3 @@ jobs:
       desktop_apps: ${{ inputs.desktop_apps }}
       pentest: ${{ inputs.pentest }}
       backup_transfer: ${{ inputs.backup_transfer }}
-      publish_release: false

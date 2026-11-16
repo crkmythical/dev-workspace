@@ -31,13 +31,8 @@ on:
         description: Backup and transfer tools
         type: string
         required: true
-      publish_release:
-        description: Attach the two archives to the current Git tag
-        type: boolean
-        default: false
-
-# The public entry workflows grant write only to the tagged Kali release path. Manual Debian and
-# Alpine builds remain read-only and finish as two short-lived Actions artifacts.
+# This shared workflow is read-only. The Kali entry owns the separate tag-only Release job;
+# manual Debian and Alpine builds finish as two short-lived Actions artifacts.
 permissions:
   contents: read
 
@@ -269,35 +264,3 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
-
-  release:
-    name: 发布两个架构包
-    if: inputs.publish_release
-    needs: [validate, build]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      GH_REPO: ${{ github.repository }}
-      IMAGE: ${{ needs.validate.outputs.image_name }}
-    steps:
-      - name: Download the two architecture packages
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          pattern: ${{ needs.validate.outputs.image_name }}-linux-*
-          path: dist
-          merge-multiple: true
-
-      - name: Verify and publish exactly two files
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -f "dist/${IMAGE}-linux-amd64.tar.gz"
-          test -f "dist/${IMAGE}-linux-arm64.tar.gz"
-          test "$(find dist -type f | wc -l | tr -d ' ')" -eq 2
-          tar -tzf "dist/${IMAGE}-linux-amd64.tar.gz" >/dev/null
-          tar -tzf "dist/${IMAGE}-linux-arm64.tar.gz" >/dev/null
-          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --title "$GITHUB_REF_NAME" \
-            "dist/${IMAGE}-linux-amd64.tar.gz" \
-            "dist/${IMAGE}-linux-arm64.tar.gz"

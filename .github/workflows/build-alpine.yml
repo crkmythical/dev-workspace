@@ -48,4 +48,3 @@ jobs:
       desktop_apps: none
       pentest: none
       backup_transfer: none
-      publish_release: false
