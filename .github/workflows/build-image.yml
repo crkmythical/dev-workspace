@@ -285,7 +285,25 @@ jobs:
           set -euo pipefail
           container="sdw-package-check-${{ matrix.arch }}"
           # shellcheck disable=SC2329 # invoked by trap
-          cleanup() { docker rm -f "$container" >/dev/null 2>&1 || true; }
+          finish() {
+            local rc="$?"
+            trap - EXIT
+            if [ "$rc" -ne 0 ] && docker inspect "$container" >/dev/null 2>&1; then
+              echo '--- container logs ---' >&2
+              docker logs "$container" >&2 || true
+              echo '--- vault diagnostics ---' >&2
+              docker exec "$container" sh -c '
+                id
+                ls -ld /dev/fuse /workspace /vault/cipher 2>&1 || true
+                mountpoint /workspace 2>&1 || true
+                mount | grep -E "(/workspace|fuse)" || true
+                gocryptfs -version 2>&1 || true
+                grep fuse /proc/filesystems 2>&1 || true
+              ' >&2 || true
+            fi
+            docker rm -f "$container" >/dev/null 2>&1 || true
+            exit "$rc"
+          }
           wait_port() {
             local port="$1"
             for _ in $(seq 1 60); do
@@ -305,7 +323,8 @@ jobs:
               return 1
             fi
           }
-          trap cleanup EXIT INT TERM HUP
+          trap finish EXIT
+          trap 'exit 130' INT TERM HUP
           docker run -d --name "$container" --privileged --device /dev/fuse \
             -e PASSWORD=ci-profile-check \
             -e CLASH_SUBSCRIPTION_URL=http://127.0.0.1:9/sub \
@@ -328,6 +347,7 @@ jobs:
           fi
 
           docker exec "$container" curl -fsS http://127.0.0.1:8080/auth/login >/dev/null
+          docker exec "$container" mountpoint -q /workspace
           test "$(docker exec "$container" stat -c '%u:%g' /workspace/home)" = 1000:1000
           test "$(docker exec "$container" stat -c '%u:%g' /workspace/home/.config)" = 1000:1000
 
