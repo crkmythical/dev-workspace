@@ -71,11 +71,11 @@ make smoke     # 对刚构建的镜像跑完整 smoke（含 vault/pentest/自毁
 git push origin main       # 触发 ci.yml：rust / host-macos / audit / scripts
 ```
 
-**Phase 3 — 打 tag 发布镜像 + Release**
+**Phase 3 — 打 tag 发布两个架构包**
 
 ```bash
-git tag v1.0.0 && git push origin v1.0.0   # 触发 build-image.yml
-# 产出：GHCR 的 :v1.0.0 / :latest / :v1.0.0-full / :latest-full；GitHub Release 含 9 个 sdw-host 资产
+git tag v1.0.0 && git push origin v1.0.0   # 触发 构建镜像 — Kali
+# GitHub Release 只有 dev-workspace-kali-kasmvnc-linux-{amd64,arm64}.tar.gz
 ```
 
 **Phase 4 — 运行并访问**
@@ -178,49 +178,39 @@ docker compose up -d
 
 ## 构建选项
 
-```bash
-# 默认 — 仅 KasmVNC（.deb 约 8 MB，构建很快）
-docker compose build
+每次选择一个基础系统、一组兼容套件；架构由发布工作流分别构建 amd64 和 arm64。公开的兼容清单是
+[`src/image/profiles.json`](src/image/profiles.json)。
 
-# 其它桌面栈
-DESKTOP_STACK=selkies docker compose build   # 仅 Selkies（Python 环境约 160 MB，该层约 4 分钟）
-DESKTOP_STACK=both docker compose build      # Selkies + KasmVNC 并行
+| 参数 | 可选值 | 默认 |
+|---|---|---|
+| `BASE_PROFILE` | `kali` / `debian` / `alpine` | `kali` |
+| `DESKTOP_STACK` | `none` / `kasmvnc` / `selkies` / `both` | `kasmvnc` |
+| `EDITOR_SUITE` | `none` / `code-server` | `code-server` |
+| `DEV_RUNTIMES` | `none` / `standard`（Java、Node、pnpm、Python） | `standard` |
+| `DESKTOP_APPS` | `none` / `firefox` | `firefox` |
+| `PENTEST_SUITE` | `none` / `bootstrap` | `bootstrap` |
+| `BACKUP_TRANSFER` | `none` / `standard`（restic、croc） | `standard` |
 
-# CI 预构建镜像：默认镜像 = KasmVNC；带 -full 后缀的镜像 = both
-#   ghcr.io/<owner>/dev-workspace:<tag>        KasmVNC
-#   ghcr.io/<owner>/dev-workspace:<tag>-full   Selkies + KasmVNC
-```
-
-### 基础镜像切换
-
-通过 `.env` 中的 `BASE_IMAGE` 和 `WORKSPACE_VARIANT` 控制：
+Kali 和 Debian 支持上表全部选择。Alpine 当前只支持所有可选套件均为 `none`；不兼容组合会在下载和编译前直接失败。
 
 ```bash
-# Kali（默认）— 自带渗透测试工具 apt 源
-BASE_IMAGE=kalilinux/kali-rolling
-WORKSPACE_VARIANT=latest
+# 默认：Kali + KasmVNC + code-server + 标准工具
+make build
 
-# Debian trixie — 更精简，适合纯开发
-BASE_IMAGE=debian:trixie-slim
-WORKSPACE_VARIANT=trixie
+# Debian + Selkies，不预装额外桌面应用
+BASE_PROFILE=debian BASE_IMAGE=debian:trixie-slim WORKSPACE_VARIANT=debian-selkies \
+  DESKTOP_STACK=selkies DESKTOP_APPS=none make build
+
+# Alpine 最小镜像
+BASE_PROFILE=alpine BASE_IMAGE=alpine:3.22 WORKSPACE_VARIANT=alpine-minimal \
+  DESKTOP_STACK=none EDITOR_SUITE=none DEV_RUNTIMES=none DESKTOP_APPS=none \
+  PENTEST_SUITE=none BACKUP_TRANSFER=none make build
 ```
 
-修改后重新构建即可：
+`WORKSPACE_VARIANT` 只控制本地镜像标签，不决定镜像内容。镜像实际配置写在 `/etc/sdw-build.json` 和 OCI labels 中。
+其他 Linux 发行版只有新增包管理器适配并在两个架构验证后，才加入关联清单。
 
-```bash
-docker compose build
-docker compose up -d
-```
-
-受限网络（例如需要镜像仓库）：把 `BASE_IMAGE` 指向可达的镜像地址即可。Debian 系基础镜像的 apt 源由 `APT_MIRROR` 决定，默认 `mirrors.aliyun.com`（大陆内很快，境外很慢），境外构建请设 `APT_MIRROR=deb.debian.org`。Kali 基础镜像沿用 Kali 自己的源，主机由 `KALI_MIRROR` 决定，默认官方重定向 `http.kali.org`（按位置选镜像，个别网络下只有约 14 KB/s），慢的话设 `KALI_MIRROR=mirrors.tuna.tsinghua.edu.cn`。
-
-也可以不改 `.env`，直接命令行覆盖构建另一个 tag：
-
-```bash
-docker build -t dev-workspace:trixie -f src/image/Dockerfile --build-arg BASE_IMAGE=debian:trixie-slim ./src
-```
-
-两个镜像除 OS 标识外工具链完全一致。项目自身的运行时、协议和浏览器同步页均为 Rust；同步页在构建阶段编译为 WebAssembly。Node、Python 和 Java 只是预装给用户的开发工具，不参与本项目运行。
+受限网络可以用 `APT_MIRROR`、`KALI_MIRROR`、`BUILD_PROXY` 和 `SDW_GH_MIRROR`，具体说明见 `.env.example`。
 
 ## 容器内命令
 
@@ -375,49 +365,41 @@ make test-host     # 全生命周期 fake Cloudflare/Docker + 销毁范围测试
 
 ## CI/CD（GitHub Actions）
 
-镜像在推送 `v*` tag 时自动构建并推送，配置文件：`.github/workflows/build-image.yml`。
+Actions 页面提供三个清晰的手动入口：
 
-- **镜像变体**：默认镜像只含 KasmVNC；带 `-full` 后缀的镜像含 Selkies + KasmVNC（`DESKTOP_STACK=both`）。每次发布都会构建两种，保证 Selkies 一直可用
-- **多架构**：`linux/amd64` + `linux/arm64`（原生 runner，无 QEMU 模拟）
-- **Registry**：GHCR（始终推送）+ Docker Hub（配置 secrets 后自动推送）
-- **宿主二进制**：原生构建 `linux-{amd64,arm64}` 与 `darwin-{amd64,arm64}`；4 个 `.tar.gz`、4 个独立 SHA-256 和总 `SHA256SUMS` 共 9 个 Release assets
-- **发布顺序**：四个镜像候选逐一 smoke、manifest 和四个宿主构建全部通过后，才从 draft 发布 GitHub Release；已发布资产拒绝覆盖
-- **缓存**：按变体与架构分离的 registry cache（GHCR 上的 `cache-<variant>-<arch>` tag）
+- **构建镜像 — Kali**：显示 Kali 支持的桌面、editor 和附加套件
+- **构建镜像 — Debian**：显示 Debian 支持的套件
+- **构建镜像 — Alpine**：当前所有可选套件的下拉列表都只有 `none`
 
-### 配置步骤
+三个入口调用同一个 [共享构建流程](.github/workflows/build-image.yml)，关联规则来自
+[`src/image/profiles.json`](src/image/profiles.json)。每次只构建所选配置，并在 amd64、arm64 原生 runner 上各构建一次。
 
-1. 在 GitHub repo **Settings → Secrets and variables → Actions** 中添加：
-   - `DOCKERHUB_USERNAME` — Docker Hub 用户名
-   - `DOCKERHUB_TOKEN` — Docker Hub Access Token（在 hub.docker.com → Account Settings → Security 生成）
-   - GHCR 无需额外配置，`GITHUB_TOKEN` 自带 `packages:write` 权限
+最终只有两个 Actions artifacts，保留 7 天：
 
-2. 打 tag 触发构建：
-
-```bash
-git tag v1.0.0
-git push origin v1.0.0
+```text
+dev-workspace-<base>-<desktop>-linux-amd64.tar.gz
+dev-workspace-<base>-<desktop>-linux-arm64.tar.gz
 ```
 
-3. 拉取构建好的镜像：
+推送 `v*` tag 会用 Kali 的默认选项构建，并把同样两个文件放进 GitHub Release。发布流程不再生成 GHCR/Docker Hub
+候选标签、`-full` 变体、`sdw-host` 安装包、SBOM/provenance 或成功截图；Docker 的 `.dockerbuild` 记录也已关闭。
+完整 smoke 仍由 `smoke.yml` 独立运行，只有失败时才保留截图。打包流程只做快速启动、健康和内容检查。
+构建缓存保留在 Actions cache 中，不作为下载产物。
+
+下载后直接导入匹配机器架构的文件：
 
 ```bash
-# 从 GHCR（默认：KasmVNC；`-full`：Selkies + KasmVNC）
-docker pull ghcr.io/<owner>/dev-workspace:latest
-docker pull ghcr.io/<owner>/dev-workspace:latest-full
-
-# 从 Docker Hub
-docker pull <username>/dev-workspace:latest
+docker load < dev-workspace-kali-kasmvnc-linux-arm64.tar.gz   # ARM Linux / Android Podroid
+docker load < dev-workspace-kali-kasmvnc-linux-amd64.tar.gz   # x86_64 Linux
 ```
 
-也可通过 Actions → "Run workflow" 手动触发（同样构建两种变体）。
-
-
+`sdw-host` 不再混在镜像发布中；需要时从源码运行 `make install-host`。
 
 已验证（2026-11-16）：
 
-- Apple Silicon + Colima 上从当前 Dockerfile 完成 `make check`、`make build` 和完整 `make smoke`（含 services）：**564 通过 / 0 失败 / 1 跳过**。唯一跳过是当前网络无法访问 Google 启动探针；同组的 Clash/Shadowsocks 实际数据路径通过。vault 锁定/解锁、pentest、真实 Chrome、权限边界、备份/恢复和两条自毁路径均在本地特权环境中实际执行。
-- GitHub Actions 已真实运行：`ci.yml` 的 rust / host-macos / audit / scripts 全绿；手动托管 smoke 为 **523 通过 / 0 失败 / 5 跳过**（仅跳过托管 runner 不具备的 FUSE 卸载和 ptrace 隔离段）；tag 发布中 default/full × amd64/arm64 四个原生镜像候选、四平台 `sdw-host`、两个多架构 manifest 和 9 资产 Release 全部成功。测试 tag 和 Release 在验证后删除。
-- 公开 GHCR 镜像已匿名拉取到 Colima，容器启动为 healthy，`doctor` 与本地登录网关通过。
+- 新的 Alpine minimal 镜像已在 Apple Silicon + Colima 实际构建并启动为 healthy；登录入口、无 editor 路由、配置标签和 113 MB `docker save` gzip 包均已验证。
+- 默认 Kali + KasmVNC + code-server 配置已实际重建并启动为 healthy；Debian minimal 适配也已完成实际构建。
+- Rust workspace 测试、Actionlint、Dockerfile 的 Kali/Alpine 构建检查全部通过。新的三个 GitHub 手动入口尚未推送到 GitHub 运行。
 - 真实命名 Cloudflare Tunnel 已完成创建、DNS 路由、LaunchAgent、公网 302/登录页验证和删除。
 
 当前没验证的：
@@ -426,11 +408,11 @@ docker pull <username>/dev-workspace:latest
 Docker Desktop 本身和真实的裸机 Linux/systemd 路径（Colima 已验证）。
 Cloudflare Access 策略（命名 Tunnel 生命周期已经实测）。
 真实 R2 / AWS S3；以及将 VAULT_GIT_REPO 指向真实 GitHub 远端的复制与恢复（现有测试使用本地替身）。
-GitHub 上的定时 fuzz.yml 和 tools.yml（ci.yml、smoke.yml、build-image.yml 已真实运行）。
+GitHub 上新的 构建镜像 — Kali/Debian/Alpine 入口和两文件 Release 尚未实际运行；定时 fuzz.yml、tools.yml 也尚未触发。
 机场节点的其他协议、真实订阅下的 mode:rule / REJECT。
 Tor 引导到 30% 以上，没等到 100%；出口防火墙开启时的 Tor。
 没完整建成过 Kali pentest rootfs。
 Kata microVM 隔离已接进编排并本机端到端跑通（`deploy/scripts/setup-kata-runtime.sh` + `deploy/orchestration/up-kata.sh`/`down-kata.sh`：完整工作区起进 microVM，vault/egress 防火墙/网关登录都通，runp 实测 10/10 稳定）。**未在生产环境验证的**：裸机 Linux 上的性能（嵌套 vz 下 virtio-fs I/O 慢，重型 GUI 会卡）、Mac 宿主端口暴露（需 `colima ssh -L` 隧道）、多实例 + Cloudflare 边缘的接入、Kata 下重跑整套 smoke。gVisor 仍不适用（netstack 无 nftables）。
-Selkies：default/full 两个变体已在 GitHub 的 amd64/arm64 原生 runner 构建并通过托管 smoke；仍未验证 GPU 硬件编码（容器里用软件 x264）、浏览器端出声、Firefox/Safari 客户端（只试过 Chrome/Chromium）。
+Selkies 本身曾在 GitHub amd64/arm64 runner 通过托管 smoke；新的可选配置打包入口尚未在 GitHub 运行。GPU 硬件编码、浏览器端出声以及 Firefox/Safari 客户端仍未验证。
 防火墙后的 GUI 应用：只验证了镜像自带的 Firefox ESR；Chromium/IDEA/Burp 没测。
 ```

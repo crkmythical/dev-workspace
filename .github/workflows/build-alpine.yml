@@ -1,0 +1,51 @@
+name: 构建镜像 — Alpine
+
+on:
+  workflow_dispatch:
+    inputs:
+      desktop:
+        description: 桌面套件（Alpine 暂不支持）
+        type: choice
+        options: [none]
+        default: none
+      editor:
+        description: 浏览器编辑器（Alpine 暂不支持）
+        type: choice
+        options: [none]
+        default: none
+      dev_runtimes:
+        description: 开发环境（Alpine 暂不支持）
+        type: choice
+        options: [none]
+        default: none
+      desktop_apps:
+        description: 桌面应用（Alpine 暂不支持）
+        type: choice
+        options: [none]
+        default: none
+      pentest:
+        description: 渗透测试套件（Alpine 暂不支持）
+        type: choice
+        options: [none]
+        default: none
+      backup_transfer:
+        description: 备份与传输套件（Alpine 暂不支持）
+        type: choice
+        options: [none]
+        default: none
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-image.yml
+    with:
+      base: alpine
+      desktop: none
+      editor: none
+      dev_runtimes: none
+      desktop_apps: none
+      pentest: none
+      backup_transfer: none
+      publish_release: false

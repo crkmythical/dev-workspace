@@ -224,7 +224,7 @@ pub fn run(args: &[String]) -> i32 {
 
     // Done
     println!("\n=== 配置完成 ===");
-    println!("  code-server: http://localhost:{}", config.host_port);
+    println!("  Web 入口:    http://localhost:{}", config.host_port);
     println!("  远程访问:    经 Cloudflare Tunnel 暴露的域名（宿主机 scripts/setup-cloudflared.sh 配置）");
     println!("  健康检查:    docker exec dev-workspace doctor");
     if vault_initialized() {

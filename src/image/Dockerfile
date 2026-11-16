@@ -79,100 +79,127 @@ HEALTHCHECK --interval=30s --timeout=15s --start-period=90s --retries=3 \
   CMD ["setpriv", "--reuid=clash", "--regid=clash", "--clear-groups", "/usr/local/bin/sdw", "proxy-only", "--check"]
 ENTRYPOINT ["/usr/local/bin/sdw", "proxy-only"]
 
-# Base image toggle.
-#   Default: kalilinux/kali-rolling — the production base, full pentest toolchain
-#   via apt. Kali tracks Debian testing, which is what the Selkies and KasmVNC builds this image
-#   installs target (a recent libva in particular: with an older one, bookworm's 2.17, Selkies' capture
-#   library fails to load and the desktop shows "Waiting for stream...").
-#   Alternative: build with `--build-arg BASE_IMAGE=debian:trixie-slim` for a
-#   leaner non-pentest base. Do NOT use bookworm without vendoring a newer libva.
+# Runtime profile. BASE_IMAGE supplies the userland; BASE_PROFILE selects its tested package
+# adapter. They are deliberately separate so a mirror may replace an image reference without
+# pretending that an arbitrary distribution is compatible.
 FROM ${BASE_IMAGE}
 
-# Desktop streaming stack selector (build-time):
-#   kasmvnc (default) — KasmVNC only (/vnc/): an ~8 MB .deb, builds in seconds
-#   selkies           — Selkies only (/desktop/): H.264/WebCodecs, a ~160 MB Python venv
-#   both              — Selkies + KasmVNC in parallel (published as the `-full` image)
-#   none              — headless: no desktop at all (code-server only; the lean phone/AVF profile)
-# Recorded in /etc/sdw-desktop-stack; parsed by the Rust desktop domain at runtime.
+ARG BASE_PROFILE=auto
 ARG DESKTOP_STACK=kasmvnc
+ARG EDITOR_SUITE=code-server
+ARG DEV_RUNTIMES=standard
+ARG DESKTOP_APPS=firefox
+ARG PENTEST_SUITE=bootstrap
+ARG BACKUP_TRANSFER=standard
+
+# Fail before downloads if a caller bypasses the GitHub form with an invalid combination. The same
+# compatibility data is exposed to CI in image/profiles.json; this in-image check is the last line
+# of defence for direct `docker build` calls.
+RUN set -eu; \
+    . /etc/os-release; \
+    profile="$BASE_PROFILE"; \
+    if [ "$profile" = auto ]; then profile="$ID"; fi; \
+    case "${profile}:${ID}" in \
+      kali:kali|debian:debian|alpine:alpine) ;; \
+      *) echo "BASE_PROFILE=${BASE_PROFILE} does not match base image ID=${ID}" >&2; exit 2 ;; \
+    esac; \
+    case "$DESKTOP_STACK" in none|kasmvnc|selkies|both) ;; *) echo "invalid DESKTOP_STACK=$DESKTOP_STACK" >&2; exit 2 ;; esac; \
+    case "$EDITOR_SUITE" in none|code-server) ;; *) echo "invalid EDITOR_SUITE=$EDITOR_SUITE" >&2; exit 2 ;; esac; \
+    case "$DEV_RUNTIMES" in none|standard) ;; *) echo "invalid DEV_RUNTIMES=$DEV_RUNTIMES" >&2; exit 2 ;; esac; \
+    case "$DESKTOP_APPS" in none|firefox) ;; *) echo "invalid DESKTOP_APPS=$DESKTOP_APPS" >&2; exit 2 ;; esac; \
+    case "$PENTEST_SUITE" in none|bootstrap) ;; *) echo "invalid PENTEST_SUITE=$PENTEST_SUITE" >&2; exit 2 ;; esac; \
+    case "$BACKUP_TRANSFER" in none|standard) ;; *) echo "invalid BACKUP_TRANSFER=$BACKUP_TRANSFER" >&2; exit 2 ;; esac; \
+    if [ "$profile" = alpine ]; then \
+      [ "$DESKTOP_STACK" = none ] && [ "$EDITOR_SUITE" = none ] \
+        && [ "$DEV_RUNTIMES" = none ] && [ "$DESKTOP_APPS" = none ] \
+        && [ "$PENTEST_SUITE" = none ] && [ "$BACKUP_TRANSFER" = none ] \
+        || { echo "Alpine currently supports only none for desktop and optional suites" >&2; exit 2; }; \
+    fi; \
+    echo "$profile" > /etc/sdw-base-profile
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV LANG=en_US.UTF-8
+ENV LANG=C.UTF-8
 ENV TZ=Asia/Shanghai
 
-# Apt sources. Kali keeps its official repos (deb822 /etc/apt/sources.list.d/
-# kali.sources — do NOT delete it); KALI_MIRROR only swaps the host inside it. The default,
-# the official redirector, picks a mirror by location and can pick a very slow one (~14 KB/s
-# was seen): build with e.g. --build-arg KALI_MIRROR=mirrors.tuna.tsinghua.edu.cn there.
-# Debian bases switch to APT_MIRROR: Aliyun by default (fast inside mainland China, very
-# slow elsewhere: build with --build-arg APT_MIRROR=deb.debian.org there).
+# Configure only the package family selected by the profile. Kali keeps its own repositories;
+# Debian gets the requested mirror; Alpine keeps the repositories supplied by its base image.
 ARG APT_MIRROR=mirrors.aliyun.com
 ARG KALI_MIRROR=http.kali.org
-RUN . /etc/os-release && \
-    if [ "$ID" = "kali" ]; then \
+RUN set -eu; \
+    profile="$(cat /etc/sdw-base-profile)"; \
+    if [ "$profile" = kali ]; then \
       sed -i "s#http://http.kali.org/kali#http://${KALI_MIRROR}/kali#" /etc/apt/sources.list.d/kali.sources; \
-    else \
+    elif [ "$profile" = debian ]; then \
       rm -f /etc/apt/sources.list.d/*; \
-      CN="${VERSION_CODENAME:-trixie}"; \
+      . /etc/os-release; CN="${VERSION_CODENAME:-trixie}"; \
       { echo "deb http://${APT_MIRROR}/debian ${CN} main contrib non-free non-free-firmware"; \
         echo "deb http://${APT_MIRROR}/debian ${CN}-updates main contrib non-free non-free-firmware"; \
         echo "deb http://${APT_MIRROR}/debian-security ${CN}-security main contrib non-free non-free-firmware"; \
       } > /etc/apt/sources.list; \
+    else \
+      echo "Using Alpine repositories from the base image"; \
     fi
 
-# apt hygiene (size only, no package/feature removed): a dpkg path-exclude config so NO apt layer
-# below writes package docs, man/info pages, or other languages' UI translations (kept: en + zh_CN
-# message catalogs, and each package's copyright for license compliance). Set BEFORE any install so
-# every layer is smaller — a later `rm` cannot shrink bytes already committed to earlier layers.
-# The rm/find then clears what the base image already shipped.
-RUN printf '%s\n' \
-      'path-exclude /usr/share/doc/*' \
-      'path-include /usr/share/doc/*/copyright' \
-      'path-exclude /usr/share/man/*' \
-      'path-exclude /usr/share/groff/*' \
-      'path-exclude /usr/share/info/*' \
-      'path-exclude /usr/share/lintian/*' \
-      'path-exclude /usr/share/linda/*' \
-      'path-exclude /usr/share/locale/*' \
-      'path-include /usr/share/locale/en*' \
-      'path-include /usr/share/locale/zh_CN*' \
-      'path-include /usr/share/locale/locale.alias' \
-      > /etc/dpkg/dpkg.cfg.d/01-sdw-slim \
-    && rm -rf /usr/share/man /usr/share/groff /usr/share/info /usr/share/doc /usr/share/lintian /usr/share/linda \
-    && find /usr/share/locale -mindepth 1 -maxdepth 1 ! -name 'en*' ! -name 'zh_CN*' ! -name 'locale.alias' -exec rm -rf {} +
+# Debian-family size hygiene. Alpine has no dpkg database or locale tree to rewrite.
+RUN profile="$(cat /etc/sdw-base-profile)"; \
+    if [ "$profile" != alpine ]; then \
+      printf '%s\n' \
+        'path-exclude /usr/share/doc/*' \
+        'path-include /usr/share/doc/*/copyright' \
+        'path-exclude /usr/share/man/*' \
+        'path-exclude /usr/share/groff/*' \
+        'path-exclude /usr/share/info/*' \
+        'path-exclude /usr/share/lintian/*' \
+        'path-exclude /usr/share/linda/*' \
+        'path-exclude /usr/share/locale/*' \
+        'path-include /usr/share/locale/en*' \
+        'path-include /usr/share/locale/zh_CN*' \
+        'path-include /usr/share/locale/locale.alias' \
+        > /etc/dpkg/dpkg.cfg.d/01-sdw-slim; \
+      rm -rf /usr/share/man /usr/share/groff /usr/share/info /usr/share/doc /usr/share/lintian /usr/share/linda; \
+      find /usr/share/locale -mindepth 1 -maxdepth 1 ! -name 'en*' ! -name 'zh_CN*' ! -name 'locale.alias' -exec rm -rf {} +; \
+    fi
 
-# Core layer: system packages
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    tini \
-    supervisor \
-    gocryptfs \
-    fuse3 \
-    procps \
-    psmisc \
-    netcat-openbsd \
-    unzip \
-    git \
-    git-lfs \
-    openssh-client \
-    ca-certificates \
-    cron \
-    curl \
-    bzip2 \
-    jq \
-    tmux \
-    bash \
-    locales \
-    debootstrap \
-    vim \
-    firefox-esr \
-    nftables \
-    iptables \
-    libcap2-bin \
-    && sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen \
-    && locale-gen \
-    && apt-get autoremove -y \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+# Core runtime. Optional editors, language runtimes, desktop applications, pentest bootstrap and
+# transfer tools are installed in their own layers below, so `none` really omits their bytes.
+RUN set -eux; \
+    profile="$(cat /etc/sdw-base-profile)"; \
+    if [ "$profile" = alpine ]; then \
+      apk add --no-cache \
+        tini supervisor gocryptfs fuse3 procps psmisc netcat-openbsd unzip git git-lfs \
+        openssh-client ca-certificates cronie curl bzip2 jq tmux bash vim nftables iptables \
+        libcap shadow util-linux findutils coreutils grep sed tzdata doas iproute2; \
+      ln -sfn /usr/sbin/crond /usr/sbin/cron; \
+    else \
+      apt-get update; \
+      apt-get install -y --no-install-recommends \
+        tini supervisor gocryptfs fuse3 procps psmisc netcat-openbsd unzip git git-lfs \
+        openssh-client ca-certificates cron curl bzip2 jq tmux bash locales vim nftables \
+        iptables libcap2-bin util-linux coreutils findutils iproute2 tzdata; \
+      sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen; \
+      locale-gen; \
+      apt-get autoremove -y; \
+      apt-get clean; \
+      rm -rf /var/lib/apt/lists/*; \
+    fi
+
+# The encrypted pentest rootfs is created at runtime; this suite only supplies its Debian-family
+# bootstrap tool. Alpine exposes `none` until that path has a tested apk-native implementation.
+RUN if [ "$PENTEST_SUITE" = bootstrap ]; then \
+      apt-get update && apt-get install -y --no-install-recommends debootstrap \
+        && rm -rf /var/lib/apt/lists/*; \
+    else \
+      echo "Skipping pentest bootstrap support"; \
+    fi
+
+# Browser preinstall is independent from the desktop transport. Other GUI applications remain
+# available through `desktop-install`, rather than making every image carry them.
+RUN if [ "$DESKTOP_APPS" = firefox ]; then \
+      apt-get update && apt-get install -y --no-install-recommends firefox-esr \
+        && rm -rf /var/lib/apt/lists/*; \
+    else \
+      echo "Skipping preinstalled desktop applications"; \
+    fi
 
 # No JavaScript runtime is needed by the workspace application itself: the CLI, entrypoint,
 # daemons and browser UI are Rust (`sdw` + WebAssembly). Node remains installed only as a user
@@ -184,7 +211,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # desktop experience regardless of the streaming backend.
 # DESKTOP_STACK=none (the headless / phone-AVF profile) skips this whole layer: no X server, no
 # XFCE, no CJK fonts — the ~500 MB a phone VM does not want and that a stock-AVF guest kernel cannot
-# render well anyway (software GL, no SysV IPC). Only code-server and the services run.
+# render well anyway (software GL, no SysV IPC). The selected editor and core services still run.
 ARG DESKTOP_STACK
 RUN if [ "$DESKTOP_STACK" = "none" ]; then \
       echo "Skipping desktop-common install (DESKTOP_STACK=none)"; \
@@ -289,63 +316,66 @@ RUN set -eux; \
 # Install restic (realtime backup to S3): one static binary, no runtime deps. Downloaded to a file and
 # verified BEFORE it is decompressed: a pipe straight into an executable cannot be checked.
 COPY image/tools/restic.env /usr/local/lib/sdw/tools/restic.env
-RUN set -eux; \
-    /usr/local/lib/sdw/fetch-tool restic /tmp/restic.bz2; \
-    bunzip2 < /tmp/restic.bz2 > /usr/local/bin/restic; \
-    rm -f /tmp/restic.bz2; \
-    chmod +x /usr/local/bin/restic; \
-    restic version
+RUN if [ "$BACKUP_TRANSFER" = standard ]; then \
+      set -eux; \
+      /usr/local/lib/sdw/fetch-tool restic /tmp/restic.bz2; \
+      bunzip2 < /tmp/restic.bz2 > /usr/local/bin/restic; \
+      rm -f /tmp/restic.bz2; \
+      chmod +x /usr/local/bin/restic; \
+      restic version; \
+    else \
+      echo "Skipping restic"; \
+    fi
 
 # Install croc (peer-to-peer, end-to-end encrypted file transfer for `push`/`pull`): a single static
 # Go binary, pinned and verified like restic.
 COPY image/tools/croc.env /usr/local/lib/sdw/tools/croc.env
-RUN set -eux; \
-    /usr/local/lib/sdw/fetch-tool croc /tmp/croc.tar.gz; \
-    tar -xzf /tmp/croc.tar.gz -C /usr/local/bin croc; \
-    rm -f /tmp/croc.tar.gz; \
-    croc --version
+RUN if [ "$BACKUP_TRANSFER" = standard ]; then \
+      set -eux; \
+      /usr/local/lib/sdw/fetch-tool croc /tmp/croc.tar.gz; \
+      tar -xzf /tmp/croc.tar.gz -C /usr/local/bin croc; \
+      rm -f /tmp/croc.tar.gz; \
+      croc --version; \
+    else \
+      echo "Skipping croc"; \
+    fi
 
 # Install mise (runtime version manager): the pinned release binary, verified. The installer script
 # (mise.jdx.dev/install.sh) is not used any more; running whatever that URL returns was the one
 # unverified step left in the image.
 COPY image/tools/mise.env /usr/local/lib/sdw/tools/mise.env
-RUN set -eux; \
-    /usr/local/lib/sdw/fetch-tool mise /tmp/mise.tar.gz; \
-    tar -xzf /tmp/mise.tar.gz -C /tmp mise/bin/mise; \
-    install -m 0755 /tmp/mise/bin/mise /usr/local/bin/mise; \
-    rm -rf /tmp/mise /tmp/mise.tar.gz; \
-    mise --version
-# The runtimes are a system install under /opt/mise: root-owned and read-only to the unprivileged
-# workload user, which installs its own tools into its home (MISE_DATA_DIR there) and sees these
-# through MISE_SYSTEM_DATA_DIR. For root (the build, the operator) the data dir is the same place.
+RUN if [ "$DEV_RUNTIMES" = standard ]; then \
+      set -eux; \
+      /usr/local/lib/sdw/fetch-tool mise /tmp/mise.tar.gz; \
+      tar -xzf /tmp/mise.tar.gz -C /tmp mise/bin/mise; \
+      install -m 0755 /tmp/mise/bin/mise /usr/local/bin/mise; \
+      rm -rf /tmp/mise /tmp/mise.tar.gz; \
+      mise --version; \
+    else \
+      echo "Skipping mise and preinstalled language runtimes"; \
+    fi
+# The runtimes are a system install under /opt/mise when the standard development suite is selected.
 ENV MISE_DATA_DIR=/opt/mise
 ENV MISE_SYSTEM_DATA_DIR=/opt/mise
 
-# Language runtimes are pinned once in image/.mise.toml. The install commands below name only the
-# tools, so changing a version never requires editing this Dockerfile too. mise verifies downloads.
 COPY image/.mise.toml /etc/mise/config.toml
+RUN if [ "$DEV_RUNTIMES" = standard ]; then \
+      MISE_HTTP_TIMEOUT=120 mise install java && mise reshim \
+        && JH="$(mise where java)" \
+        && rm -rf "$JH/lib/src.zip" "$JH/demo" "$JH/man" "$JH/sample" "$JH/legal" \
+        && rm -rf /root/.cache/mise; \
+    fi
+RUN if [ "$DEV_RUNTIMES" = standard ]; then \
+      MISE_HTTP_TIMEOUT=120 mise install node && mise reshim && rm -rf /root/.cache/mise; \
+    fi
+RUN if [ "$DEV_RUNTIMES" = standard ]; then \
+      MISE_HTTP_TIMEOUT=120 mise install python && mise reshim && rm -rf /root/.cache/mise; \
+    fi
+RUN if [ "$DEV_RUNTIMES" = standard ]; then \
+      MISE_HTTP_TIMEOUT=120 mise install pnpm && mise reshim && rm -rf /root/.cache/mise; \
+    fi
 
-# Java layer — online download via mise. Trim, in-layer (so the layer actually shrinks), what a JDK
-# does not need to compile or run code: the source bundle for IDE navigation (src.zip), demos,
-# man pages, samples and license texts. jmods (needed only for `jlink` custom runtimes) is kept.
-# Then drop mise's download-archive cache — the runtime is already extracted under /opt/mise.
-RUN MISE_HTTP_TIMEOUT=120 mise install java && mise reshim \
-    && JH="$(mise where java)" \
-    && rm -rf "$JH/lib/src.zip" "$JH/demo" "$JH/man" "$JH/sample" "$JH/legal" \
-    && rm -rf /root/.cache/mise
-
-# Node, Python and pnpm are independent cache/failure domains. One flaky upstream must not discard
-# another tool's successful 60 MB download and force all three to start again. The longer timeout
-# is local to each build step and does not enter the final runtime environment.
-RUN MISE_HTTP_TIMEOUT=120 mise install node && mise reshim \
-    && rm -rf /root/.cache/mise
-RUN MISE_HTTP_TIMEOUT=120 mise install python && mise reshim \
-    && rm -rf /root/.cache/mise
-RUN MISE_HTTP_TIMEOUT=120 mise install pnpm && mise reshim \
-    && rm -rf /root/.cache/mise
-
-# One stable path for the JDK whatever its version: the install directory is named after it.
-RUN ln -sfn "$(mise where java)" /opt/java
+RUN if [ "$DEV_RUNTIMES" = standard ]; then ln -sfn "$(mise where java)" /opt/java; fi
 ENV PATH="/opt/mise/shims:${PATH}"
 ENV JAVA_HOME="/opt/java"
 
@@ -359,13 +389,15 @@ RUN /usr/bin/clash -v
 # non-root process cannot do without a capability, so grant the binary cap_net_bind_service.
 # nftables + libcap2-bin are installed in the core apt layer; the filter is loaded at boot by
 # `sdw entrypoint` (the enforce-egress step) unless EGRESS_ENFORCE=0.
-RUN useradd --system --no-create-home --shell /usr/sbin/nologin clash \
+RUN nologin="$(command -v nologin)" \
+    && useradd --system --no-create-home --shell "$nologin" clash \
     && setcap 'cap_net_bind_service=+ep' /usr/bin/clash
 
 # Caddy is the only program facing the network and needs no privilege, so supervisord runs it as
 # its own user (src/image/supervisord.conf). It keeps its state, which it must be able to write,
 # under /var/lib/caddy.
-RUN useradd --system --no-create-home --home-dir /var/lib/caddy --shell /usr/sbin/nologin caddy \
+RUN nologin="$(command -v nologin)" \
+    && useradd --system --no-create-home --home-dir /var/lib/caddy --shell "$nologin" caddy \
     && install -d -o caddy -g caddy -m 0700 /var/lib/caddy
 
 # The audit trail (JSON lines: logins, self-destruct calls, egress changes) is written under
@@ -374,22 +406,25 @@ RUN useradd --system --no-create-home --home-dir /var/lib/caddy --shell /usr/sbi
 # /var/log/desktop, which must exist before supervisord starts them.
 RUN install -d -m 0700 /var/log/sdw && install -d -m 0755 /var/log/desktop
 
-# Install code-server: the pinned .deb, verified (image/tools/code-server.env). The official install.sh
-# is not run: it fetches the same package, but unpinned and unchecked.
+# Optional browser editor. Alpine exposes only `none` until its non-deb distribution is pinned and
+# tested; Debian-family profiles install the exact checked package below.
 COPY image/tools/code-server.env /usr/local/lib/sdw/tools/code-server.env
-RUN set -eux; \
-    /usr/local/lib/sdw/fetch-tool code-server /tmp/code-server.deb; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends /tmp/code-server.deb; \
-    rm -f /tmp/code-server.deb; \
-    rm -rf /var/lib/apt/lists/*; \
-    code-server --version
+RUN if [ "$EDITOR_SUITE" = code-server ]; then \
+      set -eux; \
+      /usr/local/lib/sdw/fetch-tool code-server /tmp/code-server.deb; \
+      apt-get update; \
+      apt-get install -y --no-install-recommends /tmp/code-server.deb; \
+      rm -f /tmp/code-server.deb; \
+      rm -rf /var/lib/apt/lists/*; \
+      code-server --version; \
+    else \
+      echo "Skipping code-server"; \
+    fi
 
 # Filesystem prep
 RUN mkdir -p /workspace /vault/cipher /etc/supervisor/conf.d /var/run/vault-sync \
-    /etc/caddy /etc/clash /opt/workspace \
-    /pentest/cipher /pentest/rootfs \
-    /opt/desktop-apps /tmp/.desktop-cache
+    /etc/caddy /etc/caddy/editor.d /etc/clash /opt/workspace /opt/editor-conf /opt/supervisor-conf \
+    /pentest/cipher /pentest/rootfs /opt/desktop-apps /tmp/.desktop-cache
 
 # Desktop apps registry
 RUN echo '[]' > /opt/desktop-apps/.registry.json
@@ -405,10 +440,11 @@ RUN echo 'export http_proxy=http://127.0.0.1:7890' >> /etc/profile.d/proxy.sh &&
     echo 'export HTTPS_PROXY=$https_proxy' >> /etc/profile.d/proxy.sh && \
     echo 'export ALL_PROXY=$all_proxy' >> /etc/profile.d/proxy.sh && \
     echo 'export NO_PROXY=$no_proxy' >> /etc/profile.d/proxy.sh && \
-    echo 'eval "$(mise activate bash)"' >> /etc/profile.d/proxy.sh && \
+    echo 'command -v mise >/dev/null 2>&1 && eval "$(mise activate bash)"' >> /etc/profile.d/proxy.sh && \
     echo '# noproxy: run a command without the proxy variables, so it connects directly. With the egress firewall on (the default) that connection is dropped; EGRESS_ENFORCE=0 turns the firewall off.' >> /etc/profile.d/proxy.sh && \
     echo 'noproxy() { env -u http_proxy -u https_proxy -u all_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY "$@"; }' >> /etc/profile.d/proxy.sh && \
     chmod +x /etc/profile.d/proxy.sh && \
+    touch /etc/bash.bashrc && \
     echo 'source /etc/profile.d/proxy.sh' >> /root/.bashrc && \
     echo '[ -r /etc/profile.d/proxy.sh ] && . /etc/profile.d/proxy.sh' >> /etc/bash.bashrc
 
@@ -418,6 +454,14 @@ COPY image/supervisord.conf /etc/supervisor/supervisord.conf
 # the image only when it is created, so a template inside it would never be updated again.
 COPY image/share/clash/config.yaml.template /usr/share/sdw/clash/config.yaml.template
 COPY image/etc/caddy/Caddyfile /etc/caddy/Caddyfile
+COPY image/etc/caddy/editor-code-server.caddy /opt/editor-conf/code-server.caddy
+COPY image/etc/caddy/editor-none.caddy /opt/editor-conf/none.caddy
+COPY image/etc/supervisor/code-server.conf /opt/supervisor-conf/code-server.conf
+RUN echo "$EDITOR_SUITE" > /etc/sdw-editor-suite \
+    && cp "/opt/editor-conf/${EDITOR_SUITE}.caddy" /etc/caddy/editor.d/editor.caddy \
+    && if [ "$EDITOR_SUITE" = code-server ]; then \
+         cp /opt/supervisor-conf/code-server.conf /etc/supervisor/conf.d/code-server.conf; \
+       fi
 COPY image/etc/README-UNLOCK.md /workspace/README-UNLOCK.md
 COPY image/etc/cron.d/vault-sync /etc/cron.d/vault-sync
 COPY image/etc/cron.d/cleanup /etc/cron.d/cleanup
@@ -431,10 +475,8 @@ COPY image/etc/supervisor/desktop-vnc.conf /opt/desktop-conf/supervisor-vnc.conf
 COPY image/etc/caddy/desktop-selkies.caddy /opt/desktop-conf/caddy-selkies.caddy
 COPY image/etc/caddy/desktop-vnc.caddy /opt/desktop-conf/caddy-vnc.caddy
 
-# Provision desktop topology + record the stack marker. "both" installs both
-# supervisor groups and both Caddy snippets; single-stack installs only one.
-ARG DESKTOP_STACK
-RUN mkdir -p /etc/supervisor/conf.d /etc/caddy/desktop.d && \
+# Provision desktop topology and record the complete selected profile inside the image.
+RUN mkdir -p /etc/supervisor/conf.d /etc/caddy/desktop.d /usr/share/sdw && \
     echo "${DESKTOP_STACK}" > /etc/sdw-desktop-stack && \
     if [ "$DESKTOP_STACK" = "both" ] || [ "$DESKTOP_STACK" = "selkies" ]; then \
       cp /opt/desktop-conf/supervisor-selkies.conf /etc/supervisor/conf.d/desktop.conf; \
@@ -443,10 +485,28 @@ RUN mkdir -p /etc/supervisor/conf.d /etc/caddy/desktop.d && \
     if [ "$DESKTOP_STACK" = "both" ] || [ "$DESKTOP_STACK" = "kasmvnc" ]; then \
       cp /opt/desktop-conf/supervisor-vnc.conf /etc/supervisor/conf.d/vnc.conf; \
       cp /opt/desktop-conf/caddy-vnc.caddy /etc/caddy/desktop.d/desktop-vnc.caddy; \
-    fi
+    fi && \
+    if [ "$DESKTOP_STACK" = none ]; then \
+      echo '# No desktop suite selected.' > /etc/caddy/desktop.d/none.caddy; \
+    fi && \
+    printf '{"base":"%s","desktop":"%s","editor":"%s","dev_runtimes":"%s","desktop_apps":"%s","pentest":"%s","backup_transfer":"%s"}\n' \
+      "$(cat /etc/sdw-base-profile)" "$DESKTOP_STACK" "$EDITOR_SUITE" "$DEV_RUNTIMES" "$DESKTOP_APPS" \
+      "$PENTEST_SUITE" "$BACKUP_TRANSFER" > /etc/sdw-build.json
+COPY image/profiles.json /usr/share/sdw/profiles.json
+LABEL io.sdw.base-profile="$BASE_PROFILE" \
+      io.sdw.desktop-suite="$DESKTOP_STACK" \
+      io.sdw.editor-suite="$EDITOR_SUITE" \
+      io.sdw.dev-runtimes="$DEV_RUNTIMES" \
+      io.sdw.desktop-apps="$DESKTOP_APPS" \
+      io.sdw.pentest-suite="$PENTEST_SUITE" \
+      io.sdw.backup-transfer="$BACKUP_TRANSFER"
 
-# Backup watcher supervisor config (always installed; feature is opt-in via env)
-COPY image/etc/supervisor/backup-watcher.conf /etc/supervisor/conf.d/backup-watcher.conf
+# Backup support is a build suite. Without restic, do not install a supervisor program that can
+# only fail if stale backup environment variables are present.
+COPY image/etc/supervisor/backup-watcher.conf /opt/supervisor-conf/backup-watcher.conf
+RUN if [ "$BACKUP_TRANSFER" = standard ]; then \
+      cp /opt/supervisor-conf/backup-watcher.conf /etc/supervisor/conf.d/backup-watcher.conf; \
+    fi
 
 # Desktop default configs
 COPY image/etc/desktop/ /opt/workspace/image/etc/desktop/
@@ -500,9 +560,12 @@ RUN groupadd --gid 1000 dev \
 # The bridge from the workload to root: `doas` runs ONLY the entries of /usr/local/libexec/sdw-priv
 # (created by `sdw install` above, one per command that needs root), with a clean environment. The
 # rules are generated from the same list the entries are, so they cannot disagree.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends opendoas \
-    && rm -rf /var/lib/apt/lists/* \
+RUN profile="$(cat /etc/sdw-base-profile)"; \
+    if [ "$profile" != alpine ]; then \
+      apt-get update \
+        && apt-get install -y --no-install-recommends opendoas \
+        && rm -rf /var/lib/apt/lists/*; \
+    fi \
     && /usr/local/bin/sdw doas-rules > /etc/doas.conf \
     && chmod 0600 /etc/doas.conf \
     && install -d -m 0700 /var/lib/sdw /run/sdw \
@@ -537,13 +600,9 @@ ENV http_proxy=http://127.0.0.1:7890 \
     all_proxy=socks5h://127.0.0.1:7890 \
     no_proxy=localhost,127.0.0.0/8,172.16.0.0/12,10.0.0.0/8,169.254.0.0/16
 
-# Liveness, app-level: the Caddy ingress must actually serve the auth gate's login endpoint
-# (proves Caddy AND the always-on sync-service that backs the gate are up — /auth/login is the
-# un-gated allowlisted route, so a 200 means the whole front path works), and code-server must be
-# accepting TCP. Deliberately does NOT fail on a locked vault or degraded egress: those are
-# reported, not fatal, and the workspace is meant to run in those states. The generous start-period
-# covers Clash bootstrap + vault unlock before supervisord brings the services up.
+# Liveness checks the shared authenticated ingress. When code-server is selected its own port is
+# also required; an editor-free profile intentionally has no :8082 process.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=3 \
-  CMD curl -fsS -o /dev/null http://127.0.0.1:8080/auth/login && nc -z 127.0.0.1 8082 || exit 1
+  CMD curl -fsS -o /dev/null http://127.0.0.1:8080/auth/login && { [ "$(cat /etc/sdw-editor-suite)" != code-server ] || nc -z 127.0.0.1 8082; } || exit 1
 
 ENTRYPOINT ["tini", "--", "/usr/local/bin/sdw", "entrypoint"]

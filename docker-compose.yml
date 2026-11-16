@@ -69,13 +69,19 @@ x-workspace: &workspace-base
 services:
   workspace:
     <<: *workspace-base
-    image: dev-workspace:${WORKSPACE_VARIANT:-trixie}
+    image: dev-workspace:${WORKSPACE_VARIANT:-kali-kasmvnc}
     build:
       context: ./src
       dockerfile: image/Dockerfile
       args:
-        BASE_IMAGE: ${BASE_IMAGE:-debian:trixie-slim}
+        BASE_IMAGE: ${BASE_IMAGE:-kalilinux/kali-rolling}
+        BASE_PROFILE: ${BASE_PROFILE:-auto}
         DESKTOP_STACK: ${DESKTOP_STACK:-kasmvnc}
+        EDITOR_SUITE: ${EDITOR_SUITE:-code-server}
+        DEV_RUNTIMES: ${DEV_RUNTIMES:-standard}
+        DESKTOP_APPS: ${DESKTOP_APPS:-firefox}
+        PENTEST_SUITE: ${PENTEST_SUITE:-bootstrap}
+        BACKUP_TRANSFER: ${BACKUP_TRANSFER:-standard}
         APT_MIRROR: ${APT_MIRROR:-mirrors.aliyun.com}
         KALI_MIRROR: ${KALI_MIRROR:-http.kali.org}
         # Optional GitHub download mirror for the pinned tools, build-time only (empty = GitHub

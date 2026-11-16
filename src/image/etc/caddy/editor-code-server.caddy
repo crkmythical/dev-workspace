@@ -1,0 +1,4 @@
+# Installed only when EDITOR_SUITE=code-server. The shared forward-auth gate runs first.
+handle {
+	reverse_proxy 127.0.0.1:8082
+}

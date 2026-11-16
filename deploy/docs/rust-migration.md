@@ -59,15 +59,12 @@ asset integrity and ingress integrity therefore remain part of the boundary.
 The image's digest-pinned Rust builder creates the Linux/musl `sdw` binary and browser WASM. The
 wasm-bindgen CLI version is read from Cargo.lock and declarations are disabled.
 
-Tag releases also build `sdw-host` natively on four GitHub runners:
-
-- Linux amd64 and arm64
-- macOS amd64 and arm64
-
-The release has exactly nine assets: four native archives, four adjacent SHA-256 files and one
-combined `SHA256SUMS`. Image candidates are smoked and manifests created before a draft GitHub
-Release is published. A published release is never overwritten by a rerun. `install-sdw-host.sh`
-selects the local platform and verifies the checksum before installation.
+Image packaging now has three base-specific manual entries (Kali, Debian and Alpine) that call one
+reusable workflow. Each run selects one compatible profile, builds it natively for Linux amd64 and
+arm64, boots each image for a fast health check, and emits exactly two compressed Docker archives.
+A `v*` tag uses the default Kali/KasmVNC profile and publishes only those two archives. `sdw-host`
+is intentionally separate from image distribution and can be built locally with `make install-host`;
+the legacy checksum installer remains usable with older releases that carry host archives.
 
 ```bash
 make web-tools

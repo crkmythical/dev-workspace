@@ -18,7 +18,7 @@ use sdw_core::vault::domain::VaultState;
 use sdw_core::vault::layout::{VAULT_CIPHER_DIR, VAULT_SYNC_STATE_DIR};
 use sdw_core::vault::ports::VolumeDriver;
 use sdw_core::workspace::config::load_config;
-use sdw_core::workspace::layout::CODE_SERVER_PORT;
+use sdw_core::workspace::layout::{code_server_selected, CODE_SERVER_PORT, EDITOR_SUITE_PATH};
 use sdw_infra::audit::read_recent_lines;
 use sdw_infra::cmd;
 use sdw_infra::desktop::{installed_stacks, is_any_desktop_running, is_desktop_running};
@@ -146,19 +146,28 @@ pub fn run(_args: &[String]) -> i32 {
         ));
     }
 
-    // 3. code-server
-    let cs_url = format!("http://127.0.0.1:{CODE_SERVER_PORT}/healthz");
-    if cmd::ok(
-        "curl",
-        &["-s", "--connect-timeout", "2", &cs_url, "-o", "/dev/null"],
-    ) {
-        results.push(Row::new("code-server", Status::Ok, None));
-    } else {
+    // 3. Optional browser editor
+    let editor_marker = fs::read_to_string(EDITOR_SUITE_PATH).ok();
+    if !code_server_selected(editor_marker.as_deref()) {
         results.push(Row::new(
             "code-server",
-            Status::Fail,
-            Some(format!("port {CODE_SERVER_PORT} not responding")),
+            Status::Ok,
+            Some("not installed in this image profile".to_string()),
         ));
+    } else {
+        let cs_url = format!("http://127.0.0.1:{CODE_SERVER_PORT}/healthz");
+        if cmd::ok(
+            "curl",
+            &["-s", "--connect-timeout", "2", &cs_url, "-o", "/dev/null"],
+        ) {
+            results.push(Row::new("code-server", Status::Ok, None));
+        } else {
+            results.push(Row::new(
+                "code-server",
+                Status::Fail,
+                Some(format!("port {CODE_SERVER_PORT} not responding")),
+            ));
+        }
     }
 
     // 4. Sync service (optional)

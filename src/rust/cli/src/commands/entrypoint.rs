@@ -31,7 +31,9 @@ use sdw_core::workspace::config::{
 };
 use sdw_core::workspace::features::is_recognised_switch;
 use sdw_core::workspace::inotify::{inotify_advice, WATCHES_PATH, WATCHES_WANTED};
-use sdw_core::workspace::layout::{supervisor_conf, SUPERVISORD_BIN, SUPERVISORD_CONF};
+use sdw_core::workspace::layout::{
+    code_server_selected, supervisor_conf, EDITOR_SUITE_PATH, SUPERVISORD_BIN, SUPERVISORD_CONF,
+};
 use sdw_core::workspace::workload::{
     workload_root_rule, GENERATED_PASSWORD_PATH, PRIVATE_RUN_DIR, WORKLOAD_GID, WORKLOAD_UID,
 };
@@ -538,6 +540,7 @@ fn run_step(
                 password: auth.master_password.clone(),
                 password_generated: auth.password_source == Some(PasswordSource::Generated),
                 host_port: config.host_port.clone(),
+                editor: code_server_selected(fs::read_to_string(EDITOR_SUITE_PATH).ok().as_deref()),
                 stacks: installed_stacks(),
                 vault_mounted: st.vault_mounted,
                 egress: st.egress.clone(),

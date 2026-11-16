@@ -1,11 +1,9 @@
 name: Run smoke
 description: >-
-  Smoke-test an already-built workspace image. Shared by the CI smoke workflow (smoke.yml, which
-  loads the image locally) and the release build (build-image.yml, which pushes an immutable
-  candidate and pulls it back), so the two cannot drift. SMOKE_HOSTED_RUNNER is set here: a
-  GitHub-hosted runner cannot release a FUSE mount or enforce ptrace isolation, so the handful of
-  checks that need those report SKIP instead of FAIL (they run in full locally and on a privileged
-  self-hosted/VM runner, where the variable is unset).
+  Smoke-test an already-built workspace image for the standalone smoke workflow.
+  SMOKE_HOSTED_RUNNER is set here: a GitHub-hosted runner cannot release a FUSE mount or enforce
+  ptrace isolation, so the handful of checks that need those report SKIP instead of FAIL (they run
+  in full locally and on a privileged self-hosted/VM runner, where the variable is unset).
 
 inputs:
   image:
@@ -69,8 +67,8 @@ runs:
         SMOKE_REQUIRE_BROWSER: ${{ inputs.require-browser == 'true' && '1' || '' }}
       run: src/tests/smoke/run.sh --image "${{ inputs.image }}" --services
 
-    - name: Desktop screenshots
-      if: always()
+    - name: Desktop screenshots on failure
+      if: failure()
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: ${{ inputs.artifact-name }}

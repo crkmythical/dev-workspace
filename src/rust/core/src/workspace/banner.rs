@@ -13,6 +13,8 @@ pub struct BannerInput {
     pub password_generated: bool,
     /// Host port the web UI is published on.
     pub host_port: String,
+    /// Whether this image contains code-server. Without it the root redirects to the sync page.
+    pub editor: bool,
     /// Which desktop stacks the image contains.
     pub stacks: Vec<DesktopTarget>,
     pub vault_mounted: bool,
@@ -66,8 +68,12 @@ pub fn render_banner(input: &BannerInput) -> Vec<String> {
     let mut rows = vec![
         format!("{}Secure Dev Workspace Ready", " ".repeat(10)),
         format!("  Password:  {shown}"),
-        format!("  Code:      {origin}"),
     ];
+    if input.editor {
+        rows.push(format!("  Code:      {origin}"));
+    } else {
+        rows.push(format!("  Web:       {origin}/sync/"));
+    }
     if input.stacks.contains(&DesktopTarget::Selkies) {
         rows.push(format!("  Desktop:   {origin}/desktop/"));
     }
@@ -150,6 +156,7 @@ mod tests {
             password: "s3cret".to_string(),
             password_generated: false,
             host_port: "18080".to_string(),
+            editor: true,
             stacks: vec![DesktopTarget::Selkies, DesktopTarget::Vnc],
             vault_mounted: true,
             egress: Some(confirmed()),

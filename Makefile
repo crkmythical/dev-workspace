@@ -12,8 +12,8 @@ build:
 	docker compose build
 
 # The tag docker compose builds: dev-workspace:<WORKSPACE_VARIANT>, from the environment, else .env,
-# else compose's own default (trixie).
-WORKSPACE_VARIANT ?= $(or $(shell sed -n 's/^WORKSPACE_VARIANT=//p' .env 2>/dev/null | head -1),trixie)
+# else compose's own default (kali-kasmvnc).
+WORKSPACE_VARIANT ?= $(or $(shell sed -n 's/^WORKSPACE_VARIANT=//p' .env 2>/dev/null | head -1),kali-kasmvnc)
 
 image-export:
 	docker save dev-workspace:$(WORKSPACE_VARIANT) -o workspace.tar

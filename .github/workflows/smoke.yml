@@ -1,11 +1,9 @@
 name: Smoke test
 
 # Builds the image, boots it next to a fake upstream and runs tests/smoke against it (see
-# tests/smoke/README.md). It takes a while, so it is not part of CI: it runs by hand and on pull
-# requests that touch the image, the compose files, the code that ends up in the image or the
-# smoke test itself. The release build (build-image.yml) does its own per-architecture build and
-# smoke of the immutable candidate and shares the smoke steps with this workflow through
-# .github/actions/run-smoke; it publishes nothing unless every candidate passes.
+# tests/smoke/README.md). It takes a while, so it is not part of ordinary CI: it runs by hand and on
+# pull requests that touch the image, Compose files, image code or the smoke suite. Image packaging
+# performs only a fast structural check and leaves this full privileged/browser suite independent.
 on:
   workflow_dispatch:
     inputs:
@@ -37,6 +35,10 @@ concurrency:
 
 permissions:
   contents: read
+
+env:
+  # Keep successful smoke runs artifact-free; Docker's build record is diagnostic metadata, not an image.
+  DOCKER_BUILD_RECORD_UPLOAD: 'false'
 
 jobs:
   smoke:
@@ -76,8 +78,7 @@ jobs:
 
       # checks/30-sync.sh runs the native Rust protocol probe on the host. The browser check uses
       # the runner's Node only as a Playwright driver for real Chrome; no product code is JavaScript.
-      # The Rust set-up, the smoke run, the screenshots and the failure dump are shared with the
-      # release build through .github/actions/run-smoke, so the two stay in step.
+      # Screenshots are retained only when this independent full smoke workflow fails.
       - name: Smoke test
         uses: ./.github/actions/run-smoke
         with:

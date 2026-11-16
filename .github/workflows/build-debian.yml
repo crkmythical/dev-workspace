@@ -1,0 +1,51 @@
+name: 构建镜像 — Debian
+
+on:
+  workflow_dispatch:
+    inputs:
+      desktop:
+        description: 桌面套件
+        type: choice
+        options: [kasmvnc, selkies, both, none]
+        default: kasmvnc
+      editor:
+        description: 浏览器编辑器
+        type: choice
+        options: [code-server, none]
+        default: code-server
+      dev_runtimes:
+        description: 开发环境（Java、Node、pnpm、Python）
+        type: choice
+        options: [standard, none]
+        default: standard
+      desktop_apps:
+        description: 预装桌面应用
+        type: choice
+        options: [firefox, none]
+        default: firefox
+      pentest:
+        description: 加密渗透测试环境初始化支持
+        type: choice
+        options: [bootstrap, none]
+        default: bootstrap
+      backup_transfer:
+        description: 备份与传输（restic、croc）
+        type: choice
+        options: [standard, none]
+        default: standard
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    uses: ./.github/workflows/build-image.yml
+    with:
+      base: debian
+      desktop: ${{ inputs.desktop }}
+      editor: ${{ inputs.editor }}
+      dev_runtimes: ${{ inputs.dev_runtimes }}
+      desktop_apps: ${{ inputs.desktop_apps }}
+      pentest: ${{ inputs.pentest }}
+      backup_transfer: ${{ inputs.backup_transfer }}
+      publish_release: false

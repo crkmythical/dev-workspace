@@ -1,0 +1,4 @@
+# An editor-free image still has the authenticated Rust/Wasm sync page as its landing page.
+handle {
+	redir /sync/ 302
+}

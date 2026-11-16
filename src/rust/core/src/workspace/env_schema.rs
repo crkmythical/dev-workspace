@@ -120,22 +120,30 @@ pub fn core_env_groups() -> Vec<EnvGroup> {
             title: "IMAGE BUILD — used by `docker compose build`".to_string(),
             vars: vec![
                 var(
+                    "BASE_PROFILE",
+                    &[
+                        "Tested package adapter for the image userland: kali, debian or alpine.",
+                        "BASE_PROFILE must match BASE_IMAGE; Alpine currently supports only none suites.",
+                    ],
+                    "kali",
+                ),
+                var(
                     "BASE_IMAGE",
                     &[
-                        "Base image:",
-                        "  kalilinux/kali-rolling  — Kali apt repositories and tools (larger)",
-                        "  debian:trixie-slim      — lean base",
+                        "Base image selected by BASE_PROFILE:",
+                        "  kalilinux/kali-rolling  — Kali apt repositories and tools (default)",
+                        "  debian:trixie-slim      — lean Debian base",
+                        "  alpine:3.22              — minimal apk base; optional suites must be none",
                     ],
-                    "debian:trixie-slim",
+                    "kalilinux/kali-rolling",
                 ),
                 var(
                     "WORKSPACE_VARIANT",
                     &[
-                        "Image tag suffix, to tell builds apart in the local registry:",
-                        "  latest  → dev-workspace:latest (Kali builds)",
-                        "  trixie  → dev-workspace:trixie (Debian builds)",
+                        "Local image tag suffix. Name it after the selected profile, for example:",
+                        "  kali-kasmvnc, debian-selkies or alpine-minimal",
                     ],
-                    "trixie",
+                    "kali-kasmvnc",
                 ),
                 var(
                     "APT_MIRROR",
@@ -204,11 +212,36 @@ pub fn core_env_groups() -> Vec<EnvGroup> {
                     &[
                         "Remote desktop(s) to install:",
                         "  kasmvnc  KasmVNC only, at /vnc/ (default; small, builds in seconds)",
-                        "  selkies  Selkies only, at /desktop/ (H.264; a ~160 MB Python environment, slower build)",
+                        "  selkies  Selkies only, at /desktop/ (H.264; a ~160 MB Python environment)",
                         "  both     Selkies and KasmVNC, in parallel",
-                        "  none     headless — no desktop, code-server only (the lean phone/AVF profile)",
+                        "  none     no desktop (required by the Alpine profile)",
                     ],
                     "kasmvnc",
+                ),
+                var(
+                    "EDITOR_SUITE",
+                    &["Browser editor to install: code-server (default) or none."],
+                    "code-server",
+                ),
+                var(
+                    "DEV_RUNTIMES",
+                    &["Preinstalled language suite: standard (Java, Node, pnpm, Python) or none."],
+                    "standard",
+                ),
+                var(
+                    "DESKTOP_APPS",
+                    &["Preinstalled desktop applications: firefox (default) or none."],
+                    "firefox",
+                ),
+                var(
+                    "PENTEST_SUITE",
+                    &["Encrypted pentest-rootfs bootstrap support: bootstrap (default) or none."],
+                    "bootstrap",
+                ),
+                var(
+                    "BACKUP_TRANSFER",
+                    &["Backup and transfer tools: standard (restic + croc, default) or none."],
+                    "standard",
                 ),
             ],
         },
@@ -218,7 +251,7 @@ pub fn core_env_groups() -> Vec<EnvGroup> {
                 var(
                     "PASSWORD",
                     &[
-                        "Master password: code-server, the desktops AND the vault share this one secret.",
+                        "Master password: the web gate, installed editor/desktops and vault share this secret.",
                         "If empty, a random one is generated at first start and printed in the start-up banner",
                         "(docker logs dev-workspace). That one lives only inside the container: a restart keeps",
                         "it, but recreating the container (docker compose up -d after a rebuild or pull, docker",

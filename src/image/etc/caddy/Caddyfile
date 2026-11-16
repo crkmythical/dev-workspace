@@ -99,9 +99,8 @@
 			file_server
 		}
 
-		# code-server (default), run with --auth none: this gate is the only login.
-		handle {
-			reverse_proxy 127.0.0.1:8082
-		}
+		# Editor landing route selected at build time. code-server proxies to :8082; `none`
+		# redirects to the authenticated Rust/Wasm sync page instead of a dead backend.
+		import /etc/caddy/editor.d/*.caddy
 	}
 }

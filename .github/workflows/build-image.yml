@@ -1,35 +1,129 @@
-name: Build, verify & publish Dev Workspace
+name: 共享镜像构建（内部）
 
 on:
-  push:
-    tags: ['v*']
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      base:
+        description: Base profile key from src/image/profiles.json
+        type: string
+        required: true
+      desktop:
+        description: Desktop suite
+        type: string
+        required: true
+      editor:
+        description: Browser editor suite
+        type: string
+        required: true
+      dev_runtimes:
+        description: Preinstalled development runtimes
+        type: string
+        required: true
+      desktop_apps:
+        description: Preinstalled desktop applications
+        type: string
+        required: true
+      pentest:
+        description: Pentest bootstrap support
+        type: string
+        required: true
+      backup_transfer:
+        description: Backup and transfer tools
+        type: string
+        required: true
+      publish_release:
+        description: Attach the two archives to the current Git tag
+        type: boolean
+        default: false
 
-env:
-  GHCR_IMAGE: ghcr.io/${{ github.repository_owner }}/dev-workspace
-  DOCKERHUB_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/dev-workspace
-
+# The public entry workflows grant write only to the tagged Kali release path. Manual Debian and
+# Alpine builds remain read-only and finish as two short-lived Actions artifacts.
 permissions:
   contents: read
 
+env:
+  # docker/build-push-action otherwise uploads one opaque *.dockerbuild artifact per architecture.
+  DOCKER_BUILD_RECORD_UPLOAD: 'false'
+
 jobs:
-  # Build each publishable architecture once. The immutable GHCR candidate is then pulled and
-  # smoked on a native runner; release manifests are created only after all four exact candidates
-  # pass. Candidate tags may remain after a failed run, but no user-facing tag points at them.
-  build-and-smoke:
+  validate:
+    name: 检查所选配置
+    runs-on: ubuntu-latest
+    outputs:
+      base_image: ${{ steps.profile.outputs.base_image }}
+      image_name: ${{ steps.profile.outputs.image_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check the association list
+        id: profile
+        shell: bash
+        env:
+          BASE: ${{ inputs.base }}
+          DESKTOP: ${{ inputs.desktop }}
+          EDITOR: ${{ inputs.editor }}
+          DEV_RUNTIMES: ${{ inputs.dev_runtimes }}
+          DESKTOP_APPS: ${{ inputs.desktop_apps }}
+          PENTEST: ${{ inputs.pentest }}
+          BACKUP_TRANSFER: ${{ inputs.backup_transfer }}
+        run: |
+          set -euo pipefail
+          profiles=src/image/profiles.json
+          jq -e --arg base "$BASE" '.bases[$base] != null' "$profiles" >/dev/null \
+            || { echo "Unknown base profile: $BASE" >&2; exit 2; }
+
+          allowed() {
+            local key="$1" value="$2"
+            if ! jq -e --arg base "$BASE" --arg key "$key" --arg value "$value" \
+              '.bases[$base][$key] | index($value) != null' "$profiles" >/dev/null; then
+              local choices
+              choices="$(jq -r --arg base "$BASE" --arg key "$key" \
+                '.bases[$base][$key] | join(", ")' "$profiles")"
+              echo "$BASE does not support $key=$value; choose one of: $choices" >&2
+              exit 2
+            fi
+          }
+
+          allowed desktop "$DESKTOP"
+          allowed editor "$EDITOR"
+          allowed dev_runtimes "$DEV_RUNTIMES"
+          allowed desktop_apps "$DESKTOP_APPS"
+          allowed pentest "$PENTEST"
+          allowed backup_transfer "$BACKUP_TRANSFER"
+
+          base_image="$(jq -r --arg base "$BASE" '.bases[$base].image' "$profiles")"
+          image_name="dev-workspace-${BASE}-${DESKTOP}"
+          echo "base_image=$base_image" >> "$GITHUB_OUTPUT"
+          echo "image_name=$image_name" >> "$GITHUB_OUTPUT"
+          {
+            echo '### Image profile'
+            echo
+            echo '| Setting | Selection |'
+            echo '|---|---|'
+            echo "| Base | \`$BASE\` (\`$base_image\`) |"
+            echo "| Desktop | \`$DESKTOP\` |"
+            echo "| Editor | \`$EDITOR\` |"
+            echo "| Dev runtimes | \`$DEV_RUNTIMES\` |"
+            echo "| Desktop apps | \`$DESKTOP_APPS\` |"
+            echo "| Pentest | \`$PENTEST\` |"
+            echo "| Backup/transfer | \`$BACKUP_TRANSFER\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: 构建 ${{ matrix.arch }}
+    needs: validate
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { variant: default, stack: kasmvnc, runner: ubuntu-latest, platform: linux/amd64, arch: amd64 }
-          - { variant: default, stack: kasmvnc, runner: ubuntu-24.04-arm, platform: linux/arm64, arch: arm64 }
-          - { variant: full, stack: both, runner: ubuntu-latest, platform: linux/amd64, arch: amd64 }
-          - { variant: full, stack: both, runner: ubuntu-24.04-arm, platform: linux/arm64, arch: arm64 }
+          - runner: ubuntu-latest
+            platform: linux/amd64
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            arch: arm64
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 120
-    permissions:
-      contents: read
-      packages: write
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -38,170 +132,172 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android \
             /opt/ghc /usr/local/share/boost /opt/hostedtoolcache
           sudo apt-get clean
-          df -h /
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      - name: Log in to GHCR
-        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build immutable candidate
+      - name: Build selected image once
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: ./src
           file: ./src/image/Dockerfile
           platforms: ${{ matrix.platform }}
-          push: true
-          tags: ${{ env.GHCR_IMAGE }}:${{ github.sha }}-${{ matrix.variant }}-${{ matrix.arch }}
+          load: true
+          tags: ${{ needs.validate.outputs.image_name }}
+          labels: |
+            io.sdw.base-profile=${{ inputs.base }}
+            io.sdw.desktop-suite=${{ inputs.desktop }}
+            io.sdw.editor-suite=${{ inputs.editor }}
+            io.sdw.dev-runtimes=${{ inputs.dev_runtimes }}
+            io.sdw.desktop-apps=${{ inputs.desktop_apps }}
+            io.sdw.pentest-suite=${{ inputs.pentest }}
+            io.sdw.backup-transfer=${{ inputs.backup_transfer }}
           build-args: |
-            BASE_IMAGE=kalilinux/kali-rolling
-            DESKTOP_STACK=${{ matrix.stack }}
-          provenance: mode=max
-          sbom: true
-          cache-from: type=registry,ref=${{ env.GHCR_IMAGE }}:cache-${{ matrix.variant }}-${{ matrix.arch }}
-          cache-to: type=registry,ref=${{ env.GHCR_IMAGE }}:cache-${{ matrix.variant }}-${{ matrix.arch }},mode=max
+            BASE_IMAGE=${{ needs.validate.outputs.base_image }}
+            BASE_PROFILE=${{ inputs.base }}
+            DESKTOP_STACK=${{ inputs.desktop }}
+            EDITOR_SUITE=${{ inputs.editor }}
+            DEV_RUNTIMES=${{ inputs.dev_runtimes }}
+            DESKTOP_APPS=${{ inputs.desktop_apps }}
+            PENTEST_SUITE=${{ inputs.pentest }}
+            BACKUP_TRANSFER=${{ inputs.backup_transfer }}
+            APT_MIRROR=deb.debian.org
+            KALI_MIRROR=http.kali.org
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=image-${{ inputs.base }}-${{ inputs.desktop }}-${{ inputs.editor }}-${{ inputs.dev_runtimes }}-${{ inputs.desktop_apps }}-${{ inputs.pentest }}-${{ inputs.backup_transfer }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=image-${{ inputs.base }}-${{ inputs.desktop }}-${{ inputs.editor }}-${{ inputs.dev_runtimes }}-${{ inputs.desktop_apps }}-${{ inputs.pentest }}-${{ inputs.backup_transfer }}-${{ matrix.arch }}
 
-      - name: Smoke exact candidate
-        uses: ./.github/actions/run-smoke
-        with:
-          image: ${{ env.GHCR_IMAGE }}:${{ github.sha }}-${{ matrix.variant }}-${{ matrix.arch }}
-          pull: 'true'
-          require-browser: 'true'
-          artifact-name: release-smoke-${{ matrix.variant }}-${{ matrix.arch }}
-
-  host-binaries:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { runner: ubuntu-latest, asset: linux-amd64 }
-          - { runner: ubuntu-24.04-arm, asset: linux-arm64 }
-          - { runner: macos-15-intel, asset: darwin-amd64 }
-          - { runner: macos-15, asset: darwin-arm64 }
-    runs-on: ${{ matrix.runner }}
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-        with:
-          toolchain: stable
-      - name: Cache
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
-        with:
-          workspaces: src/rust
-      - name: Build and package sdw-host
-        working-directory: src/rust
+      - name: Verify architecture and selected contents
+        shell: bash
+        env:
+          IMAGE: ${{ needs.validate.outputs.image_name }}
+          EXPECT_ARCH: ${{ matrix.arch }}
+          EXPECT_BASE: ${{ inputs.base }}
+          EXPECT_DESKTOP: ${{ inputs.desktop }}
+          EXPECT_EDITOR: ${{ inputs.editor }}
+          EXPECT_DEV_RUNTIMES: ${{ inputs.dev_runtimes }}
+          EXPECT_DESKTOP_APPS: ${{ inputs.desktop_apps }}
+          EXPECT_PENTEST: ${{ inputs.pentest }}
+          EXPECT_BACKUP_TRANSFER: ${{ inputs.backup_transfer }}
         run: |
-          cargo build --release --locked -p sdw-host
-          target/release/sdw-host --help
-          mkdir -p host-dist
-          archive="sdw-host-${{ matrix.asset }}.tar.gz"
-          COPYFILE_DISABLE=1 tar -czf "host-dist/$archive" -C target/release sdw-host
-          (cd host-dist && if command -v sha256sum >/dev/null 2>&1; then sha256sum "$archive"; else shasum -a 256 "$archive"; fi > "$archive.sha256")
-      - name: Upload host binary
+          set -euo pipefail
+          actual_arch="$(docker image inspect --format '{{.Architecture}}' "$IMAGE")"
+          test "$actual_arch" = "$EXPECT_ARCH"
+          docker run --rm --entrypoint /bin/sh \
+            -e EXPECT_BASE -e EXPECT_DESKTOP -e EXPECT_EDITOR -e EXPECT_DEV_RUNTIMES \
+            -e EXPECT_DESKTOP_APPS -e EXPECT_PENTEST -e EXPECT_BACKUP_TRANSFER \
+            "$IMAGE" -ec '
+              test "$(jq -r .base /etc/sdw-build.json)" = "$EXPECT_BASE"
+              test "$(jq -r .desktop /etc/sdw-build.json)" = "$EXPECT_DESKTOP"
+              test "$(jq -r .editor /etc/sdw-build.json)" = "$EXPECT_EDITOR"
+              test "$(jq -r .dev_runtimes /etc/sdw-build.json)" = "$EXPECT_DEV_RUNTIMES"
+              test "$(jq -r .desktop_apps /etc/sdw-build.json)" = "$EXPECT_DESKTOP_APPS"
+              test "$(jq -r .pentest /etc/sdw-build.json)" = "$EXPECT_PENTEST"
+              test "$(jq -r .backup_transfer /etc/sdw-build.json)" = "$EXPECT_BACKUP_TRANSFER"
+              command -v sdw >/dev/null
+              command -v caddy >/dev/null
+              command -v supervisord >/dev/null
+              caddy validate --config /etc/caddy/Caddyfile >/dev/null
+              if [ "$EXPECT_EDITOR" = code-server ]; then command -v code-server >/dev/null; else ! command -v code-server >/dev/null; fi
+              if [ "$EXPECT_DEV_RUNTIMES" = standard ]; then command -v mise >/dev/null; else ! command -v mise >/dev/null; fi
+              if [ "$EXPECT_DESKTOP_APPS" = firefox ]; then command -v firefox-esr >/dev/null; else ! command -v firefox-esr >/dev/null; fi
+              if [ "$EXPECT_PENTEST" = bootstrap ]; then command -v debootstrap >/dev/null; else ! command -v debootstrap >/dev/null; fi
+              if [ "$EXPECT_BACKUP_TRANSFER" = standard ]; then command -v restic >/dev/null && command -v croc >/dev/null; else ! command -v restic >/dev/null && ! command -v croc >/dev/null; fi
+            '
+
+      - name: Boot the selected image
+        shell: bash
+        env:
+          IMAGE: ${{ needs.validate.outputs.image_name }}
+        run: |
+          set -euo pipefail
+          container="sdw-package-check-${{ matrix.arch }}"
+          # shellcheck disable=SC2329 # invoked by trap
+          cleanup() { docker rm -f "$container" >/dev/null 2>&1 || true; }
+          trap cleanup EXIT INT TERM HUP
+          docker run -d --name "$container" --privileged --device /dev/fuse \
+            -e PASSWORD=ci-profile-check \
+            -e CLASH_SUBSCRIPTION_URL=http://127.0.0.1:9/sub \
+            -e EGRESS_ENFORCE=0 \
+            "$IMAGE" >/dev/null
+          for _ in $(seq 1 90); do
+            state="$(docker inspect --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' "$container")"
+            case "$state" in
+              'running healthy')
+                docker exec "$container" curl -fsS http://127.0.0.1:8080/auth/login >/dev/null
+                exit 0
+                ;;
+              exited*)
+                docker logs "$container"
+                exit 1
+                ;;
+            esac
+            sleep 2
+          done
+          docker logs "$container"
+          echo 'Image did not become healthy within 180 seconds' >&2
+          exit 1
+
+      - name: Export compressed Docker image
+        id: archive
+        shell: bash
+        env:
+          IMAGE: ${{ needs.validate.outputs.image_name }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          archive="${IMAGE}-linux-${ARCH}.tar"
+          docker save -o "dist/$archive" "$IMAGE"
+          if command -v pigz >/dev/null 2>&1; then
+            pigz -6 "dist/$archive"
+          else
+            gzip -6 "dist/$archive"
+          fi
+          tar -tzf "dist/$archive.gz" >/dev/null
+          size="$(du -h "dist/$archive.gz" | cut -f1)"
+          digest="$(sha256sum "dist/$archive.gz" | cut -d' ' -f1)"
+          echo "file=$archive.gz" >> "$GITHUB_OUTPUT"
+          echo "- \`$archive.gz\` — $size — SHA-256 \`$digest\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the architecture package
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: sdw-host-${{ matrix.asset }}
-          path: src/rust/host-dist/*
+          name: ${{ needs.validate.outputs.image_name }}-linux-${{ matrix.arch }}
+          path: dist/${{ steps.archive.outputs.file }}
           if-no-files-found: error
-
-  manifest:
-    needs: build-and-smoke
-    strategy:
-      matrix:
-        include:
-          - { variant: default, suffix: '' }
-          - { variant: full, suffix: '-full' }
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    env:
-      HAS_DOCKERHUB: ${{ secrets.DOCKERHUB_TOKEN != '' }}
-    steps:
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-
-      - name: Log in to GHCR
-        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Log in to Docker Hub
-        if: env.HAS_DOCKERHUB == 'true'
-        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Publish verified multi-arch manifests
-        run: |
-          REF_NAME="${{ github.ref_name }}"
-          SUFFIX="${{ matrix.suffix }}"
-          SOURCES=(
-            "${GHCR_IMAGE}:${GITHUB_SHA}-${{ matrix.variant }}-amd64"
-            "${GHCR_IMAGE}:${GITHUB_SHA}-${{ matrix.variant }}-arm64"
-          )
-          TAGS=("${GHCR_IMAGE}:${REF_NAME}${SUFFIX}" "${GHCR_IMAGE}:latest${SUFFIX}")
-          if [ "$HAS_DOCKERHUB" = "true" ]; then
-            TAGS+=("${DOCKERHUB_IMAGE}:${REF_NAME}${SUFFIX}" "${DOCKERHUB_IMAGE}:latest${SUFFIX}")
-          fi
-          for tag in "${TAGS[@]}"; do
-            docker buildx imagetools create -t "$tag" "${SOURCES[@]}"
-          done
+          compression-level: 0
+          retention-days: 7
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-and-smoke, host-binaries, manifest]
+    name: 发布两个架构包
+    if: inputs.publish_release
+    needs: [validate, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_REPO: ${{ github.repository }}
+      IMAGE: ${{ needs.validate.outputs.image_name }}
     steps:
-      - name: Download host binaries
+      - name: Download the two architecture packages
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: sdw-host-*
-          path: host-dist
+          pattern: ${{ needs.validate.outputs.image_name }}-linux-*
+          path: dist
           merge-multiple: true
 
-      - name: Assemble checksums
+      - name: Verify and publish exactly two files
+        shell: bash
         run: |
-          platforms=(linux-amd64 linux-arm64 darwin-amd64 darwin-arm64)
-          test "$(find host-dist -type f | wc -l)" -eq 8
-          for platform in "${platforms[@]}"; do
-            archive="sdw-host-${platform}.tar.gz"
-            test -f "host-dist/$archive"
-            test -f "host-dist/$archive.sha256"
-            (cd host-dist && sha256sum --check "$archive.sha256")
-          done
-          cat host-dist/sdw-host-{linux-amd64,linux-arm64,darwin-amd64,darwin-arm64}.tar.gz.sha256 \
-            | sort > host-dist/SHA256SUMS
-          test "$(wc -l < host-dist/SHA256SUMS)" -eq 4
-          test "$(find host-dist -type f | wc -l)" -eq 9
-
-      - name: Publish GitHub release after every gate passes
-        run: |
-          tag="$GITHUB_REF_NAME"
-          if gh release view "$tag" --json isDraft >/tmp/release.json 2>/dev/null; then
-            if [ "$(jq -r .isDraft /tmp/release.json)" != true ]; then
-              echo "release $tag is already published; refusing to replace its assets" >&2
-              exit 1
-            fi
-            gh release delete "$tag" --yes
-          fi
-          gh release create "$tag" --verify-tag --draft --generate-notes --title "$tag" host-dist/*
-          count="$(gh release view "$tag" --json assets --jq '.assets | length')"
-          test "$count" -eq 9
-          gh release edit "$tag" --draft=false --latest
+          set -euo pipefail
+          test -f "dist/${IMAGE}-linux-amd64.tar.gz"
+          test -f "dist/${IMAGE}-linux-arm64.tar.gz"
+          test "$(find dist -type f | wc -l | tr -d ' ')" -eq 2
+          tar -tzf "dist/${IMAGE}-linux-amd64.tar.gz" >/dev/null
+          tar -tzf "dist/${IMAGE}-linux-arm64.tar.gz" >/dev/null
+          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --title "$GITHUB_REF_NAME" \
+            "dist/${IMAGE}-linux-amd64.tar.gz" \
+            "dist/${IMAGE}-linux-arm64.tar.gz"

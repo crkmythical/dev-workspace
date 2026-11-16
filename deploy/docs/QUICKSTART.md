@@ -18,11 +18,12 @@ install -m 600 .env.example .env
 #   编辑 .env:
 #     CLASH_SUBSCRIPTION_URL=https://你的订阅?target=clash
 #     PASSWORD=选一个强密码           # 留空=首次启动随机生成并打印在日志里
-#   (可选)要 Kali 渗透工具基:再设
-#     BASE_IMAGE=kalilinux/kali-rolling
-#     WORKSPACE_VARIANT=latest
+#   默认是 Kali + KasmVNC + code-server；要改为 Debian：
+#     BASE_PROFILE=debian
+#     BASE_IMAGE=debian:trixie-slim
+#     WORKSPACE_VARIANT=debian-kasmvnc
 
-# 2) 构建镜像(默认 Debian trixie 精简基;首次构建较久,国内走 aliyun 源)
+# 2) 构建镜像（默认 Kali；首次构建较久）
 docker compose build
 
 # 3) 启动

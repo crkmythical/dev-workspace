@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "bases": {
+    "kali": {
+      "image": "kalilinux/kali-rolling",
+      "package_family": "apt",
+      "desktop": ["none", "kasmvnc", "selkies", "both"],
+      "editor": ["none", "code-server"],
+      "dev_runtimes": ["none", "standard"],
+      "desktop_apps": ["none", "firefox"],
+      "pentest": ["none", "bootstrap"],
+      "backup_transfer": ["none", "standard"]
+    },
+    "debian": {
+      "image": "debian:trixie-slim",
+      "package_family": "apt",
+      "desktop": ["none", "kasmvnc", "selkies", "both"],
+      "editor": ["none", "code-server"],
+      "dev_runtimes": ["none", "standard"],
+      "desktop_apps": ["none", "firefox"],
+      "pentest": ["none", "bootstrap"],
+      "backup_transfer": ["none", "standard"]
+    },
+    "alpine": {
+      "image": "alpine:3.22",
+      "package_family": "apk",
+      "desktop": ["none"],
+      "editor": ["none"],
+      "dev_runtimes": ["none"],
+      "desktop_apps": ["none"],
+      "pentest": ["none"],
+      "backup_transfer": ["none"]
+    }
+  }
+}
