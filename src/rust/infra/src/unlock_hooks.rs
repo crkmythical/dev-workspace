@@ -28,14 +28,16 @@ impl UnlockHook for EnsureSharedDir {
     }
     fn run(&self, ctx: &UnlockContext<'_>) -> Result<(), String> {
         if ctx.spec.id == "workspace" {
-            let _ = fs::create_dir_all(format!("{}/shared", ctx.spec.mount_point));
+            let shared = format!("{}/shared", ctx.spec.mount_point);
+            fs::create_dir_all(&shared).map_err(|e| e.to_string())?;
+            crate::workload::own_path_by_workload(Path::new(&shared))?;
         }
         Ok(())
     }
 }
 
-/// The workload's home inside the vault: created, and given the shell start-up files a new user
-/// gets, if they are not there. (The vault shows every file as the workload's, whoever creates it.)
+/// The workload's home inside the vault: create only its fixed bootstrap paths and explicitly give
+/// those paths to `dev`. Do not recurse through an existing home; it may contain a large project.
 struct PrepareWorkloadHome;
 impl UnlockHook for PrepareWorkloadHome {
     fn name(&self) -> &str {
@@ -45,15 +47,32 @@ impl UnlockHook for PrepareWorkloadHome {
         if ctx.spec.id != "workspace" {
             return Ok(());
         }
-        for dir in [".local/bin", ".config"] {
-            fs::create_dir_all(format!("{WORKLOAD_HOME}/{dir}")).map_err(|e| e.to_string())?;
+        let dirs = [
+            WORKLOAD_HOME.to_string(),
+            format!("{WORKLOAD_HOME}/.local"),
+            format!("{WORKLOAD_HOME}/.local/bin"),
+            format!("{WORKLOAD_HOME}/.config"),
+        ];
+        for dir in &dirs {
+            fs::create_dir_all(dir).map_err(|e| e.to_string())?;
         }
+        let mut startup_files = Vec::new();
         for name in [".bashrc", ".profile", ".bash_logout"] {
             let target = format!("{WORKLOAD_HOME}/{name}");
             let skeleton = format!("/etc/skel/{name}");
             if !Path::new(&target).exists() && Path::new(&skeleton).exists() {
-                let _ = fs::copy(&skeleton, &target);
+                fs::copy(&skeleton, &target).map_err(|e| e.to_string())?;
             }
+            if Path::new(&target).exists() {
+                startup_files.push(target);
+            }
+        }
+        for path in dirs
+            .iter()
+            .map(String::as_str)
+            .chain(startup_files.iter().map(String::as_str))
+        {
+            crate::workload::own_path_by_workload(Path::new(path))?;
         }
         Ok(())
     }

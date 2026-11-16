@@ -9,6 +9,9 @@ use sdw_core::workspace::features::parse_feature_flags;
 use sdw_core::workspace::workload::{
     parse_requested_names, workload_env, WORKLOAD_GID, WORKLOAD_UID,
 };
+use std::fs;
+use std::os::unix::fs::chown;
+use std::path::Path;
 use std::process::Command;
 
 /// Whether this process runs as root (effective uid 0).
@@ -74,6 +77,19 @@ pub fn ok_as_workload(program: &str, args: &[&str], home: &str, cwd: &str) -> bo
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
+}
+
+/// Give one path provisioned by root inside the mounted workspace vault to `dev`.
+/// gocryptfs `force_owner` makes ownership look uniform on most hosts, but permission checks can
+/// still observe root-owned directories on some distro/architecture combinations. Never follow a
+/// symlink here: credential links intentionally point outside the path being provisioned.
+pub fn own_path_by_workload(path: &Path) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if metadata.file_type().is_symlink() {
+        return Ok(());
+    }
+    chown(path, Some(WORKLOAD_UID), Some(WORKLOAD_GID))
+        .map_err(|e| format!("{}: {e}", path.display()))
 }
 
 #[cfg(test)]

@@ -54,6 +54,7 @@ use sdw_infra::secrets::random_hex;
 use sdw_infra::supervisor::enable_autostart;
 use sdw_infra::time::now_ms;
 use sdw_infra::unlock_hooks::workspace_unlock_hooks;
+use sdw_infra::workload::own_path_by_workload;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -239,6 +240,22 @@ fn prepare_desktop_cache() -> Result<(), String> {
     fs::set_permissions(DESKTOP_CACHE_DIR, fs::Permissions::from_mode(0o700))
         .map_err(|e| e.to_string())?;
     chown(DESKTOP_CACHE_DIR, Some(WORKLOAD_UID), Some(WORKLOAD_GID)).map_err(|e| e.to_string())
+}
+
+fn prepare_desktop_home(root: &str) -> Result<(), String> {
+    let dirs = [
+        root.to_string(),
+        format!("{root}/.local"),
+        format!("{root}/.local/share"),
+        format!("{root}/.local/share/applications"),
+    ];
+    for dir in &dirs {
+        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    for dir in &dirs {
+        own_path_by_workload(Path::new(dir))?;
+    }
+    Ok(())
 }
 
 fn run_step(
@@ -503,10 +520,10 @@ fn run_step(
             prepare_desktop_cache()?;
             let stacks = installed_stacks();
             if stacks.contains(&DesktopTarget::Selkies) {
-                let _ = fs::create_dir_all(format!("{SELKIES_HOME}/.local/share/applications"));
+                prepare_desktop_home(SELKIES_HOME)?;
             }
             if stacks.contains(&DesktopTarget::Vnc) {
-                let _ = fs::create_dir_all(format!("{VNC_HOME}/.local/share/applications"));
+                prepare_desktop_home(VNC_HOME)?;
             }
             enable_autostart(&supervisor_conf("desktop"));
             enable_autostart(&supervisor_conf("vnc"));
