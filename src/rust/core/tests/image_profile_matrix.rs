@@ -84,6 +84,123 @@ fn assert_case_supported(case: &Case, profiles: &Value) {
     }
 }
 
+fn assert_defaults_supported(profiles: &Value) {
+    for (base, profile) in profiles["bases"].as_object().expect("base profiles") {
+        let defaults = profile["defaults"].as_object().expect("profile defaults");
+        for key in [
+            "desktop",
+            "editor",
+            "dev_runtimes",
+            "desktop_apps",
+            "pentest",
+            "backup_transfer",
+        ] {
+            let value = defaults[key].as_str().expect("default option string");
+            let allowed = profile[key].as_array().expect("profile option array");
+            assert!(
+                allowed
+                    .iter()
+                    .any(|candidate| candidate.as_str() == Some(value)),
+                "{base} has unsupported default {key}={value}"
+            );
+        }
+    }
+}
+
+fn package_prefix(base: &str, options: [&str; 6], profile: &Value) -> String {
+    let keys = [
+        "desktop",
+        "editor",
+        "dev_runtimes",
+        "desktop_apps",
+        "pentest",
+        "backup_transfer",
+    ];
+    let is_default = keys
+        .iter()
+        .zip(options)
+        .all(|(key, value)| profile["defaults"][key].as_str() == Some(value));
+    if is_default {
+        format!("dev-workspace-{base}-{}", options[0])
+    } else {
+        format!(
+            "dev-workspace-{base}-{}-editor-{}-runtimes-{}-apps-{}-pentest-{}-transfer-{}",
+            options[0], options[1], options[2], options[3], options[4], options[5]
+        )
+    }
+}
+
+#[test]
+fn every_legal_profile_has_a_unique_readable_package_prefix() {
+    let profiles: Value =
+        serde_json::from_str(&read_json("profiles.json")).expect("valid profiles");
+    let mut names = BTreeMap::<String, String>::new();
+    let mut count = 0;
+    for (base, profile) in profiles["bases"].as_object().expect("base profiles") {
+        let values = |key: &str| {
+            profile[key]
+                .as_array()
+                .expect("profile option array")
+                .iter()
+                .map(|value| value.as_str().expect("option string"))
+                .collect::<Vec<_>>()
+        };
+        for desktop in values("desktop") {
+            for editor in values("editor") {
+                for runtimes in values("dev_runtimes") {
+                    for apps in values("desktop_apps") {
+                        for pentest in values("pentest") {
+                            for transfer in values("backup_transfer") {
+                                let options = [desktop, editor, runtimes, apps, pentest, transfer];
+                                let name = package_prefix(base, options, profile);
+                                let description = format!("{base}:{}", options.join("|"));
+                                assert!(
+                                    names.insert(name.clone(), description.clone()).is_none(),
+                                    "package prefix collision for {description}: {name}"
+                                );
+                                assert!(
+                                    name.len() < 200
+                                        && name.chars().all(|ch| {
+                                            ch.is_ascii_lowercase()
+                                                || ch.is_ascii_digit()
+                                                || ch == '-'
+                                        }),
+                                    "invalid package prefix: {name}"
+                                );
+                                count += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(count, 257);
+    assert_eq!(
+        package_prefix(
+            "kali",
+            [
+                "kasmvnc",
+                "code-server",
+                "standard",
+                "firefox",
+                "bootstrap",
+                "standard"
+            ],
+            &profiles["bases"]["kali"]
+        ),
+        "dev-workspace-kali-kasmvnc"
+    );
+    assert_eq!(
+        package_prefix(
+            "kali",
+            ["kasmvnc", "none", "none", "firefox", "none", "none"],
+            &profiles["bases"]["kali"]
+        ),
+        "dev-workspace-kali-kasmvnc-editor-none-runtimes-none-apps-firefox-pentest-none-transfer-none"
+    );
+}
+
 #[test]
 fn matrix_is_compatible_unique_and_pairwise_complete() {
     let matrix: Matrix =
@@ -92,6 +209,7 @@ fn matrix_is_compatible_unique_and_pairwise_complete() {
         serde_json::from_str(&read_json("profiles.json")).expect("valid profiles");
     assert_eq!(matrix.schema, 1);
     assert_eq!(matrix.coverage, "pairwise-plus-boundaries");
+    assert_defaults_supported(&profiles);
 
     let ids: BTreeSet<_> = matrix.cases.iter().map(|case| &case.id).collect();
     assert_eq!(ids.len(), matrix.cases.len(), "case ids must be unique");

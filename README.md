@@ -375,11 +375,17 @@ Actions 页面提供三个清晰的手动入口：
 三个构建入口调用同一个 [共享构建流程](.github/workflows/build-image.yml)，关联规则来自
 [`src/image/profiles.json`](src/image/profiles.json)。每次只构建所选配置，并在 amd64、arm64 原生 runner 上各构建一次。
 
-最终只有两个 Actions artifacts，保留 7 天：
+每次运行只产生两个 Actions artifacts，保留 7 天。默认配置保持短名称：
 
 ```text
 dev-workspace-<base>-<desktop>-linux-amd64.tar.gz
 dev-workspace-<base>-<desktop>-linux-arm64.tar.gz
+```
+
+只要 editor 或任一附加套件偏离该基础系统默认值，文件名和加载后的镜像名会追加全部选择，避免不同配置互相覆盖。例如：
+
+```text
+dev-workspace-kali-kasmvnc-editor-none-runtimes-none-apps-firefox-pentest-none-transfer-none-linux-arm64.tar.gz
 ```
 
 推送 `v*` tag 会用 Kali 的默认选项构建，并把同样两个文件放进 GitHub Release。发布流程不再生成 GHCR/Docker Hub

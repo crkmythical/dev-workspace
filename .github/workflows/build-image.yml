@@ -101,8 +101,17 @@ jobs:
           allowed backup_transfer "$BACKUP_TRANSFER"
 
           base_image="$(jq -r --arg base "$BASE" '.bases[$base].image' "$profiles")"
-          suffix="${CASE_ID:+-$CASE_ID}"
-          image_name="dev-workspace-${BASE}-${DESKTOP}${suffix}"
+          selected="${DESKTOP}|${EDITOR}|${DEV_RUNTIMES}|${DESKTOP_APPS}|${PENTEST}|${BACKUP_TRANSFER}"
+          defaults="$(jq -r --arg base "$BASE" \
+            '.bases[$base].defaults | [.desktop, .editor, .dev_runtimes, .desktop_apps, .pentest, .backup_transfer] | join("|")' \
+            "$profiles")"
+          if [ -n "$CASE_ID" ]; then
+            image_name="dev-workspace-${BASE}-${DESKTOP}-${CASE_ID}"
+          elif [ "$selected" = "$defaults" ]; then
+            image_name="dev-workspace-${BASE}-${DESKTOP}"
+          else
+            image_name="dev-workspace-${BASE}-${DESKTOP}-editor-${EDITOR}-runtimes-${DEV_RUNTIMES}-apps-${DESKTOP_APPS}-pentest-${PENTEST}-transfer-${BACKUP_TRANSFER}"
+          fi
           echo "base_image=$base_image" >> "$GITHUB_OUTPUT"
           echo "image_name=$image_name" >> "$GITHUB_OUTPUT"
           {
@@ -111,6 +120,7 @@ jobs:
             echo '| Setting | Selection |'
             echo '|---|---|'
             if [ -n "$CASE_ID" ]; then echo "| Matrix case | \`$CASE_ID\` |"; fi
+            echo "| Package prefix | \`$image_name\` |"
             echo "| Base | \`$BASE\` (\`$base_image\`) |"
             echo "| Desktop | \`$DESKTOP\` |"
             echo "| Editor | \`$EDITOR\` |"

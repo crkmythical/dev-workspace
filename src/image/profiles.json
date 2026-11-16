@@ -4,6 +4,14 @@
     "kali": {
       "image": "kalilinux/kali-rolling",
       "package_family": "apt",
+      "defaults": {
+        "desktop": "kasmvnc",
+        "editor": "code-server",
+        "dev_runtimes": "standard",
+        "desktop_apps": "firefox",
+        "pentest": "bootstrap",
+        "backup_transfer": "standard"
+      },
       "desktop": ["none", "kasmvnc", "selkies", "both"],
       "editor": ["none", "code-server"],
       "dev_runtimes": ["none", "standard"],
@@ -14,6 +22,14 @@
     "debian": {
       "image": "debian:trixie-slim",
       "package_family": "apt",
+      "defaults": {
+        "desktop": "kasmvnc",
+        "editor": "code-server",
+        "dev_runtimes": "standard",
+        "desktop_apps": "firefox",
+        "pentest": "bootstrap",
+        "backup_transfer": "standard"
+      },
       "desktop": ["none", "kasmvnc", "selkies", "both"],
       "editor": ["none", "code-server"],
       "dev_runtimes": ["none", "standard"],
@@ -24,6 +40,14 @@
     "alpine": {
       "image": "alpine:3.22",
       "package_family": "apk",
+      "defaults": {
+        "desktop": "none",
+        "editor": "none",
+        "dev_runtimes": "none",
+        "desktop_apps": "none",
+        "pentest": "none",
+        "backup_transfer": "none"
+      },
       "desktop": ["none"],
       "editor": ["none"],
       "dev_runtimes": ["none"],
