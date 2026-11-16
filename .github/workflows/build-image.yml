@@ -326,6 +326,7 @@ jobs:
           trap finish EXIT
           trap 'exit 130' INT TERM HUP
           docker run -d --name "$container" --privileged --device /dev/fuse \
+            --security-opt apparmor=unconfined \
             -e PASSWORD=ci-profile-check \
             -e CLASH_SUBSCRIPTION_URL=http://127.0.0.1:9/sub \
             -e EGRESS_ENFORCE=0 \
