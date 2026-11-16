@@ -370,8 +370,9 @@ Actions 页面提供三个清晰的手动入口：
 - **构建镜像 — Kali**：显示 Kali 支持的桌面、editor 和附加套件
 - **构建镜像 — Debian**：显示 Debian 支持的套件
 - **构建镜像 — Alpine**：当前所有可选套件的下拉列表都只有 `none`
+- **测试全部镜像选项（覆盖矩阵）**：13 个 pairwise + 边界配置、每个构建 amd64/arm64；验证内容、实际启动、桌面端口和压缩包，但不保留测试包
 
-三个入口调用同一个 [共享构建流程](.github/workflows/build-image.yml)，关联规则来自
+三个构建入口调用同一个 [共享构建流程](.github/workflows/build-image.yml)，关联规则来自
 [`src/image/profiles.json`](src/image/profiles.json)。每次只构建所选配置，并在 amd64、arm64 原生 runner 上各构建一次。
 
 最终只有两个 Actions artifacts，保留 7 天：

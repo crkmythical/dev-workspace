@@ -1,0 +1,150 @@
+{
+  "schema": 1,
+  "coverage": "pairwise-plus-boundaries",
+  "expected_pair_count": 108,
+  "cases": [
+    {
+      "id": "p01",
+      "name": "Kali default",
+      "base": "kali",
+      "desktop": "kasmvnc",
+      "editor": "code-server",
+      "dev_runtimes": "standard",
+      "desktop_apps": "firefox",
+      "pentest": "bootstrap",
+      "backup_transfer": "standard"
+    },
+    {
+      "id": "p02",
+      "name": "Debian default",
+      "base": "debian",
+      "desktop": "kasmvnc",
+      "editor": "code-server",
+      "dev_runtimes": "standard",
+      "desktop_apps": "firefox",
+      "pentest": "bootstrap",
+      "backup_transfer": "standard"
+    },
+    {
+      "id": "p03",
+      "name": "Kali minimal",
+      "base": "kali",
+      "desktop": "none",
+      "editor": "none",
+      "dev_runtimes": "none",
+      "desktop_apps": "none",
+      "pentest": "none",
+      "backup_transfer": "none"
+    },
+    {
+      "id": "p04",
+      "name": "Debian minimal",
+      "base": "debian",
+      "desktop": "none",
+      "editor": "none",
+      "dev_runtimes": "none",
+      "desktop_apps": "none",
+      "pentest": "none",
+      "backup_transfer": "none"
+    },
+    {
+      "id": "p05",
+      "name": "Kali all desktop",
+      "base": "kali",
+      "desktop": "both",
+      "editor": "code-server",
+      "dev_runtimes": "standard",
+      "desktop_apps": "firefox",
+      "pentest": "bootstrap",
+      "backup_transfer": "standard"
+    },
+    {
+      "id": "p06",
+      "name": "Debian Selkies without editor or runtimes",
+      "base": "debian",
+      "desktop": "selkies",
+      "editor": "none",
+      "dev_runtimes": "none",
+      "desktop_apps": "firefox",
+      "pentest": "bootstrap",
+      "backup_transfer": "standard"
+    },
+    {
+      "id": "p07",
+      "name": "Kali Selkies developer",
+      "base": "kali",
+      "desktop": "selkies",
+      "editor": "code-server",
+      "dev_runtimes": "standard",
+      "desktop_apps": "none",
+      "pentest": "none",
+      "backup_transfer": "none"
+    },
+    {
+      "id": "p08",
+      "name": "Debian dual desktop editor",
+      "base": "debian",
+      "desktop": "both",
+      "editor": "code-server",
+      "dev_runtimes": "none",
+      "desktop_apps": "none",
+      "pentest": "bootstrap",
+      "backup_transfer": "none"
+    },
+    {
+      "id": "p09",
+      "name": "Kali KasmVNC without editor",
+      "base": "kali",
+      "desktop": "kasmvnc",
+      "editor": "none",
+      "dev_runtimes": "none",
+      "desktop_apps": "firefox",
+      "pentest": "none",
+      "backup_transfer": "none"
+    },
+    {
+      "id": "p10",
+      "name": "Kali headless developer",
+      "base": "kali",
+      "desktop": "none",
+      "editor": "code-server",
+      "dev_runtimes": "standard",
+      "desktop_apps": "firefox",
+      "pentest": "bootstrap",
+      "backup_transfer": "standard"
+    },
+    {
+      "id": "p11",
+      "name": "Debian dual desktop runtimes",
+      "base": "debian",
+      "desktop": "both",
+      "editor": "none",
+      "dev_runtimes": "standard",
+      "desktop_apps": "none",
+      "pentest": "none",
+      "backup_transfer": "standard"
+    },
+    {
+      "id": "p12",
+      "name": "Kali editor only",
+      "base": "kali",
+      "desktop": "kasmvnc",
+      "editor": "code-server",
+      "dev_runtimes": "none",
+      "desktop_apps": "none",
+      "pentest": "none",
+      "backup_transfer": "none"
+    },
+    {
+      "id": "p13",
+      "name": "Alpine supported minimum",
+      "base": "alpine",
+      "desktop": "none",
+      "editor": "none",
+      "dev_runtimes": "none",
+      "desktop_apps": "none",
+      "pentest": "none",
+      "backup_transfer": "none"
+    }
+  ]
+}

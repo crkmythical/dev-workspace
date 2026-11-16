@@ -31,6 +31,15 @@ on:
         description: Backup and transfer tools
         type: string
         required: true
+      case_id:
+        description: Optional unique suffix for coverage-matrix cases
+        type: string
+        default: ''
+      upload_artifact:
+        description: Upload the validated archive instead of discarding the test copy
+        type: boolean
+        default: true
+
 # This shared workflow is read-only. The Kali entry owns the separate tag-only Release job;
 # manual Debian and Alpine builds finish as two short-lived Actions artifacts.
 permissions:
@@ -61,9 +70,14 @@ jobs:
           DESKTOP_APPS: ${{ inputs.desktop_apps }}
           PENTEST: ${{ inputs.pentest }}
           BACKUP_TRANSFER: ${{ inputs.backup_transfer }}
+          CASE_ID: ${{ inputs.case_id }}
         run: |
           set -euo pipefail
           profiles=src/image/profiles.json
+          if [[ -n "$CASE_ID" && ! "$CASE_ID" =~ ^[a-z0-9][a-z0-9-]*$ ]]; then
+            echo "Invalid matrix case id: $CASE_ID" >&2
+            exit 2
+          fi
           jq -e --arg base "$BASE" '.bases[$base] != null' "$profiles" >/dev/null \
             || { echo "Unknown base profile: $BASE" >&2; exit 2; }
 
@@ -87,7 +101,8 @@ jobs:
           allowed backup_transfer "$BACKUP_TRANSFER"
 
           base_image="$(jq -r --arg base "$BASE" '.bases[$base].image' "$profiles")"
-          image_name="dev-workspace-${BASE}-${DESKTOP}"
+          suffix="${CASE_ID:+-$CASE_ID}"
+          image_name="dev-workspace-${BASE}-${DESKTOP}${suffix}"
           echo "base_image=$base_image" >> "$GITHUB_OUTPUT"
           echo "image_name=$image_name" >> "$GITHUB_OUTPUT"
           {
@@ -95,6 +110,7 @@ jobs:
             echo
             echo '| Setting | Selection |'
             echo '|---|---|'
+            if [ -n "$CASE_ID" ]; then echo "| Matrix case | \`$CASE_ID\` |"; fi
             echo "| Base | \`$BASE\` (\`$base_image\`) |"
             echo "| Desktop | \`$DESKTOP\` |"
             echo "| Editor | \`$EDITOR\` |"
@@ -183,6 +199,8 @@ jobs:
             -e EXPECT_BASE -e EXPECT_DESKTOP -e EXPECT_EDITOR -e EXPECT_DEV_RUNTIMES \
             -e EXPECT_DESKTOP_APPS -e EXPECT_PENTEST -e EXPECT_BACKUP_TRANSFER \
             "$IMAGE" -ec '
+              . /etc/os-release
+              test "$ID" = "$EXPECT_BASE"
               test "$(jq -r .base /etc/sdw-build.json)" = "$EXPECT_BASE"
               test "$(jq -r .desktop /etc/sdw-build.json)" = "$EXPECT_DESKTOP"
               test "$(jq -r .editor /etc/sdw-build.json)" = "$EXPECT_EDITOR"
@@ -190,49 +208,136 @@ jobs:
               test "$(jq -r .desktop_apps /etc/sdw-build.json)" = "$EXPECT_DESKTOP_APPS"
               test "$(jq -r .pentest /etc/sdw-build.json)" = "$EXPECT_PENTEST"
               test "$(jq -r .backup_transfer /etc/sdw-build.json)" = "$EXPECT_BACKUP_TRANSFER"
+              test "$(cat /etc/sdw-desktop-stack)" = "$EXPECT_DESKTOP"
+              test "$(cat /etc/sdw-editor-suite)" = "$EXPECT_EDITOR"
               command -v sdw >/dev/null
               command -v caddy >/dev/null
               command -v supervisord >/dev/null
               caddy validate --config /etc/caddy/Caddyfile >/dev/null
-              if [ "$EXPECT_EDITOR" = code-server ]; then command -v code-server >/dev/null; else ! command -v code-server >/dev/null; fi
-              if [ "$EXPECT_DEV_RUNTIMES" = standard ]; then command -v mise >/dev/null; else ! command -v mise >/dev/null; fi
-              if [ "$EXPECT_DESKTOP_APPS" = firefox ]; then command -v firefox-esr >/dev/null; else ! command -v firefox-esr >/dev/null; fi
-              if [ "$EXPECT_PENTEST" = bootstrap ]; then command -v debootstrap >/dev/null; else ! command -v debootstrap >/dev/null; fi
-              if [ "$EXPECT_BACKUP_TRANSFER" = standard ]; then command -v restic >/dev/null && command -v croc >/dev/null; else ! command -v restic >/dev/null && ! command -v croc >/dev/null; fi
+
+              case "$EXPECT_DESKTOP" in
+                none)
+                  test ! -x /usr/bin/Xkasmvnc
+                  test ! -x /opt/selkies-venv/bin/python
+                  test ! -e /etc/supervisor/conf.d/vnc.conf
+                  test ! -e /etc/supervisor/conf.d/desktop.conf
+                  ;;
+                kasmvnc)
+                  test -x /usr/bin/Xkasmvnc
+                  test -f /etc/supervisor/conf.d/vnc.conf
+                  test ! -x /opt/selkies-venv/bin/python
+                  test ! -e /etc/supervisor/conf.d/desktop.conf
+                  ;;
+                selkies)
+                  test -x /opt/selkies-venv/bin/python
+                  test -f /etc/supervisor/conf.d/desktop.conf
+                  test ! -x /usr/bin/Xkasmvnc
+                  test ! -e /etc/supervisor/conf.d/vnc.conf
+                  ;;
+                both)
+                  test -x /usr/bin/Xkasmvnc
+                  test -x /opt/selkies-venv/bin/python
+                  test -f /etc/supervisor/conf.d/vnc.conf
+                  test -f /etc/supervisor/conf.d/desktop.conf
+                  ;;
+              esac
+
+              if [ "$EXPECT_EDITOR" = code-server ]; then
+                command -v code-server >/dev/null
+                test -f /etc/supervisor/conf.d/code-server.conf
+              else
+                ! command -v code-server >/dev/null
+                test ! -e /etc/supervisor/conf.d/code-server.conf
+              fi
+              if [ "$EXPECT_DEV_RUNTIMES" = standard ]; then
+                for tool in mise java node python pnpm; do command -v "$tool" >/dev/null; done
+              else
+                ! command -v mise >/dev/null
+              fi
+              if [ "$EXPECT_DESKTOP_APPS" = firefox ]; then
+                command -v firefox-esr >/dev/null
+              else
+                ! command -v firefox-esr >/dev/null
+              fi
+              if [ "$EXPECT_PENTEST" = bootstrap ]; then
+                command -v debootstrap >/dev/null
+              else
+                ! command -v debootstrap >/dev/null
+              fi
+              if [ "$EXPECT_BACKUP_TRANSFER" = standard ]; then
+                command -v restic >/dev/null
+                command -v croc >/dev/null
+                test -f /etc/supervisor/conf.d/backup-watcher.conf
+              else
+                ! command -v restic >/dev/null
+                ! command -v croc >/dev/null
+                test ! -e /etc/supervisor/conf.d/backup-watcher.conf
+              fi
             '
 
       - name: Boot the selected image
         shell: bash
         env:
           IMAGE: ${{ needs.validate.outputs.image_name }}
+          EXPECT_DESKTOP: ${{ inputs.desktop }}
+          EXPECT_EDITOR: ${{ inputs.editor }}
         run: |
           set -euo pipefail
           container="sdw-package-check-${{ matrix.arch }}"
           # shellcheck disable=SC2329 # invoked by trap
           cleanup() { docker rm -f "$container" >/dev/null 2>&1 || true; }
+          wait_port() {
+            local port="$1"
+            for _ in $(seq 1 60); do
+              if docker exec "$container" nc -z 127.0.0.1 "$port" >/dev/null 2>&1; then
+                return 0
+              fi
+              sleep 2
+            done
+            echo "Port $port did not open" >&2
+            docker logs "$container"
+            return 1
+          }
+          assert_closed() {
+            local port="$1"
+            if docker exec "$container" nc -z 127.0.0.1 "$port" >/dev/null 2>&1; then
+              echo "Unexpected service on port $port" >&2
+              return 1
+            fi
+          }
           trap cleanup EXIT INT TERM HUP
           docker run -d --name "$container" --privileged --device /dev/fuse \
             -e PASSWORD=ci-profile-check \
             -e CLASH_SUBSCRIPTION_URL=http://127.0.0.1:9/sub \
             -e EGRESS_ENFORCE=0 \
             "$IMAGE" >/dev/null
+
+          healthy=
           for _ in $(seq 1 90); do
             state="$(docker inspect --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' "$container")"
             case "$state" in
-              'running healthy')
-                docker exec "$container" curl -fsS http://127.0.0.1:8080/auth/login >/dev/null
-                exit 0
-                ;;
-              exited*)
-                docker logs "$container"
-                exit 1
-                ;;
+              'running healthy') healthy=1; break ;;
+              exited*) docker logs "$container"; exit 1 ;;
             esac
             sleep 2
           done
-          docker logs "$container"
-          echo 'Image did not become healthy within 180 seconds' >&2
-          exit 1
+          if [ -z "$healthy" ]; then
+            docker logs "$container"
+            echo 'Image did not become healthy within 180 seconds' >&2
+            exit 1
+          fi
+
+          docker exec "$container" curl -fsS http://127.0.0.1:8080/auth/login >/dev/null
+          test "$(docker exec "$container" stat -c '%u:%g' /workspace/home)" = 1000:1000
+          test "$(docker exec "$container" stat -c '%u:%g' /workspace/home/.config)" = 1000:1000
+
+          if [ "$EXPECT_EDITOR" = code-server ]; then wait_port 8082; else assert_closed 8082; fi
+          case "$EXPECT_DESKTOP" in
+            none) assert_closed 6080; assert_closed 6081 ;;
+            kasmvnc) assert_closed 6080; wait_port 6081 ;;
+            selkies) wait_port 6080; assert_closed 6081 ;;
+            both) wait_port 6080; wait_port 6081 ;;
+          esac
 
       - name: Export compressed Docker image
         id: archive
@@ -257,6 +362,7 @@ jobs:
           echo "- \`$archive.gz\` — $size — SHA-256 \`$digest\`" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the architecture package
+        if: inputs.upload_artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ needs.validate.outputs.image_name }}-linux-${{ matrix.arch }}

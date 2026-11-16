@@ -1,0 +1,49 @@
+name: 测试全部镜像选项（覆盖矩阵）
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: 校验覆盖矩阵
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: 准备 Rust
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - name: 读取并校验测试用例
+        id: matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path src/rust/Cargo.toml -p sdw-core --test image_profile_matrix
+          matrix="$(jq -c '{include: .cases}' src/image/test-matrix.json)"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "覆盖矩阵包含 $(jq '.cases | length' src/image/test-matrix.json) 种配置，每种构建 amd64 和 arm64。" >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: ${{ matrix.id }} · ${{ matrix.name }}
+    needs: prepare
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    uses: ./.github/workflows/build-image.yml
+    with:
+      base: ${{ matrix.base }}
+      desktop: ${{ matrix.desktop }}
+      editor: ${{ matrix.editor }}
+      dev_runtimes: ${{ matrix.dev_runtimes }}
+      desktop_apps: ${{ matrix.desktop_apps }}
+      pentest: ${{ matrix.pentest }}
+      backup_transfer: ${{ matrix.backup_transfer }}
+      case_id: ${{ matrix.id }}
+      upload_artifact: false
