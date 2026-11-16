@@ -104,7 +104,7 @@ code-server 支持用 `hashed-password:` 代替明文 `password:`。只做这一
 
 ## 不被本设计覆盖的东西（照旧）
 
-- restic 备份仍是明文工作区，只靠 `RESTIC_PASSWORD`——与 vault 密钥是两套信任根，本设计不碰它
+- restic 仍从明文 `/workspace` 读取源文件，但会在客户端加密数据和元数据后上传；远端仓库存放 restic 密文，`RESTIC_PASSWORD` 是它独立于 vault 的信任根——本设计不碰它
   （见 threat-model 的 Non-Guarantees）。
 - `VAULT_GIT_REPO` 的 token、Clash 订阅 URL 仍是独立 credential，各有各的位置，不在此范围。
 

@@ -326,7 +326,7 @@ launchctl unload ~/Library/LaunchAgents/com.cloudflare.tunnel.dev-workspace.plis
 | DESKTOP_STACK | 构建时选择桌面栈：`kasmvnc`（默认）/ `selkies` / `both` |
 | SYNC_ENABLED | 默认关闭。启用浏览器**单向上传**页 `/sync/`(把所选本地文件夹加密推送进 vault——**不是双向同步**:无下载、无删除、无冲突处理);启用后每次解锁会把 vault 口令写入 `/run/sdw/sync-passphrase`（仅 root 可读、不在 vault 里，`lock-vault` 会删掉它） |
 | REMOTE_DESTRUCT_ENABLED | 默认关闭。启用远程自毁端点 `POST /sync/api/destruct`；口令用 `destruct-passphrase` 查看 |
-| RESTIC_REPOSITORY | 设置后启用实时备份（还需 `RESTIC_PASSWORD` 与 S3 凭证）；仓库不存在时启动时自动创建。备份的是**明文**工作区，但**排除** `.credentials/`（SSH 密钥、同步口令）、`node_modules`、各类缓存/构建目录（清单见 `src/rust/core/src/backup/domain.rs` 的 `BACKUP_EXCLUSION_SET`）。**注意**：只配 restic 时 `.credentials/` 不在任何备份里——它只随加密 vault 的 git 复制（`VAULT_GIT_REPO`）走。restic 仓库是**明文**、仅由 `RESTIC_PASSWORD` 保护，自毁不删除它，要当作 vault 的一部分对待 |
+| RESTIC_REPOSITORY | 设置后启用实时备份（还需 `RESTIC_PASSWORD` 与 S3 凭证）；仓库不存在时启动时自动创建。restic 从**明文** `/workspace` 读取源文件，但在客户端加密数据和元数据后才上传，S3/R2 后端存放的是 restic 密文；它不备份 gocryptfs 的 `/vault/cipher`。备份排除 `.credentials/`（SSH 密钥、同步口令）、`node_modules`、各类缓存/构建目录（清单见 `src/rust/core/src/backup/domain.rs` 的 `BACKUP_EXCLUSION_SET`）；只配 restic 时 `.credentials/` 不在任何备份里，只随 vault 的密文 git 复制（`VAULT_GIT_REPO`）走。`RESTIC_PASSWORD` 是这份独立加密副本的信任根；同时取得仓库和密码即可恢复工作区。自毁不会删除远端 restic 仓库，因此仍要把它当作 vault 的一部分管理 |
 | COMPOSE_FILE | 默认不设。叠加可选的覆盖文件（AppArmor、文件型密钥、pentest），见「快速开始」里的表 |
 | SDW_DOCKER_CONTEXT | 可选宿主安全锁，例如 `colima-dev-workspace`；`sdw-host` 的 up/down/destroy/watcher 在当前 Docker context 不一致时拒绝操作 |
 | `<NAME>_FILE` | 任一密钥（PASSWORD、CLASH_SUBSCRIPTION_URL、VAULT_GIT_REPO、RESTIC_PASSWORD、AWS_*、PENTEST_VAULT_PASSWORD、CROC_PASS）都可以给成「装着它的文件的路径」，这样环境里只有路径，`docker inspect` 和各进程的 `/proc/<pid>/environ` 里没有值。`docker-compose.secrets.yml` + `make secrets-init` 是现成的做法（PASSWORD 与订阅 URL）；非空的 `<NAME>` 仍然优先，所以要把它从 `.env` 删掉；读不了的文件会让容器拒绝启动。Compose 的文件型 secret 是宿主文件的 bind mount，不是 tmpfs |
@@ -413,19 +413,24 @@ docker pull <username>/dev-workspace:latest
 
 
 
-已验证：2026-11-15 在 Apple Silicon + Colima 上从当前 Dockerfile 构建 `dev-workspace:rust-wasm-review`，Rust/WASM 真 Chrome、权限、vault、自毁及全部 services 均通过。完整 `--services` 首轮为 **563 通过 / 2 个过期文案断言失败**；断言改为匹配下载器当前的 `verified from` / `sha256 mismatch` 后，`45-plugins` 整组 **76/0** 重跑通过，因此 565 个实际检查均已有通过记录。`-full` 的 Selkies 路径本轮未重建，最近一次结果仍见 `deploy/docs/TODO.md`。
+已验证（2026-11-16）：
+
+- Apple Silicon + Colima 上从当前 Dockerfile 完成 `make check`、`make build` 和完整 `make smoke`（含 services）：**564 通过 / 0 失败 / 1 跳过**。唯一跳过是当前网络无法访问 Google 启动探针；同组的 Clash/Shadowsocks 实际数据路径通过。vault 锁定/解锁、pentest、真实 Chrome、权限边界、备份/恢复和两条自毁路径均在本地特权环境中实际执行。
+- GitHub Actions 已真实运行：`ci.yml` 的 rust / host-macos / audit / scripts 全绿；手动托管 smoke 为 **523 通过 / 0 失败 / 5 跳过**（仅跳过托管 runner 不具备的 FUSE 卸载和 ptrace 隔离段）；tag 发布中 default/full × amd64/arm64 四个原生镜像候选、四平台 `sdw-host`、两个多架构 manifest 和 9 资产 Release 全部成功。测试 tag 和 Release 在验证后删除。
+- 公开 GHCR 镜像已匿名拉取到 Colima，容器启动为 healthy，`doctor` 与本地登录网关通过。
+- 真实命名 Cloudflare Tunnel 已完成创建、DNS 路由、LaunchAgent、公网 302/登录页验证和删除。
 
 当前没验证的：
+
 ```yml
-Docker Desktop 本身（Colima 已验证）和真实的 Linux 主机。
-amd64（整个镜像没在 amd64 上构建或运行过）。
-GitHub Actions（CI / smoke / build-image / fuzz / tools 都只在本机等价环境跑过）。
-Cloudflare Access 和命名隧道（Access 放行只用合成密钥做过单元测试）。
-真实 R2 和 GitHub，用的是本地替身。
+Docker Desktop 本身和真实的裸机 Linux/systemd 路径（Colima 已验证）。
+Cloudflare Access 策略（命名 Tunnel 生命周期已经实测）。
+真实 R2 / AWS S3；以及将 VAULT_GIT_REPO 指向真实 GitHub 远端的复制与恢复（现有测试使用本地替身）。
+GitHub 上的定时 fuzz.yml 和 tools.yml（ci.yml、smoke.yml、build-image.yml 已真实运行）。
 机场节点的其他协议、真实订阅下的 mode:rule / REJECT。
 Tor 引导到 30% 以上，没等到 100%；出口防火墙开启时的 Tor。
-没完整建成过 Kali rootfs。
+没完整建成过 Kali pentest rootfs。
 Kata microVM 隔离已接进编排并本机端到端跑通（`deploy/scripts/setup-kata-runtime.sh` + `deploy/orchestration/up-kata.sh`/`down-kata.sh`：完整工作区起进 microVM，vault/egress 防火墙/网关登录都通，runp 实测 10/10 稳定）。**未在生产环境验证的**：裸机 Linux 上的性能（嵌套 vz 下 virtio-fs I/O 慢，重型 GUI 会卡）、Mac 宿主端口暴露（需 `colima ssh -L` 隧道）、多实例 + Cloudflare 边缘的接入、Kata 下重跑整套 smoke。gVisor 仍不适用（netstack 无 nftables）。
-Selkies：GPU 硬件编码（容器里用软件 x264）、浏览器端出声、Firefox/Safari 客户端（只试过 Chrome）。
+Selkies：default/full 两个变体已在 GitHub 的 amd64/arm64 原生 runner 构建并通过托管 smoke；仍未验证 GPU 硬件编码（容器里用软件 x264）、浏览器端出声、Firefox/Safari 客户端（只试过 Chrome/Chromium）。
 防火墙后的 GUI 应用：只验证了镜像自带的 Firefox ESR；Chromium/IDEA/Burp 没测。
 ```

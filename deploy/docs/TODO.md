@@ -1,5 +1,14 @@
 # TODO
 
+> **2026-11-16 验证状态更新**：Apple Silicon + Colima 上从当前 Dockerfile 完成 `make check`、
+> `make build` 和完整 `make smoke`（含 services），结果 **564 通过 / 0 失败 / 1 跳过**；唯一跳过是
+> 当前网络无法访问 Google 启动探针，实际 Clash/Shadowsocks 数据路径通过。GitHub Actions 已真实运行：
+> `ci.yml` 四个 job 全绿，托管 smoke 的兼容检查通过，`build-image.yml` 的 default/full ×
+> amd64/arm64 四个原生候选、四平台 `sdw-host`、两个 manifest 和 9 资产 Release 全部成功；
+> 测试 tag/Release 随后删除。公开 GHCR 镜像已匿名拉取并在 Colima 启动为 healthy。真实命名
+> Cloudflare Tunnel 已完成创建、DNS 路由、LaunchAgent、公网 302/登录页验证和删除；Cloudflare
+> Access 策略仍未实测。以下较早的日期记录保留当时状态；遇到冲突时以本段为准。
+
 > **2026-11-15 维护面 Rust 化更新**：`sdw-host` 继续接管 `update-tools` 与 `.env` 历史清理；
 > tag 发布矩阵增加 Linux/macOS × amd64/arm64 四个原生宿主包、独立/汇总 SHA-256 和
 > checksum 验证安装器。工具更新先完成全部计划再事务写入；历史清理要求 git-filter-repo，
@@ -45,10 +54,8 @@
   （cookie 网关成为唯一边界，必须设强 PASSWORD，机器客户端的认证要在 VPS 的代理上自己加）。自毁限速取客户端地址靠
   `CF-Connecting-IP` → `X-Forwarded-For` 首跳，frps 前必须由中继**覆盖** `X-Forwarded-For`。Selkies（WebRTC）还要中继转发 UDP。
 - **Oracle Cloud ARM 的 FUSE 兼容性**（见下面「多平台部署」）：需要一个 Oracle 账号和实例。
-- **真实的外部服务**：Cloudflare Access 和命名隧道（Access 放行只用合成密钥做过单元测试）；**GitHub 上的 CI**（所有
-  workflow 都通过了 actionlint 和本地的等价命令，没有真正在 GitHub 上跑过，包括这次新增的 `audit`、`scripts`、`fuzz`、
-  `tools` 作业）；真实 R2 / S3；真实的机场订阅（只有本地的 HTTP 节点和 Shadowsocks 节点）。
-- **amd64**：整个镜像没有在 amd64 上构建或运行过；GitHub 的 amd64 runner 上第一次跑 `smoke.yml` 才算数。
+- **尚未验证的真实外部服务**：Cloudflare Access 策略（Access 放行只用合成密钥做过单元测试）；真实 R2 / S3；真实机场订阅（只验证了本地 HTTP 和 Shadowsocks 节点）；将 `VAULT_GIT_REPO` 指向真实 GitHub 远端的复制与恢复。命名 Cloudflare Tunnel、GitHub CI/release 和公开 GHCR 拉取已于 2026-11-16 实测通过。
+- **尚未实际触发的定时 Actions**：`fuzz.yml` 与 `tools.yml`。`ci.yml`、手动 `smoke.yml` 和 tag 触发的 `build-image.yml` 已在 GitHub 上真实运行；default/full × amd64/arm64 均构建并通过对应托管 smoke。
 - **清理历史并轮换密钥（你的操作）**：`.env` 已经不再被 git 跟踪，但它曾被提交过 5 次，真实的 PASSWORD 和订阅 URL 在历史里
   （也在 `~/Downloads/dw.bundle`）。`make purge-env-history`（先演习，`YES=1` 才真做，会先备份）会改写历史，**我没有运行**，
   等你同意；PASSWORD（同时是 vault 口令，轮换步骤见 runbook）和订阅 URL 的轮换只能你做，且在清理历史之前就该做。
@@ -236,7 +243,7 @@
   `10-boot` 23、`20-auth` 60、`55-browser` 22（真 Chrome 在 `/desktop/` 取到 XFCE 画面、点击面板远端有反应）、`75-privilege` 52、`40-vault` 43，
   全过 0 失败。详见上面第 10 节。（曾经一次 40-vault 在 `-full` 上失败，是我同时留着多个各带两个桌面的实例把那台 6 核 VM 压垮、`lock-vault`
   停两个并行桌面时撞上 XFCE D-Bus 辅助进程的竞态；清掉多余实例后独立重跑两次都 43/0，手动按同样时序也复现不出，判定为宿主超载下的偶发，不是回归。）
-- 没在 GitHub Actions 上真跑过（`ci.yml`/`smoke.yml`/`build-image.yml`/`fuzz.yml`/`tools.yml` 都只在本机等价环境验证）；amd64 没构建或运行过。
+- **后续验证（2026-11-16）**：GitHub Actions 已真实运行；`ci.yml`、手动 `smoke.yml` 和 `build-image.yml` 成功，default/full × amd64/arm64 均完成原生构建和对应托管 smoke。`fuzz.yml`、`tools.yml` 未纳入本轮实际触发。
 
 
 
@@ -390,7 +397,7 @@ Colima/vz）上推进了其中三项的第一步，每一项都写明做了什�
    只影响 `DESKTOP_STACK=selkies|both`，需要在该镜像里读 `/proc/<pid>/environ` 确认后再改。
 【→ 已处理（§2）。】 7. 供应链：KasmVNC `.deb` 没有校验和；mise、code-server 的安装脚本直接执行（无哈希）；`pnpm@latest`、`node@20` 浮动；
    `python-xlib` 取自 `master.zip`。其余下载（caddy / restic / croc / mihomo）有 sha 校验。
-【→ 前几条（`toolchain:`、`bun-version`、`smoke.yml` 的 `setup-bun`）已改，smoke 成了发布的门；CI 仍**没有在 GitHub 上真正跑过**；`build-image.yml` 的基础镜像仍与本地 compose 的默认不同（设计如此，`BASE_IMAGE`）。】 8. CI 从未在 GitHub 上跑过：`ci.yml` 用 SHA 固定了 `dtolnay/rust-toolchain` 但没给 `toolchain:`（该 action 靠 ref 名取
+【→ 已处理并于 2026-11-16 实测：固定 action SHA 时显式配置 toolchain，产品已无 Bun，smoke 是发布门；`ci.yml`、`smoke.yml`、`build-image.yml` 已在 GitHub 成功运行，后者覆盖 amd64/arm64；`fuzz.yml`、`tools.yml` 尚未在本轮实际触发。】 8. 初次 review 时 CI 从未在 GitHub 上跑过：`ci.yml` 用 SHA 固定了 `dtolnay/rust-toolchain` 但没给 `toolchain:`（该 action 靠 ref 名取
    工具链，SHA 引用多半会失败）；`bun-version: latest` 与 Dockerfile / 本机的 1.4.3 不一致；`build-image.yml` 的基础镜像
    永远是 Kali，本地 compose 默认是 Debian trixie，所以本地与 CI 的镜像不同；`smoke.yml` 没有 `setup-bun` 而 `30-sync.sh`
    要在宿主上跑 bun。
@@ -437,7 +444,7 @@ Colima/vz）上推进了其中三项的第一步，每一项都写明做了什�
     不立刻重取（轮换后最长一小时失效）；WebSocket 没有 Origin 校验（`SameSite=Lax` 挡跨站，挡不住同站的子域名）。
 【→ 已处理（§8：新 vault N=2^18，旧 vault 可升级）；口令仍建议 20 位以上的随机串。】 14. 新建 vault 用 gocryptfs 默认的 scrypt 成本（2^16），而 vault 口令就是登录口令（目前 `.env` 里是 12 个字符）：
     新 vault 可以加 `-scryptn 18`，口令建议 20 位以上的随机串。
-【→ 部分：加了测试（分发层、doctor、横幅、各纯函数）和每周的 fuzz 作业、smoke 门控、SBOM；没做：镜像签名、amd64 覆盖；Docker 不因 unhealthy 重启只文档化；桌面和 code-server 的日志不再写 `/dev/null`（§8）。】 15. 工程：CLI 的 30 个命令文件里 19 个没有测试模块（含 469 行的 `entrypoint.rs`，只靠 smoke 覆盖）；fuzz 目标不在 CI；CI 从未在 GitHub 上跑过；
+【→ 当前状态：分发层、doctor、横幅和纯函数均有测试；每周 fuzz 作业、发布 smoke 门、SBOM、provenance、GitHub CI 及 amd64/arm64 覆盖已加入并实际验证。仍未做镜像签名；Docker 不因 unhealthy 自动重启只文档化。】 15. 初次 review 时的工程状态：CLI 的 30 个命令文件里 19 个没有测试模块（含 469 行的 `entrypoint.rs`，只靠 smoke 覆盖）；fuzz 目标不在 CI；CI 从未在 GitHub 上跑过；
     发布流水线没有 smoke 门控、没有 SBOM 和签名；没有任何 amd64 覆盖；Docker 的重启策略不看健康状态（unhealthy 不会被重启）；
     code-server 和桌面的日志写到 `/dev/null`。
 
@@ -495,7 +502,7 @@ Shadowsocks 6 · croc 4）。
 - **容器内命令**：`doctor`、`init-vault`（已初始化时）、`lock-vault` / `unlock-vault`、`init-pentest` / `unlock-pentest` / `lock-pentest` / `pentest-bootstrap` / `pentest`、`desktop-start` / `desktop-stop` / `desktop-install`、`backup-init`、`vault-sync`、`setup --auto`、`self-destruct`、`destruct-passphrase`。
 - **停机**：`docker stop` 约 4 秒、退出码 0，supervisord 按顺序停掉所有程序。
 - **宿主机**：Linux 的两个 systemd 用户单元在真实 systemd 下安装、启动、被 `kill -9` 后自动重启，并且「容器退出 + 自毁标记」触发的 `destroy.sh --force --paranoid` 能跑到最后（用 stand-in 的 `docker` / `cloudflared`，在 VM 里）；macOS launchd 用缩小版作业验证了清理脚本被其监督进程卸载时的行为（没有运行真实的 `destroy.sh`，它会删凭据和 shell 历史）。
-- **amd64**：只做了经 qemu-user 能做的部分（`src/tests/smoke/manual/emulated.sh`，从真实的 Dockerfile 里原样取出下载那几段）：Bun x64 的 sha256 和 Caddy amd64 的 sha512 校验通过，bun / caddy / restic / clash 四个二进制的 ELF 机器类型都是 x86-64，`bun --version` 在 x86_64 下输出 1.4.3。Bun 在 qemu-user 下跑不了 JavaScript（`bun install` 在 libarchive 里报内存不足），Caddy（Go）也起不来（regexp 初始化 panic），所以没能在 amd64 上跑单元测试和服务；整个镜像没有在 amd64 上构建。
+- **amd64（2026-11-03 当时状态）**：当时只完成 qemu-user 可验证的下载和 ELF 架构检查，整个镜像尚未构建；2026-11-16 已由 GitHub 原生 amd64 runner 完成 default/full 镜像构建和托管 smoke，当前状态见文件顶部。
 - **静态检查**：actionlint（`build-image.yml`、`ci.yml`、`smoke.yml`）、shellcheck（宿主机脚本和 smoke test 的全部脚本）、biome、`tsc`。
 
 ### 验证中发现并修复的问题
@@ -534,14 +541,15 @@ Shadowsocks 6 · croc 4）。
 
 ### 仍未验证
 
-- **Docker Desktop（macOS）本身和真实的 Linux 主机**：Apple Silicon Mac 上的 Colima（vz，真机）已在 2026-11-03 全量跑过（见上）；Docker Desktop 没跑，Linux 主机没跑。
-- **amd64**：见上，只验证了下载校验和二进制的架构，没有在 amd64 上构建或运行整个镜像。GitHub 的 amd64 runner 上跑 `smoke.yml` 会是第一次。
-- **真实外部服务**：Cloudflare **Access 和命名隧道**（只测了快速隧道，它没有 Access 策略）；真实 S3 / R2（用的是 `rclone serve s3`，区域、签名、虚拟主机风格这些 R2 / AWS 的细节没测）；真实 GitHub（本地 sshd 和 git HTTP 替身）；真实机场订阅和节点（本地 Shadowsocks 节点，订阅里常见的 vmess / trojan / hysteria 等协议没测）。
-- **GitHub 上的 CI**：三个 workflow 都通过了 actionlint，没有真正跑过（按你的决定，推送留到以后）。
-- **Tor 的完整引导**：tor 能起，经 Clash 连上中继，引导到 30% 以上，没有等到 100%（这个网络下 Tor 能不能通未知）。
-- **pentest 的 Kali 路径**：真实运行中 Kali 重定向这次取不到 Release，走的是 Debian bookworm 回退；第一次探测时 Kali 路径取到了 Release 并下载了索引，但我中断了，所以没有完整建成过一个 Kali rootfs。
-- **macOS 上真实的 `host-watcher.sh --install` / `destroy.sh --paranoid`**：只验证了行为（见上），没有跑真实脚本。
-- **在已装好的旧 LaunchAgent / systemd 单元上**：修复在脚本里，需要重启监视器（见 `deploy/linux-systemd/README.md`）。
+- **Docker Desktop（macOS）本身和真实的裸机 Linux/systemd 路径**：Apple Silicon Mac 上的 Colima（vz，真机）已完成全量流程；Docker Desktop 和裸机 Linux 尚未跑。
+- **Cloudflare Access 策略**：Access 放行只用合成 RSA 密钥做过单元测试。命名 Cloudflare Tunnel 的真实创建、DNS、LaunchAgent、公网登录页和删除已于 2026-11-16 验证。
+- **真实外部存储与 vault Git 远端**：真实 R2 / AWS S3 尚未验证（测试使用本地 S3 替身）；将 `VAULT_GIT_REPO` 指向真实 GitHub 远端的复制与恢复也仍使用本地 sshd/git HTTP 替身。GitHub CI、GHCR 和 Release 发布本身已经实测。
+- **定时 Actions**：`fuzz.yml` 和 `tools.yml` 尚未在 GitHub 上实际触发；`ci.yml`、手动 `smoke.yml` 和 tag `build-image.yml` 已真实运行成功，后者覆盖 default/full × amd64/arm64。
+- **真实机场订阅和节点**：只验证了本地 HTTP 和 Shadowsocks 节点；vmess / trojan / hysteria 等协议未测。
+- **Tor 的完整引导**：tor 能起，经 Clash 连上中继，引导到 30% 以上，没有等到 100%。
+- **pentest 的 Kali 路径**：真实运行中 Kali 重定向取不到 Release 时按设计回退到 Debian bookworm；尚未完整建成一个 Kali pentest rootfs。
+- **macOS 上真实的 `host-watcher.sh --install` / `destroy.sh --paranoid`**：默认 `destroy.sh --force` 已真实运行；watcher 安装与 paranoid 路径仍只用替身和缩小版作业验证。
+- **在已装好的旧 LaunchAgent / systemd 单元上迁移**：修复在脚本里，需要重启监视器（见 `deploy/linux-systemd/README.md`）。
 
 ## 已知缺口
 
@@ -550,7 +558,7 @@ Shadowsocks 6 · croc 4）。
 - **出口防火墙默认开启**（2026-11-04，`deploy/docs/threat-model.md` 的 Egress；这一条原来写的是「尽力而为、没有强制」）。局限：持有 `NET_ADMIN` 的容器 root 能删表（`dev` 不能）；去往白名单网络的流量带着真实 IP；经 Clash 的目的地只和代理节点一样私密；`EGRESS_ENFORCE=0` 时回到只有代理变量。
 - **主密码**：启动横幅不再打印它（2026-10-31）——只有在 PASSWORD 留空、容器自己生成口令时才打印（否则无从得知）；来自 `.env` 的口令永不进日志。它不再写进 code-server 的任何文件（code-server 以 `--auth none` 运行，登录只有网关一道；生成的口令存 root 才能读的 `/var/lib/sdw/master-password`）。vault 口令仍然就是它，见 threat-model 的 Non-Guarantees。把它变成内存驻留 + 硬件信任根的方案见 `deploy/docs/design-memory-only-secrets.md`（设计，未本地 PoC——这台机器没有容器可见的 TPM2；验证脚本 `src/tests/smoke/manual/tpm-seal-verify.sh` 在真实 TPM / CI 上才跑）。
 - **`docker-compose.apparmor.yml` 去掉容器最后一层 AppArmor 约束**。更好的做法是写一份只放行 FUSE 挂载的自定义 profile，目前没有。
-- **restic 备份仓库不受自毁影响**，里面是明文工作区，只靠 `RESTIC_PASSWORD` 保护。`.credentials/`（ssh 密钥、同步口令）**已加入排除集**（2026-10-30，`BACKUP_EXCLUSION_SET`），不再进 restic 仓库；仍可从加密的 vault git 复制恢复（`VAULT_GITIGNORE` 不排除它）。自毁时连带删除 restic 仓库（需要仓库凭据）：**按决定不做**，把该仓库当作 vault 的一部分对待。
+- **restic 备份仓库不受自毁影响**。restic 从已解锁的明文 `/workspace` 读取源文件，在客户端加密数据和元数据后才上传；S3/R2 后端存放的是 restic 密文，`RESTIC_PASSWORD` 是这份独立副本的信任根。同时取得仓库和密码即可恢复工作区。`.credentials/`（ssh 密钥、同步口令）**已加入排除集**（2026-10-30，`BACKUP_EXCLUSION_SET`），不进 restic 仓库；仍可从加密的 vault git 复制恢复（`VAULT_GITIGNORE` 不排除它）。自毁时连带删除 restic 仓库（需要仓库凭据）：**按决定不做**，把该仓库当作 vault 的一部分对待。
 - **`lock-vault` 在 code-server 等仍占用挂载时需要强制（lazy）卸载**，之后已打开文件的进程仍能访问。空闲的 code-server 不占用（量过，干净卸载成功），打开过东西之后才占用。`lock-vault` 可能就跑在 code-server 的终端里，所以没有去停 code-server；彻底的办法是重启容器。
 - **重放窗口不跨重启**（服务重启后 5 分钟容差内已见过的 nonce 可被重放一次）：**按决定接受**。被截获的请求本就在 Caddy 认证之后、E2E 加密之内，且只在重启那一刻的窗口里，重放一个上传无非重传同一文件。
 - ~~远程自毁路由没有可注入依赖~~ **已解决**（Rust 迁移）：触发器是可注入的 `DestructTrigger`（`AppConfig.destruct`），`sync-service/tests/routes.rs` 用假触发器覆盖了成功路径，不再碰不可逆边界。
