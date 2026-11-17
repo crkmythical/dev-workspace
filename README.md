@@ -184,7 +184,7 @@ dev-workspace-<base>-<desktop>-linux-arm64.tar.gz
 
 editor 或任一套件偏离基础系统默认值时，文件名和加载后的镜像名会追加全部选择以免互相覆盖。推送 `v*` tag 用 Kali 默认选项构建，并把这两个文件放进 GitHub Release（不再生成 GHCR/Docker Hub 标签、`-full` 变体、`sdw-host` 包、SBOM 或截图）。
 
-本地验证最权威：`make check`（fmt + clippy + test + shellcheck + 宿主测试）、`make build`、`make smoke`（托管 runner 的 CI smoke 会跳过特权挂载段，本机 Colima 不跳）。`v1.0.0` 两文件 Release 已发布；最新一次[覆盖矩阵运行](https://github.com/crkmythical/dev-workspace/actions/runs/43895296656)在固定的 Ubuntu 24.04 runner 上 40/40 jobs 通过，覆盖清单定义的 108 个两两选项组合。
+本地验证最权威：`make check`（fmt + clippy + test + shellcheck + 宿主测试）、`make build`、`make smoke`（托管 runner 的 CI smoke 会跳过特权挂载段，本机 Colima 不跳）。每推送一个 `v*` tag 就自动构建并发布两文件镜像，取用[最新版 Release](https://github.com/crkmythical/dev-workspace/releases/latest) 即可。镜像各选项组合由 Actions 的「测试全部镜像选项（覆盖矩阵）」工作流在固定 Ubuntu 24.04 runner 上按 amd64 / arm64 各构建一次验证。
 
 ## 维护
 
