@@ -47,7 +47,7 @@ tests/smoke/run.sh --image dev-workspace:latest --reuse --only '^50'   # 只重�
 | `55-browser` | 真实 Chrome：Rust/WASM 同步页上传、会话内密钥、紧急页、桌面画面和输入 |
 | `60-replication` | `vault-sync` 按 cron 的方式跑（无容器环境变量）：推送、无变化不提交、远端不可用 3 次后写通知、恢复后补推 |
 | `65-secrets` | 文件型密钥：环境里没有口令和订阅 URL、用文件里的口令建 vault 并登录、读不了的文件让容器拒绝启动 |
-| `70-egress-variants` | 出口 degraded（订阅无节点，且**不退回直连**）、down（Clash 起不来 / 模板被破坏）、缺必填变量时拒绝启动 |
+| `70-egress-variants` | 出口 degraded（订阅无节点，且**不退回直连**）、down（Clash 起不来 / 模板被破坏，订阅可留空）、防火墙装不上（缺 NET_ADMIN）时 fail-closed 拒绝启动 |
 | `72-egress-enforce` | 出口防火墙：默认（该变量留空）就是开；它挡什么（root 和 `dev` 都不能直连，名字由 Clash 解析）、还放行什么（Clash、`EGRESS_ALLOW_CIDRS`、经 Clash 的 ssh）、`EGRESS_ENFORCE=0` 真的关掉并明说、过宽的白名单让启动停下；默认 compose 不再带 pentest 的 capability |
 | `75-privilege` | 谁以谁运行（`dev` / root / `caddy` / `clash`）、`dev` 够不到的东西（密文、运行时目录、审计日志、Clash 配置、PID 1 的环境）、工作区进程环境里没有密钥、`doas` 桥接只放行名单里的命令、运营者命令被拒绝并提示 `docker exec` |
 | `80-destruct` | 自毁两条路（HTTP 端点含限流和伪造头、CLI 从 vault 内运行），之后容器 inert、密钥和密文都没了 |

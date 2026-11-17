@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Egress is best effort: when it fails the workspace says so loudly and carries on. Three ways
-# for it to fail, each in an instance of its own beside the main one (own project, port, subnet).
+# Egress is best effort: a failed proxy or subscription is announced and the workspace carries on
+# (cases 1 and 2, each in an instance of its own beside the main one — own project, port, subnet).
+# The exception is the fail-closed firewall itself: if it cannot be applied the boot aborts rather
+# than run leaky (case 3).
 # shellcheck source=../lib.sh
 . "$(cd "$(dirname "$0")/.." && pwd)/lib.sh"
 # shellcheck source=../stack.sh
@@ -55,17 +57,24 @@ broken_clash() {
   unset SMOKE_EXTRA_COMPOSE
 }
 
-# --- 3. a required variable is missing: the container refuses to start --------------------------
-missing_subscription() {
-  step "start-up: a required variable is missing"
+# --- 3. the egress firewall cannot be applied: the container refuses to start -------------------
+# CLASH_SUBSCRIPTION_URL is optional, so leaving it unset no longer blocks start-up — it only
+# degrades render-clash-config (egress is then closed). The remaining hard stop is fail-closed
+# egress: the firewall is on by default and a plain `docker run` has no NET_ADMIN, so enforce-egress
+# cannot load the filter and the boot aborts rather than start into a leaky state, naming the fix.
+firewall_cannot_apply() {
+  step "start-up: fail-closed egress refuses to start without NET_ADMIN"
   OUT="$(docker run --rm -e PASSWORD=x "$SMOKE_IMAGE" 2>&1)"
   CODE=$?
   expect_eq "the container exits with status 1" 1 "$CODE"
-  expect_match "and names the variable" 'Required env var CLASH_SUBSCRIPTION_URL is not set' "$OUT"
+  expect_match "an unset subscription only degrades (it is optional now)" 'render-clash-config.*CLASH_SUBSCRIPTION_URL is unset' "$OUT"
+  expect_match "the hard stop is the egress firewall" 'boot aborted at .*enforce-egress' "$OUT"
+  expect_match "and it names the capability it needs" 'needs the NET_ADMIN capability' "$OUT"
+  expect_match "and the escape hatch to run without it" 'EGRESS_ENFORCE=0' "$OUT"
 }
 
 instance "${SMOKE_PROJECT}-e1" "$((SMOKE_PORT + 1))" 172.30.78 sub-empty.yaml src/tests/smoke/empty.env empty_provider
 instance "${SMOKE_PROJECT}-e2" "$((SMOKE_PORT + 2))" 172.30.79 sub.yaml src/tests/smoke/empty.env broken_clash
-SMOKE_IMAGE="${SMOKE_IMAGE:-dev-workspace:smoke}" missing_subscription
+SMOKE_IMAGE="${SMOKE_IMAGE:-dev-workspace:smoke}" firewall_cannot_apply
 
 finish

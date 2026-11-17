@@ -4,7 +4,7 @@
 - **Docker**:Docker Desktop(macOS,无 AppArmor,最省心)或 Colima。建议给 Docker ≥ 12 GB 内存、≥ 100 GB 磁盘(Colima 默认的 2 CPU / 2 GiB 编译 Rust 会被 OOM 杀掉)。**必须装 buildx 插件**:没有它 `docker compose build` 会悄悄退回经典构建器,这个 Dockerfile 的 `COPY --chmod` 过不去。Mac 上用 Colima 的完整步骤(含专用 VM、国内网络、代理)见 README 的「在 Mac 上本机构建」。
 - `git`、`curl`。
 - **宿主自动化**（销毁、tunnel、临时实例、watcher）使用 Rust `sdw-host`。仓库入口会在有 Cargo 时增量构建；没有 Cargo 时先通过 `make install-host` 或提供 `SDW_HOST_BIN` 指向预编译二进制。仅执行 `docker compose up` 不需要宿主 Rust。
-- **一个 Clash 订阅地址**(`CLASH_SUBSCRIPTION_URL`,唯一必填项)。
+- **(可选)一个 Clash 订阅地址**(`CLASH_SUBSCRIPTION_URL`):工作区的出口通道。不填也能启动(code-server / 桌面 / vault 都是本地的),但出口防火墙默认开启时要有它才能联网,否则就设 `EGRESS_ENFORCE=0` 直连。
 
 > ⚠️ Colima / Linux 且发行版带 AppArmor:Docker 默认 profile 会挡住 gocryptfs 的 FUSE 挂载,vault 会解不开(日志报 `fusermount3: mount failed: Permission denied`)。解决:在 `.env` 里取消注释 `COMPOSE_FILE=docker-compose.yml:docker-compose.apparmor.yml`。Docker Desktop(macOS)无此问题。
 
@@ -13,7 +13,7 @@
 ## 1. 最快路径(本地、全新 vault)
 
 ```bash
-# 1) 配置:只有 CLASH_SUBSCRIPTION_URL 必填;强烈建议同时设 PASSWORD
+# 1) 配置:全部可选,不填也能起;要联网设 CLASH_SUBSCRIPTION_URL,建议设 PASSWORD
 install -m 600 .env.example .env
 #   编辑 .env:
 #     CLASH_SUBSCRIPTION_URL=https://你的订阅?target=clash
@@ -33,7 +33,7 @@ docker compose up -d
 docker logs -f dev-workspace
 ```
 
-**首次启动会自动做什么**(容器入口是 `sdw entrypoint`):校验必填变量 → **装载出口防火墙(默认开启)** → 起 Clash 探测出口 → **用 PASSWORD 自动创建并解锁 vault** → 起 Caddy / code-server / 桌面 / 同步服务 → 打印横幅。所以**全新启动不需要手动 init**。横幅示例:
+**首次启动会自动做什么**(容器入口是 `sdw entrypoint`):校验环境(密钥文件可读性等)→ **装载出口防火墙(默认开启)** → 起 Clash 探测出口 → **用 PASSWORD 自动创建并解锁 vault** → 起 Caddy / code-server / 桌面 / 同步服务 → 打印横幅。所以**全新启动不需要手动 init**。横幅示例:
 
 ```
 ╔══════════════════════════════════════════════════╗
