@@ -48,19 +48,24 @@ fn var(name: &str, doc: &[&str], example: &str) -> EnvVarSpec {
 pub fn core_env_groups() -> Vec<EnvGroup> {
     vec![
         EnvGroup {
-            title: "REQUIRED — container won't start without this".to_string(),
-            vars: vec![EnvVarSpec {
-                required: true,
-                ..var(
-                    "CLASH_SUBSCRIPTION_URL",
-                    &["Clash-format proxy subscription URL."],
-                    "https://sub.example.com/your-subscription?target=clash",
-                )
-            }],
-        },
-        EnvGroup {
             title: "EGRESS — Clash proxy and the fail-closed firewall (optional)".to_string(),
             vars: vec![
+                EnvVarSpec {
+                    opt_in: true,
+                    ..var(
+                        "CLASH_SUBSCRIPTION_URL",
+                        &[
+                            "Clash-format proxy subscription URL — how the workspace reaches the internet.",
+                            "OPTIONAL: leave it unset and the container still starts. code-server, the desktops",
+                            "and the vault are all local and need no proxy. Clash then loads NO nodes, so with the",
+                            "fail-closed firewall ON (default) anything that needs the internet (git, curl, npm,",
+                            "the browser) is blocked until you set this — egress does NOT fall back to a direct",
+                            "connection. Set it to send egress through your proxy (you can add it later and",
+                            "restart), or set EGRESS_ENFORCE=0 to allow direct connections with no proxy at all.",
+                        ],
+                        "https://sub.example.com/your-subscription?target=clash",
+                    )
+                },
                 EnvVarSpec {
                     opt_in: true,
                     ..var(

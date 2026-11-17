@@ -83,8 +83,13 @@ pub fn load_config(get: impl Fn(&str) -> Option<String>) -> WorkspaceConfig {
 
 // --- startup validation (defense in depth behind scripts/entrypoint.sh) ---
 
-/// Variables that MUST be present for the container to start.
-pub const REQUIRED_ENV_VARS: &[&str] = &["CLASH_SUBSCRIPTION_URL"];
+/// Variables that MUST be present for the container to start. Empty: the workspace boots with
+/// nothing set — code-server, the desktops and the vault are all local and need no network.
+/// CLASH_SUBSCRIPTION_URL used to be here; it is now optional. An empty subscription leaves egress
+/// closed (Clash loads no nodes, the fail-closed firewall keeps default-DROPping), which is a
+/// supported state the banner and `doctor` explain, not a reason to refuse to start. The generic
+/// check below stays in use so re-adding a hard requirement is a one-line, tested change.
+pub const REQUIRED_ENV_VARS: &[&str] = &[];
 
 /// The required env vars that are missing (absent or empty).
 pub fn find_missing_required_env(
@@ -254,16 +259,29 @@ mod tests {
     }
 
     #[test]
+    fn nothing_is_required_to_start() {
+        // CLASH_SUBSCRIPTION_URL used to be mandatory; it is now optional, so the required set is
+        // empty and an empty environment passes. Asserting it here makes re-introducing a hard
+        // requirement a deliberate, visible change.
+        assert!(REQUIRED_ENV_VARS.is_empty());
+        let missing = find_missing_required_env(|_| None, REQUIRED_ENV_VARS);
+        assert!(missing.is_empty());
+        assert_eq!(env_validation_error(&missing), None);
+    }
+
+    // The required-env check itself stays in use (defense in depth, and so that re-adding a
+    // required variable is one line); exercise it against a synthetic required list.
+    const SAMPLE_REQUIRED: &[&str] = &["SAMPLE_REQUIRED"];
+
+    #[test]
     fn present_but_empty_counts_as_missing() {
-        let missing =
-            find_missing_required_env(env(&[("CLASH_SUBSCRIPTION_URL", "")]), REQUIRED_ENV_VARS);
-        assert_eq!(missing, ["CLASH_SUBSCRIPTION_URL"]);
+        let missing = find_missing_required_env(env(&[("SAMPLE_REQUIRED", "")]), SAMPLE_REQUIRED);
+        assert_eq!(missing, ["SAMPLE_REQUIRED"]);
     }
 
     #[test]
     fn complete_set_passes() {
-        let missing =
-            find_missing_required_env(env(&[("CLASH_SUBSCRIPTION_URL", "v")]), REQUIRED_ENV_VARS);
+        let missing = find_missing_required_env(env(&[("SAMPLE_REQUIRED", "v")]), SAMPLE_REQUIRED);
         assert!(missing.is_empty());
         assert_eq!(env_validation_error(&missing), None);
     }
@@ -272,15 +290,15 @@ mod tests {
         #[test]
         fn missing_required_is_complete_and_named(present in any::<bool>()) {
             let pairs: Vec<(&str, &str)> =
-                if present { vec![("CLASH_SUBSCRIPTION_URL", "v")] } else { vec![] };
-            let missing = find_missing_required_env(env(&pairs), REQUIRED_ENV_VARS);
+                if present { vec![("SAMPLE_REQUIRED", "v")] } else { vec![] };
+            let missing = find_missing_required_env(env(&pairs), SAMPLE_REQUIRED);
             let error = env_validation_error(&missing);
             if present {
                 prop_assert!(missing.is_empty());
                 prop_assert!(error.is_none());
             } else {
                 prop_assert_eq!(missing.len(), 1);
-                prop_assert!(error.unwrap().contains("CLASH_SUBSCRIPTION_URL"));
+                prop_assert!(error.unwrap().contains("SAMPLE_REQUIRED"));
             }
         }
     }

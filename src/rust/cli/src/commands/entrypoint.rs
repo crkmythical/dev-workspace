@@ -301,11 +301,16 @@ fn run_step(
             Ok(())
         }
         "render-clash-config" => {
-            // The template belongs to the image and preflight has required the subscription URL,
-            // so there is nothing legitimate to skip: a failure is reported (a degraded step)
-            // rather than quietly starting Clash on whatever config an older run left behind.
+            // CLASH_SUBSCRIPTION_URL is optional. Empty is a supported state, not an error to hide:
+            // there is nothing to render, so this (Degrade) step degrades, the boot continues, and
+            // Clash comes up with no nodes. The firewall still default-DROPs, so egress stays closed
+            // — the banner and `doctor` say so and how to turn it on — rather than quietly starting
+            // Clash on whatever config an older run left behind.
             if config.clash_subscription_url.is_empty() {
-                return Err("CLASH_SUBSCRIPTION_URL is empty".to_string());
+                return Err(
+                    "CLASH_SUBSCRIPTION_URL is unset; egress stays closed until it is set (or EGRESS_ENFORCE=0)"
+                        .to_string(),
+                );
             }
             let (dns, source) = crate::commands::clash_dns::resolve_dns();
             write_config(&ConfigOptions {
