@@ -196,4 +196,4 @@ editor 或任一套件偏离基础系统默认值时，文件名和加载后的�
 | `make install-hooks` | 每个 clone 做一次：提交前拒绝带进密钥文件或 `.env` 里出现过的值 |
 | `make env-example` | 改 `env_schema.rs` 后重新生成 `.env.example`（两者不一致测试会失败） |
 
-宿主高风险逻辑统一在 `sdw-host`（销毁、watcher、Cloudflare、systemd、密钥初始化、工具 pin 更新、Git 历史清理）；`make host` / `make install-host` 构建安装，Shell 入口只定位项目并 `exec`。`.env` 不被 git 跟踪，已泄漏进历史的值按泄漏处理。
+宿主高风险逻辑统一在 `sdw-host`（销毁、watcher、Cloudflare、systemd、密钥初始化、工具 pin 更新、Git 历史清理）；`make host` / `make install-host` 构建安装，Shell 入口只定位项目并 `exec`。
